@@ -1,0 +1,1119 @@
+{*********************************************************}
+{*                   OPFIELD.IN3 1.30                    *}
+{*      Copyright (c) TurboPower Software 1988,1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {--------------- methods for ChoiceField's ----------------}
+
+  constructor ChoiceField.Init(ID : Word;         var Prompt : string;
+                                    pRow, pCol : Word; var Picture : string;
+                                    fRow, fCol : Word; HlpNdx : Word;
+                                    DataSize : Word;   Increment : IncChoiceProc;
+                                    var EditVar;       PadChar : Char;
+                                    Options, IFlags : LongInt;
+                                    var Colors : ColorSet);
+    {-Initialize a multiple-choice entry field}
+  begin
+    if not EntryField.InitNPP(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1,
+      HlpNdx, BlankRange, BlankRange, DataSize, 0, EditVar, PadChar,
+      Options or efMultChoice, IFlags, Colors) then
+        Fail;
+    cfIncChoice := Increment;
+    efDraw := DrawString;
+  end;
+
+  procedure ChoiceField.Convert(PostEdit : Boolean);
+    {-Conversion routine for multiple choice fields}
+  begin
+    if not PostEdit then begin
+      cfIncChoice(efVarPtr^, sfID, 0, efEditSt^);
+      MergePicture(efEditSt^, efEditSt^);
+    end;
+  end;
+
+  procedure ChoiceField.Edit(Row, Col : Word;
+                                  FA, CA : Byte;
+                                  PasswordChar : Char;
+                                  PosCode : Byte;
+                                  ReadOnly : Boolean;
+                                  var CC : Word;
+                                  var ChWord : Word;
+                                  var InsertMode : Boolean;
+                                  EP : ErrorProc;
+                                  UnitCode : Byte;
+                                  var CP : CommandProcessor);
+    {-Edit a multiple choice field}
+  var
+    CursorSL : Word;
+    SaveBreak : Boolean;
+    Finished : Boolean;
+    Ch : Char absolute ChWord;
+    St : string;
+    StLen : Byte absolute St;
+    Choice : Byte;
+    StBgn : Byte;
+    Scrap : RangeType;
+    PFlags : PictureFlags;
+    FirstTime : Boolean;
+
+    procedure Initialize;
+      {-Find StBgn}
+    var
+      I : Word;
+    begin
+      InitPictureFlags(PFlags);
+      StBgn := 0;
+      for I := 1 to Length(efPicture^) do
+        if PFlags[I] then begin
+          StBgn := I;
+          sfFCPos := I;
+          Exit;
+        end;
+    end;
+
+    procedure Redraw;
+      {-Position cursor and redraw string}
+    begin
+      {merge the string with the picture}
+      MergePicture(St, efEditSt^);
+
+      {draw the result and position the cursor}
+      Draw(efEditSt^, Row, Col, FA, CA, 0, PasswordChar, PFlags);
+      GoToXYabs(Col+Pred(StBgn), Row);
+    end;
+
+    procedure ConvertToString(I : Integer; CallPostEdit : Boolean);
+      {-Convert the value to a string}
+    begin
+      cfIncChoice(efVarPtr^, sfID, I, St);
+    end;
+
+    procedure Error;
+      {-Ring bell on invalid input if desired}
+    begin
+      if LongFlagIsSet(sfOptions, efBeepOnError) then
+        RingBell;
+    end;
+
+  begin
+    {we're editing}                   {!!.03}
+    SetLongFlag(sfFlags, ifEditing);  {!!.03}
+
+    {store cursor shape and set it}
+    CursorSL := CursorTypeSL;
+    InsertMode := not InsertMode;
+    ToggleInsertMode(InsertMode);
+
+    {save break checking state}
+    SaveBreak := CheckBreak;
+    CheckBreak := False;
+
+    {find place to put the cursor}
+    Initialize;
+
+    {clear modified flag}
+    ClearLongFlag(sfFlags, ifModified);
+
+    {initialize Scrap}
+    Move(efVarPtr^, Scrap, efDataSize);
+    ConvertToString(0, False);
+
+    {loop reading keys}
+    Finished := False;
+    FirstTime := (CC <> ccNone);
+    repeat
+      {redraw string}
+      Redraw;
+
+      {get next command and validate it}
+      if FirstTime then
+        FirstTime := False
+      else
+        CC := CP.GetCommand(ChWord);
+
+      if ReadOnly then begin
+        if (CC <= 255) and not(CC in ReadOnlyCommands) then
+          CC := ccNone;
+      end
+      else if (CC <= 255) and not(CC in ChoiceCommands) then
+        CC := ccNone;
+
+      case CC of
+        ccDecChoice :        {decrement choice}
+          if not ReadOnly then
+          begin                        {!!.30}
+            ConvertToString(-1, True);
+            Finished := True;          {!!.30}
+          end;                         {!!.30}
+
+        ccIncChoice :        {increment choice}
+          if not ReadOnly then
+          begin                        {!!.30}
+            ConvertToString(1, True);
+            Finished := True;          {!!.30}
+          end;                         {!!.30}
+
+        ccWordRight,         {cursor right one word}
+        ccRight,             {Cursor right one char}
+        ccTab,               {tab to next field}
+        ccLeft,              {an exit command in this context}
+        ccWordLeft,          {"  "    "       "  "    "      }
+        ccBackTab,           {"  "    "       "  "    "      }
+        ccNextField,         {various exit commands}
+        ccAutoAdvance,
+        ccMouseAuto,         {!!.11}
+        ccMouseDown,         {!!.03}
+        ccSelect, ccMouseSel, ccPrevField, ccUp, ccDown, ccNextRec,
+        ccPrevRec, ccFirstFld, ccLastFld, ccPageUp, ccPageDn, ccNested,
+        ccDone, ccUser0..ccUser65335 :
+          Finished := True;
+
+        ccRestore,           {Restore default and continue}
+        ccQuit :             {Restore default string and quit}
+          begin
+            Move(Scrap, efVarPtr^, efDataSize);
+            ConvertToString(0, True);
+            Finished := (CC = ccQuit);
+          end;
+
+        ccHelp :             {Invoke help system}
+          CP.cpGetHelp(UnitCode, nil, sfHelpIndex);
+
+        else
+          Error;
+      end;
+
+      {make sure it's OK to go to next/previous field}
+      if Finished then
+        Finished := efOKtoAdvance(CC);
+    until Finished;
+
+    {set modified flag}
+    if (CC <> ccQuit) and (CompStruct(Scrap, efVarPtr^, efDataSize) <> Equal) then
+      SetLongFlag(sfFlags, ifModified);
+
+    {redraw the string one last time}
+    Redraw;
+
+    {restore break checking status}
+    CheckBreak := SaveBreak;
+
+    {restore cursor shape}
+    SetCursorSize(Hi(CursorSL), Lo(CursorSL));
+
+    {we're not editing}                 {!!.03}
+    ClearLongFlag(sfFlags, ifEditing);  {!!.03}
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor ChoiceField.Load(var S : IdStream);
+    {-Load a multiple choice entry field from a stream}
+  begin
+    if not EntryField.Load(S) then
+      Fail;
+
+    @cfIncChoice := S.ReadPointer;
+    if (S.PeekStatus <> 0) or (@cfIncChoice = nil) then begin
+      if (S.PeekStatus = 0) then                    {!!.03}
+        InitStatus := epNonFatal+ecIdNotRegistered; {!!.03}
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure ChoiceField.Store(var S : IdStream);
+    {-Store a multiple choice entry field in a stream}
+  begin
+    EntryField.Store(S);
+    S.WritePointer(@cfIncChoice); {!!.03}
+  end;
+
+{$ENDIF}
+
+  procedure ChoiceField.efIncrement;
+    {-Increment the value of the field}
+  var
+    DummySt : string;
+  begin
+    cfIncChoice(efVarPtr^, sfID, 1, DummySt);
+  end;
+
+  {--------------- methods for MultiLineField's ----------------}
+
+  constructor MultiLineField.Init(ID : Word;           var Prompt : string;
+                                  pRow, pCol : Word;   PicChar : Char;
+                                  fRow, fCol : Word;   fWidth : Byte;
+                                  fHeight : Byte;      HlpNdx : Word;
+                                  var EditVar;         PadChar : Char;
+                                  Options, IFlags : LongInt;
+                                  var Colors : ColorSet);
+    {-Initialize a multi-line entry field}
+  var
+    Picture : string[1];
+  begin
+    Picture := PicChar;
+
+    if not EntryField.InitNPP(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, fHeight,
+      HlpNdx, BlankRange, BlankRange, Succ(fWidth)*fHeight, 0,
+      EditVar, PadChar, Options, IFlags, Colors) then
+        Fail;
+
+    SetLongFlag(sfFlags,
+      ifNoLiterals+ifMultiLine);
+    ClearLongFlag(sfFlags,
+      ifModified+ifSuppressFirst);
+    ClearLongFlag(sfOptions,
+      efRightJustify+efPasswordMode+efCursorToEnd+efClearFirstChar+
+      efAutoNumLock+efParensForMinus+efHouseCursorAtEnd+efForceUpper+
+      efForceLower+efShowReadChar+efHideCursor+efAllowEscape+
+      efDefaultAccepted+efMapExtended);
+  end;
+
+  procedure MultiLineField.Convert(PostEdit : Boolean);
+    {-Conversion routine for multi-line fields}
+  begin
+    if @efConvert <> nil then
+      efConvert(@Self, PostEdit)
+    else if PostEdit then
+      Move(efEditSt^, efVarPtr^, efDataSize)
+    else
+      Move(efVarPtr^, efEditSt^, efDataSize);
+  end;
+
+  procedure MultiLineField.efTrimSpaces;
+    {-Trim spaces on each line of a multiline field}
+  var
+    I : Byte;
+  begin
+    for I := 1 to sfFHeight do
+      TrimSpacesPrim(mfLinePtr(I)^);
+  end;
+
+  function MultiLineField.efFieldIsEmpty : Boolean;
+    {-Return true if field is empty}
+  var
+    I : Byte;
+  begin
+    efFieldIsEmpty := False;
+    for I := 1 to sfFHeight do
+      if mfLinePtr(I)^ <> '' then
+        Exit;
+    efFieldIsEmpty := True;
+  end;
+
+  function MultiLineField.mfLinePtr(LineNum : Byte) : StringPtr;
+    {-Return a pointer to the specified line}
+  var
+    P : Pointer;
+    OSP : OS absolute P;
+  begin
+    P := efEditSt;
+    Inc(OSP.O, Succ(sfFWidth)*Pred(LineNum));
+    mfLinePtr := P;
+  end;
+
+  function MultiLineField.mfOrigLinePtr(LineNum : Byte) : StringPtr;
+    {-Return a pointer to the specified line}
+  var
+    P : Pointer;
+    OSP : OS absolute P;
+  begin
+    P := efVarPtr;
+    Inc(OSP.O, Succ(sfFWidth)*Pred(LineNum));
+    mfOrigLinePtr := P;
+  end;
+
+  procedure MultiLineField.mfDrawOne(St : string;
+                                     Row, Col : Byte;
+                                     FA, CA : Byte);
+    {-Draw one line in a multi-line field}
+  var
+    StLen : Byte absolute St;
+    PadChar : Char;
+    {$IFDEF UseMouse}
+    SaveMouse : Boolean;
+    {$ENDIF}
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(SaveMouse);
+    {$ENDIF}
+
+    if LongFlagIsSet(sfFlags, ifEditing) or not LongFlagIsSet(sfFlags, sefPadCurrentOnly) then
+      PadChar := efPadChar
+    else
+      PadChar := ' ';
+
+    {pad the end of the string if necessary}
+    if StLen < sfFWidth then
+      FillChar(St[Succ(StLen)], sfFWidth-StLen, PadChar);
+
+    {adjust the length byte}
+    StLen := sfFWidth;
+
+    if LongFlagIsSet(sfOptions, sfHidden) then         {!!.01}
+      FastFill(StLen, ' ', Row, Col, FA)               {!!.01}
+    else if LongFlagIsSet(sfOptions, efMapCtrls) then  {!!.01}
+      {draw the string, mapping control characters}
+      FastWriteCtrl(St, Row, Col, FA, CA)
+    else
+      {draw the string without mapping control characters}
+      FastWrite(St, Row, Col, FA);
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SaveMouse);
+    {$ENDIF}
+  end;
+
+  procedure MultiLineField.Draw(var St : string;
+                                Row, Col : Word;
+                                FA, CA, POffset : Byte;
+                                PasswordChar : Char;
+                                var Flags : PictureFlags);
+  var
+    LineNum : Byte;
+    S : string;
+    SLen : Byte absolute S;
+    {$IFDEF UseMouse}
+    SaveMouse : Boolean;
+    {$ENDIF}
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(SaveMouse);
+    {$ENDIF}
+
+    for LineNum := 1 to sfFHeight do
+      mfDrawOne(mfLinePtr(LineNum)^, Row+Pred(LineNum), Col, FA, CA);
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SaveMouse);
+    {$ENDIF}
+  end;
+
+  procedure MultiLineField.Edit(Row, Col : Word;
+                                FA, CA : Byte;
+                                PasswordChar : Char;
+                                PosCode : Byte;
+                                ReadOnly : Boolean;
+                                var CC : Word;
+                                var ChWord : Word;
+                                var InsertMode : Boolean;
+                                EP : ErrorProc;
+                                UnitCode : Byte;
+                                var CP : CommandProcessor);
+  var
+    Ch : Char absolute ChWord;
+    St : string;
+    StLen : Byte absolute St;
+    ErrCode : Word;
+    ErrorMsg : StringPtr;
+    CursorSL : Word;
+    StRow : Byte;
+    Sp : Byte;
+    SaveBreak : Boolean;
+    Finished : Boolean;
+    EditLen : Byte;
+    NumLines : Byte;
+    SaveInsertMode : Boolean;
+    DummyFlags : PictureFlags;
+    ForceRedraw : Boolean;
+
+    procedure RingBellPrim;
+      {-Ring the bell if desired}
+    begin
+      if LongFlagIsSet(sfOptions, efBeepOnError) then
+        RingBell;
+    end;
+
+    function LineLength(LineNum : Byte) : Byte;
+      {-Return the length of the specified line}
+    begin
+      if (LineNum < 1) or (LineNum > NumLines) then
+        LineLength := 0
+      else
+        LineLength := Length(mfLinePtr(LineNum)^);
+    end;
+
+    procedure Redraw(DrawType : Byte);
+      {-Position cursor and redraw string}
+      {DrawType codes:
+        0 = move cursor, don't draw
+        1 = draw current line, move cursor
+        2 = draw current line, don't move cursor
+        3 = redraw whole field
+      }
+    begin
+      {draw the whole field or just the current line}
+      case DrawType of
+        1..2 :
+          mfDrawOne(St, Row+Pred(StRow), Col, FA, CA);
+        3 :
+          begin
+            Draw(St, Row, Col, FA, CA, 0, PasswordChar, DummyFlags);
+            ForceRedraw := False;
+          end;
+      end;
+
+      if DrawType <> 2 then begin
+        {fix the cursor}
+        if Sp = 0 then
+          Sp := 1
+        else if (Sp > EditLen) then
+          Sp := EditLen;
+        sfFCPos := SP;
+        sfFRPos := StRow;
+
+        {position the cursor}
+        GoToXYAbs(Col+Pred(Sp), Row+Pred(StRow));
+      end;
+    end;
+
+    procedure LoadCurrentLine;
+      {-Load the current line into St}
+    begin
+      St := mfLinePtr(StRow)^;
+      if StLen > EditLen then
+        StLen := EditLen;
+    end;
+
+    procedure TrimBlanks;
+      {-Trim trailing spaces}
+    begin
+      while St[StLen] = ' ' do
+        Dec(StLen);
+    end;
+
+    procedure SaveCurrentLine;
+      {-Save the current line}
+    begin
+      if not ReadOnly then begin
+        if St[StLen] = ' ' then begin
+          TrimBlanks;
+          Redraw(2);
+        end;
+        mfLinePtr(StRow)^ := St;
+      end;
+    end;
+
+    procedure DelLinePrim(LineNum : Byte);
+      {-Delete the specified line}
+    var
+      I : Byte;
+    begin
+      {pull up lines that follow}
+      for I := LineNum to Pred(NumLines) do
+        mfLinePtr(I)^ := mfLinePtr(I+1)^;
+
+      {last line is empty}
+      mfLinePtr(NumLines)^ := '';
+
+      {redraw entire field}
+      ForceRedraw := True;
+    end;
+
+    function JoinLines : Boolean;
+      {-Join the next line with the current line at the cursor}
+    var
+      S2 : string;
+      S2Len : Byte absolute S2;
+    begin
+      JoinLines := False;
+      if StRow < NumLines then begin
+        {get the next line}
+        S2 := mfLinePtr(StRow+1)^;
+
+        {ok to join lines?}
+        if S2Len+Pred(Sp) > EditLen then begin
+          {not OK!}
+          RingBellPrim;
+          Exit;
+        end;
+
+        {fix the length of the current line}
+        if Sp > StLen then
+          FillChar(St[Succ(StLen)], Sp-StLen, ' ');
+        StLen := Pred(Sp);
+
+        {combine with the next line}
+        St := St+S2;
+        SaveCurrentLine;
+
+        {delete the next line}
+        DelLinePrim(StRow+1);
+
+        JoinLines := True;
+      end;
+    end;
+
+    procedure InsertLine(LineNum : Byte);
+      {-Insert a line at the specified position}
+    var
+      I : Byte;
+    begin
+      for I := Pred(NumLines) downto LineNum do
+        mfLinePtr(I+1)^ := mfLinePtr(I)^;
+      mfLinePtr(LineNum)^ := '';
+      ForceRedraw := True;
+    end;
+
+    function BreakLine : Boolean;
+      {-Break current line at the cursor}
+    begin
+      BreakLine := False;
+      if (StRow = NumLines) or (LineLength(NumLines) <> 0) then
+        Exit;
+
+      TrimBlanks;
+      InsertLine(StRow+1);
+      if (Sp <= StLen) and (StLen <> 0) then begin
+        mfLinePtr(StRow+1)^ := Copy(St, Sp, StLen);
+        StLen := Pred(Sp);
+        SaveCurrentLine;
+        ForceRedraw := True;
+      end;
+      BreakLine := True;
+    end;
+
+    procedure CheckAutoAdvance;
+      {-See if we need to auto-advance to next/previous field}
+    begin
+      if not Finished then
+        if (StRow = 1) and (SP = 0) and LongFlagIsSet(sfOptions, efAutoAdvCurBegin) then
+          Finished := True
+        else if (StRow = NumLines) and (SP > EditLen) and LongFlagIsSet(sfOptions, efAutoAdvCurEnd) then
+          Finished := True;
+    end;
+
+    function CharIsOK : Boolean;
+      {-Return true if Ch can be added to the string}
+    begin
+      CharIsOK := CharOK(efPicture^[1], Ch, #255, True);
+    end;
+
+    procedure HomeLine;
+      {-Cursor to beginning of line}
+    begin
+      Sp := 1;
+    end;
+
+    procedure EndLine;
+      {-Cursor to end of line}
+    begin
+      Sp := Succ(StLen);
+      if Sp > EditLen then
+        Sp := EditLen;
+    end;
+
+    procedure UpLine;
+      {-Cursor up one line}
+    begin
+      if StRow > 1 then begin
+        SaveCurrentLine;
+        Dec(StRow);
+        LoadCurrentLine;
+      end
+      else
+        Finished := True;
+    end;
+
+    procedure DownLine;
+      {-Cursor down one line}
+    begin
+      if StRow < NumLines then begin
+        SaveCurrentLine;
+        Inc(StRow);
+        LoadCurrentLine;
+      end
+      else
+        Finished := True;
+    end;
+
+    procedure CursorLeft(Wrap : Boolean);
+      {-Cursor left one column}
+    begin
+      if Sp > 1 then
+        Dec(Sp)
+      else if (StRow = 1) then begin
+        SP := 0;
+        CheckAutoAdvance;
+      end
+      else if Wrap then begin
+        UpLine;
+        EndLine;
+      end;
+    end;
+
+    procedure CursorRight(Wrap : Boolean);
+      {-Cursor right one column}
+    begin
+      if Sp < EditLen then
+        Inc(Sp)
+      else if (StRow = NumLines) then begin
+        Inc(SP);
+        CheckAutoAdvance;
+      end
+      else if Wrap then begin
+        DownLine;
+        HomeLine;
+      end;
+    end;
+
+    procedure InsertChar;
+      {-Insert Ch at St[SP]}
+    begin
+      if CharIsOK then begin
+        if Sp > StLen then begin
+          FillChar(St[Succ(StLen)], Sp-StLen, ' ');
+          StLen := Pred(Sp);
+        end;
+
+        if InsertMode then begin
+          if (StLen = EditLen) then begin
+            RingBellPrim;
+            Exit;
+          end;
+          Insert(Ch, St, Sp);
+          if StLen > EditLen then
+            StLen := EditLen;
+        end
+        else if (Sp <= EditLen) then begin
+          St[Sp] := Ch;
+          if (Sp > StLen) then
+            StLen := Sp;
+        end;
+        Redraw(2);
+        CursorRight(True);
+        if Finished then        {!!.12}
+          CC := ccAutoAdvance;  {!!.12}
+      end
+      else
+        RingBellPrim;
+    end;
+
+    procedure InsertCtrlChar;
+      {-Accept and insert a control character}
+    begin
+      {don't allow control characters if attributes are the same}
+      if (CA <> FA) or not LongFlagIsSet(sfOptions, efMapCtrls) then begin
+        {switch to a block cursor}
+        SetCursorType(CtrlCharCursor);
+        ChWord := CP.cpGetKey;
+
+        {insert the character}
+        InsertChar;
+
+        {reset the cursor}
+        InsertMode := not InsertMode;
+        ToggleInsertMode(InsertMode);
+      end;
+    end;
+
+    procedure WordLeft;
+      {-Cursor left one word}
+    begin
+      if Sp > 1 then begin
+        Dec(Sp);
+        while (Sp >= 1) and ((Sp > StLen) or (St[Sp] = ' ')) do
+          Dec(Sp);
+        while (Sp >= 1) and (St[Sp] <> ' ') do
+          Dec(Sp);
+        Inc(Sp);
+      end
+      else
+        CursorLeft(True);
+    end;
+
+    procedure WordRight;
+      {-Cursor right one word}
+    var
+      SaveSp : Byte;
+    begin
+      if (Sp < EditLen) and (Sp <= StLen) then begin
+        while (Sp <= StLen) and (St[Sp] <> ' ') do
+          Inc(Sp);
+        while (Sp <= StLen) and (St[Sp] = ' ') do
+          Inc(Sp);
+      end
+      else begin
+        SaveSp := Sp;
+        Sp := Succ(EditLen);
+        CursorRight(True);
+        if Sp > EditLen then
+          Sp := SaveSp;
+      end;
+    end;
+
+    procedure DeleteLine;
+      {-Delete the current line}
+    var
+      I : Word;
+    begin
+      if StRow = NumLines then begin
+        StLen := 0;
+        Sp := 1;
+        SaveCurrentLine;
+      end
+      else begin
+        {delete the current line}
+        DelLinePrim(StRow);
+
+        {reload the current line}
+        LoadCurrentLine;
+      end;
+    end;
+
+    procedure DeleteWord;
+      {-Delete word at cursor}
+    var
+      DelEnd : Byte;
+    begin
+      TrimBlanks;
+      if Sp <= StLen then begin
+        {start deleting at the cursor}
+        DelEnd := Sp;
+
+        {delete all of the current word, if any}
+        if St[Sp] <> ' ' then
+          while (St[DelEnd] <> ' ') and (DelEnd <= StLen) do
+            Inc(DelEnd);
+
+        {delete any spaces prior to the next word, if any}
+        while (St[DelEnd] = ' ') and (DelEnd <= StLen) do
+          Inc(DelEnd);
+
+        Delete(St, Sp, DelEnd-Sp);
+      end
+      else if JoinLines then
+        LoadCurrentLine;
+    end;
+
+    procedure DoBackspace;
+      {-Process backspace command}
+    begin
+      if Sp > 1 then begin
+        Dec(Sp);
+        Delete(St, Sp, 1);
+      end
+      else if StRow > 1 then begin
+        UpLine;
+        EndLine;
+        if JoinLines then
+          LoadCurrentLine
+        else begin
+          DownLine;
+          HomeLine;
+        end;
+      end;
+    end;
+
+    procedure DoEnter;
+      {-Process new line command}
+    begin
+      if (StRow = NumLines) then
+        if LongFlagIsSet(sfFlags, sefNoFieldMovement) then begin
+          RingBellPrim;
+          Exit;
+        end           {!!.01}
+        else if (SP > LineLength(NumLines) {EditLen}) or not InsertMode then begin
+          Finished := True;
+          Exit;
+        end;
+
+      if InsertMode and not ReadOnly then
+        if not BreakLine then begin
+          RingBellPrim;
+          Exit;
+        end;
+      DownLine;
+      HomeLine;
+    end;
+
+    function FindLastLine : Byte;
+      {-Find last non-empty line in field}
+    var
+      I : Byte;
+    begin
+      for I := NumLines downto 1 do
+        if LineLength(I) <> 0 then begin
+          FindLastLine := I;
+          Exit;
+        end;
+      FindLastLine := 1;
+    end;
+
+    function FieldModified : Boolean;
+      {-Returns True if field has been modified}
+    var
+      I : Byte;
+    begin
+      for I := 1 to NumLines do
+        if mfLinePtr(I)^ <> mfOrigLinePtr(I)^ then begin
+          FieldModified := True;
+          Exit;
+        end;
+     FieldModified := False;
+    end;
+
+    {$IFDEF UseMouse}
+    function MouseSelect : Boolean;
+      {-Is the mouse somewhere in the field?}
+    var
+      R, C : Byte;
+    begin
+      MouseSelect := False;
+
+      {calculate absolute mouse coordinates}
+      C := MouseKeyWordX+MouseXLo;
+      R := MouseKeyWordY+MouseYLo;
+
+      {is the mouse cursor inside our field?}
+      if (R >= Row) and (R <= Row+Pred(NumLines)) and
+         (C >= Col) and (C <= Col+Pred(EditLen)) then begin
+           {adjust the current column}
+           Sp := Succ(C-Col);
+
+           {is the mouse cursor on a different row}
+           R := Succ(R-Row);
+           if R <> StRow then begin
+             {new row--save current line and load new one}
+             SaveCurrentLine;
+             StRow := R;
+             LoadCurrentLine;
+           end;
+           MouseSelect := True;
+         end;
+    end;
+    {$ENDIF}
+
+  begin
+    {we're editing}
+    SetLongFlag(sfFlags, ifEditing);
+
+    EditLen := sfFWidth;
+    NumLines := sfFHeight;
+
+    {fill dummy picture flags}
+    FillChar(DummyFlags, SizeOf(DummyFlags), 1);
+
+    {Store cursor shape}
+    CursorSL := CursorTypeSL;
+
+    {Save break checking state}
+    SaveBreak := CheckBreak;
+    CheckBreak := False;
+
+    {set insert mode}
+    if LongFlagIsSet(sfOptions, efForceMode) then begin
+      SaveInsertMode := InsertMode;
+      InsertMode := LongFlagIsSet(sfOptions, efForceOvertype);
+    end
+    else
+      InsertMode := not InsertMode;
+    ToggleInsertMode(InsertMode);
+
+    {position the cursor}
+    case PosCode of
+      0, 2 :                 {normal, force start of string}
+        begin
+          StRow := 1;
+          LoadCurrentLine;
+          HomeLine;
+        end;
+      1, 3 :                 {force end of last non-empty line}
+        begin
+          StRow := FindLastLine;
+          LoadCurrentLine;
+          EndLine;
+        end;
+      4 :                    {move cursor to previous position}
+        begin
+          Sp := sfFCPos;
+          StRow := sfFRPos;
+          LoadCurrentLine;
+        end;
+    end;
+
+    {clear modified flag}
+    ClearLongFlag(sfFlags, ifModified);
+
+    {draw the entire field once}
+    ForceRedraw := True;
+
+    {Loop reading keys}
+    Finished := False;
+    repeat
+      {Position cursor and redraw string}
+      if ForceRedraw then
+        Redraw(3)
+      else case CC of
+        ccChar, ccCtrlChar, ccUp, ccDown, ccHome, ccEnd, ccLeft,
+        ccRight, ccWordLeft, ccWordRight, ccIns :
+          Redraw(0);
+        else
+          Redraw(1);
+      end;
+
+      {get next command}
+      ExchangeStructs(St, mfLinePtr(StRow)^, sfFWidth+1); {!!.11}
+      CC := CP.GetCommand(ChWord);
+      ExchangeStructs(St, mfLinePtr(StRow)^, sfFWidth+1); {!!.11}
+
+      {don't allow ccIncChoice or ccDecChoice}
+      case CC of
+        ccIncChoice,
+        ccDecChoice :
+          if Lo(ChWord) = 0 then
+            CC := ccNone
+          else
+            CC := ccChar;
+      end;
+
+      if ReadOnly then begin
+        if (CC <= 255) and not(CC in ReadOnlyCommands) then
+          CC := ccNone;
+      end
+      else if (CC <= 255) and not(CC in StringCommands) then
+        CC := ccNone;
+
+      case CC of
+        ccChar :             {Insert regular character}
+          InsertChar;
+
+        ccCtrlChar :         {Insert control character}
+          InsertCtrlChar;
+
+        ccSelect :  {means new line}
+          DoEnter;
+
+        ccUp :
+          UpLine;
+
+        ccDown :
+          DownLine;
+
+        ccTab, ccBackTab, ccNextField, ccAutoAdvance, ccPrevField,
+        ccNextRec, ccPrevRec, ccFirstFld, ccLastFld,
+        ccPageUp, ccPageDn, ccNested,
+        ccDone, ccUser0..ccUser65335 :
+          Finished := True;
+
+        {$IFDEF UseMouse}
+        ccMouseAuto,         {!!.03}
+        ccMouseDown,         {!!.03}
+        ccMouseSel :
+          if not MouseSelect then
+           if not LongFlagIsSet(sfFlags, ifNoMouseExit) then
+             Finished := True {(CC <> ccMouseAuto)};          {!!.14}
+        {$ENDIF}
+
+        ccRestore :          {Restore current line}
+          LoadCurrentLine;
+
+        ccQuit :             {Quit}
+          begin
+            {restore original contents of entire field}
+            Move(efVarPtr^, efEditSt^, efDataSize);
+            LoadCurrentLine;
+            Finished := True;
+          end;
+
+        ccHome :             {Cursor to beginning of line}
+          HomeLine;
+
+        ccEnd :              {Cursor to end of line}
+          EndLine;
+
+        ccDelEol :           {Delete from cursor to end of line}
+          if Sp <= StLen then
+            StLen := Pred(Sp);
+
+        ccDelBol :           {Delete from beginning of line to the cursor}
+          begin
+            if Sp > StLen then
+              StLen := 0
+            else
+              Delete(St, 1, Pred(Sp));
+            HomeLine;
+          end;
+
+        ccDelLine :          {Delete entire line}
+          DeleteLine;
+
+        ccLeft :             {Cursor left by one character}
+          CursorLeft(False);
+
+        ccRight :            {Cursor right by one character}
+          CursorRight(False);
+
+        ccWordLeft :         {Cursor left one word}
+          WordLeft;
+
+        ccWordRight :        {Cursor right one word}
+          WordRight;
+
+        ccDel :              {Delete current character}
+          if Sp <= StLen then
+            Delete(St, Sp, 1);
+
+        ccBack :             {Backspace one character}
+          DoBackSpace;
+
+        ccDelWord :          {Delete word to right of cursor}
+          DeleteWord;
+
+        ccIns :              {Toggle insert mode}
+          ToggleInsertMode(InsertMode);
+
+        ccHelp :             {Help}
+          CP.cpGetHelp(UnitCode, nil, sfHelpIndex);
+
+        else                 {not a command}
+          RingBellPrim;
+      end;
+
+      {make sure it's OK to go to next/previous field}
+      if Finished then
+        Finished := efOKtoAdvance(CC);
+
+      if Finished then begin
+        {save the current line}
+        if (CC <> ccQuit) and not ReadOnly then
+          SaveCurrentLine;
+
+        {make sure screen is up to date}
+        Redraw(3);
+
+        if (CC <> ccQuit) and not ReadOnly then begin
+          {is the entry valid?}
+          ErrorMsg := @emNullError;
+          if not Validate(ErrCode, ErrorMsg) then begin
+            Finished := False;
+            Inc(ErrCode, epWarning);
+            EP(UnitCode, ErrCode, ErrorMsg^);
+          end;
+        end;
+      end;
+
+    until Finished;
+
+    {set modified flag}
+    if (CC <> ccQuit) and FieldModified then
+      SetLongFlag(sfFlags, ifModified);
+
+    {restore insert mode if it was forced one way or the other}
+    if LongFlagIsSet(sfOptions, efForceMode) then
+      InsertMode := SaveInsertMode;
+
+    {restore break checking status}
+    CheckBreak := SaveBreak;
+
+    {restore cursor shape}
+    SetCursorSize(Hi(CursorSL), Lo(CursorSL));
+
+    {we're not editing}
+    ClearLongFlag(sfFlags, ifEditing);
+  end;
+

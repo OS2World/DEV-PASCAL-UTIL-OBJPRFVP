@@ -1,0 +1,2007 @@
+{*********************************************************}
+{*                  OPWINDOW.IN4 1.30                    *}
+{*     Copyright (c) TurboPower Software 1987, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {------------- WindowStack Routines --------------------------}
+
+  constructor WindowStack.Init(Max : Word);
+    {-Allocate stack and initialize}
+  begin
+    wsScreen.Init(1, 1, 0);
+    if not PointerStack.Init(Max) then
+      Fail;
+    wsLevel := 0;
+    wsFlags := 0;
+  end;
+
+  destructor WindowStack.Done;
+    {-Clean up and dispose}
+  begin
+    wsScreen.Done;
+    PointerStack.Done;
+  end;
+
+  function WindowStack.UnstackTop : WindowPtr;
+    {-Erase and unstack window at top of stack}
+  var
+    SWPtr : WindowPtr;
+  begin
+    UnstackTop := nil;
+    if SP = 0 then
+      Exit;
+    SWPtr := WindowPtr(PeekTop);
+    SWPtr^.ClearErrors;         {!!.01}
+    SWPtr^.Erase;
+    if SWPtr^.RawError = 0 then {!!.01}
+      UnstackTop := SWPtr;
+  end;
+
+  procedure WindowStack.OptimizeTiled(IsOn : Boolean); {!!.03}
+    {-Turn tiled window optimization on or off}
+  begin
+    if IsOn then
+      SetFlag(wsFlags, wsOptimizeTile)
+    else
+      ClearFlag(wsFlags, wsOptimizeTile);
+  end;
+
+  function WindowStack.TopWindow : WindowPtr;
+    {-Return a pointer to the window at top of stack}
+  begin
+    TopWindow := WindowPtr(PeekTop);
+  end;
+
+  {!!.03} {Various changes to handle child windows}
+  function WindowStack.EvaluateStackPos(X, Y : Byte) : WindowPtr;
+    {-Evaluate position and return pointer to indicated window, if any}
+  var
+    S : Word;
+    FWPtr : WindowPtr;
+
+    function PosInWindow(PWPtr : WindowPtr; var FWPtr : WindowPtr;
+                         X, Y : Byte) : Boolean;
+    var
+      CWPtr : WindowPtr;
+      WLN : StackWindowListNodePtr;
+      FP : FramePosType;
+      HC : Byte;
+      BP : LongInt;
+    begin
+      {Check child windows}
+      if PWPtr^.wChildList <> nil then
+        with PWPtr^.wChildList^ do begin
+          WLN := StackWindowListNodePtr(Head);
+          while WLN <> nil do begin
+            CWPtr := WLN^.swPtr;
+            if CWPtr^.IsActive then
+              {Recursively check its children}
+              if PosInWindow(CWPtr, FWPtr, X, Y) then begin
+                PosInWindow := True;
+                Exit;
+              end;
+            WLN := StackWindowListNodePtr(Next(WLN));
+          end;
+        end;
+
+      {Check the window itself}
+      PWPtr^.EvaluatePos(X, Y);
+      BP := PWPtr^.PosResults(FP, HC);
+      if FP <> frOutsideFrame then begin
+        FWPtr := PWPtr;
+        PosInWindow := True;
+        Exit;
+      end;
+
+      PosInWindow := False;
+    end;
+
+  begin
+    {Scan windows on the stack}
+    for S := SP downto 1 do
+      if PosInWindow(WindowPtr(Peek(S)), FWPtr, X, Y) then begin
+        EvaluateStackPos := FWPtr;
+        Exit;
+      end;
+
+    {Not in any window}
+    EvaluateStackPos := nil;
+  end;
+
+  {$IFDEF UseMouse}
+  function WindowStack.EvaluateStackMousePos : WindowPtr;
+    {-Evaluate mouse position using EvaluatePos}
+  var
+    MouseX : Byte;
+    MouseY : Byte;
+    Status : ButtonStatus;
+  begin
+    if MouseInstalled then begin
+      MouseWhereXYabs(MouseX, MouseY, Status);
+      EvaluateStackMousePos := EvaluateStackPos(MouseX, MouseY);
+    end else
+      EvaluateStackMousePos := nil;
+  end;
+  {$ENDIF}
+
+  function WindowStack.wsFindWindow(WPtr : WindowPtr;
+                                    var Covered : Boolean) : Word; {!!.03}
+    {-Return stack level of window WPtr, or 0 if inaccessible}
+  var
+    S : Word;
+    SWPtr : WindowPtr;
+  begin
+    wsFindWindow := 0;
+    Covered := not FlagIsSet(wsFlags, wsOptimizeTile); {!!.03}
+    S := SP;
+    while S > 0 do begin
+      SWPtr := WindowPtr(Peek(S));
+      if not LongFlagIsSet(SWPtr^.wFlags,
+                           wSaveContents+wUserContents) then
+        {Won't work unless SaveContents buffers allocated
+         or user is willing to update screen on demand}
+        Exit;
+      if SWPtr = WPtr then begin
+        {The window we're seeking}
+        wsFindWindow := S;
+        Exit;
+      end else begin
+        {Determine if WPtr is covered by any window above it in the stack}
+        {The double-check is needed for non-simple windows like menu systems}
+        if not Covered then                     {!!.03}
+          if SWPtr^.Intersects(WPtr) then       {!!.03}
+            Covered := True                     {!!.03}
+          else if WPtr^.Intersects(SWPtr) then  {!!.03}
+            Covered := True;                    {!!.03}
+        {Move down to next window in the stack}
+        dec(S);
+      end;
+    end;
+  end;
+
+  {Activate this define to make debugging easier. Disables virtual screens.}
+  {.$DEFINE KeepWritesVisible} {!!.02}
+
+  function WindowStack.wsActivate : Boolean;
+    {-Allocate and initialize virtual screen}
+  begin
+    with wsScreen do begin
+      if (vsWidth <> OpCrt.VirtualWidth) or (vsHeight <> OpCrt.VirtualHeight) then begin
+        {Deallocate previous buffer, if any}
+        Done;
+        {Allocate new buffer}
+        if not Alloc(OpCrt.VirtualHeight, OpCrt.VirtualWidth) then begin
+          wsActivate := False;
+          Exit;
+        end;
+      end;
+
+      {Save top window's cursor state and hide cursor}
+      if TopWindow <> nil then
+        if RawWindowPtr(TopWindow) = CurrentWindow then begin {!!.01}
+          TopWindow^.rwSaveWindowState;
+          TopWindow^.rwSaveContents;                          {!!.01}
+          OpCrt.HiddenCursor;
+        end;
+
+      {$IFNDEF KeepWritesVisible}
+      CopyFromScreen(1, 1);
+      Activate;
+      {$ENDIF}
+    end;
+    SetFlag(wsFlags, wsActivated);
+    wsActivate := True;
+  end;
+
+  procedure WindowStack.wsDeactivate;
+    {-Copy virtual screen to physical and deallocate}
+  begin
+    with wsScreen do begin
+      {Deactivate virtual screen, display, and dispose of it}
+      {$IFNDEF KeepWritesVisible}
+      Deactivate;
+      CopyToScreen(1, 1);
+      {$ENDIF}
+      Done;
+    end;
+    ClearFlag(wsFlags, wsActivated);
+    {No windows temporarily popped at this point}
+    wsLevel := 0;
+
+    {Update cursor shape for top window}
+    if TopWindow <> nil then
+      with TopWindow^ do
+        SetCursor(wCursor);
+  end;
+
+  function WindowStack.wsPopWindows(Level : Word;
+                                    var BaseCursorSL : Word) : Boolean; {!!.01}
+    {-Pop windows down to and including Level}
+  var
+    TW : WindowPtr;
+  begin
+    wsPopWindows := False;
+    {Save original stack level used when reactivating}
+    wsLevel := SP;
+    {Pop windows down to level}
+    while SP >= Level do begin
+      TW := TopWindow;
+
+      if not TopWindow^.IsCurrent then                    {!!.02}
+        {Force switch to top stacked window}              {!!.02}
+        TW^.rwDraw;                                       {!!.02}
+
+      TW^.ClearErrors;                                    {!!.01}
+      TW^.Erase;
+
+      {Return saved cursor shape for first active window} {!!.01}
+      if CurrentWindow = nil then                         {!!.01}
+        BaseCursorSL := TW^.wInitCursor;                  {!!.01}
+
+      if TW^.RawError <> 0 then                           {!!.01}
+        Exit;
+    end;
+    wsPopWindows := True;
+  end;
+
+  function WindowStack.wsFreeNumber : Word;
+    {-Return the next free window number on the stack}
+  var
+    S : Word;
+    N : Word;
+    WSet : array[0..255] of Byte;
+  begin
+    if SP = 0 then begin
+      wsFreeNumber := 1;
+      Exit;
+    end;
+    {Handle up to 8*256-1 (=2047) windows with a bit set}
+    FillChar(WSet, SizeOf(WSet), 0);
+    for S := 1 to SP do begin
+      N := WindowPtr(Peek(S))^.wNumber;
+      SetByteFlag(WSet[N div 8], 1 shl (N mod 8));
+    end;
+    for N := 1 to 2047 do
+      if not ByteFlagIsSet(WSet[N div 8], 1 shl (N mod 8)) then begin
+        wsFreeNumber := N;
+        Exit;
+      end;
+    {Should get here only if 2047 windows are active}
+    wsFreeNumber := 0;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor WindowStack.Load(var S : IdStream);
+    {-Load from stream}
+  var
+    I : Word;
+  begin
+    wsScreen.Init(1, 1, 0);
+    if not PointerStack.Load(S) then
+      Fail;
+    wsLevel := 0;
+    wsFlags := 0;
+
+    {Redraw the windows}
+    for I := 1 to SP do
+      WindowPtr(Peek(I))^.rwDraw; {!!.01}
+  end;
+
+  procedure WindowStack.Store(var S : IdStream);
+    {-Store to stream. Stores all currently stacked windows}
+  var
+    SWPtr : WindowPtr;
+  begin
+    {Save the window state of the top window}
+    SWPtr := WindowPtr(PeekTop);
+    if SWPtr <> nil then begin
+      SWPtr^.rwSaveWindowState;
+      SWPtr^.rwSaveContents; {!!.01}
+    end;
+
+    {Write the stack itself, and the windows it contains}
+    PointerStack.Store(S);
+  end;
+
+  procedure WindowStackStream(SPtr : IdStreamPtr);
+    {-Register a stream with all types needed for a window stack}
+  begin
+    with SPtr^ do begin
+      StackWindowStream(SPtr);
+      PointerStackStream(SPtr);
+      RegisterType(otWindowStack, veWindowStack,
+                   TypeOf(WindowStack),
+                   @WindowStack.Store, @WindowStack.Load);
+    end;
+  end;
+
+{$ENDIF}
+
+  {------------------ CommandWindow Routines -----------------------}
+
+  constructor CommandWindow.Init(X1, Y1, X2, Y2 : Byte;
+                                 var CP : CommandProcessor;
+                                 UnitCode : Byte);
+    {-Create a command window with default options and colors}
+  begin
+    if not CommandWindow.InitCustom(X1, Y1, X2, Y2, DefaultColorSet,
+                                    DefWindowOptions, CP, UnitCode) then
+      Fail;
+  end;
+
+  constructor CommandWindow.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                       var Colors : ColorSet;
+                                       Options : LongInt;
+                                       var CP : CommandProcessor;
+                                       UnitCode : Byte);
+    {-Create a command window with custom options}
+  begin
+    wHelpIndex := 0;
+    cwCmd := ccNone;
+    cwKey := 0;
+    cwCmdPtr := @CP;
+    cwErrorProc := DefaultErrorProc;
+    cwError := 0;
+    cwUnitCode := UnitCode;
+    cwExitSetPtr := nil;
+    cwLastDownHs := hsNone; {!!.03}
+    cwLastDownFp := frOutsideFrame; {!!.13}
+
+    if not StackWindow.InitCustom(X1, Y1, X2, Y2, Colors, Options) then
+      Fail;
+  end;
+
+  procedure CommandWindow.ProcessSelf; {!!.01}
+    {-Process commands}
+  begin
+    Abstract;
+  end;
+
+  procedure CommandWindow.Process; {!!.01}
+    {-Process commands}
+  var
+    SaveCurrent : RawWindowPtr;
+    SaveBreak : Boolean;
+    MouseOn : Boolean;
+  begin
+    {check for pending error}
+    SetLastCommand(ccError);
+    if cwGetLastError <> 0 then
+      Exit;
+    {Clear any other errors as well}
+    cwActiveCwPtr^.ClearErrors;
+
+    {$IFDEF UseMouse}
+    HideMousePrim(MouseOn);
+    if cwCmdPtr^.MouseEnabled then begin
+      ShowMouse;
+      EvaluatePos(MouseKeyWordX+MouseXLo, MouseKeyWordY+MouseYLo); {!!.03}
+      cwLastDownHs := wHotCode;                                    {!!.03}
+      cwLastDownFp := wFramePos;                                   {!!.13}
+    end;
+    {$ENDIF}
+
+    {Save break checking state and turn break checking off}
+    SaveBreak := CheckBreak;
+    CheckBreak := False;
+
+    if wActiveChild = nil then
+      ProcessSelf
+    else begin
+      SaveCurrent := CurrentWindow;
+      CurrentWindow := wActiveChild;
+      CommandWindowPtr(wActiveChild)^.Process;
+      CurrentWindow := SaveCurrent;
+    end;
+
+    CheckBreak := SaveBreak;
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(MouseOn);
+    {$ENDIF}
+  end;
+
+  procedure CommandWindow.ProcessAutoPilot(var CmdList; NumCmds : Word);
+    {-Process commands, starting with those in CmdList}
+  begin
+    if cwCmdPtr = nil then begin
+      GotError(epFatal+ecNoProcessor, emNullError);
+      exit;
+    end;
+
+    {set command list}
+    cwCmdPtr^.SetCommandList(@CmdList, NumCmds);
+
+    {process the commands}
+    Process;
+  end;
+
+  function CommandWindow.cwActiveCwPtr : CommandWindowPtr; {!!.01}
+    {-Return pointer to active (child or parent) command window}
+  begin
+    if wActiveChild = nil then
+      cwActiveCwPtr := @Self
+    else
+      {Recursive call in case of grandchild windows  vvvvvvvvvvvvvvv} {!!.10}
+      cwActiveCwPtr := CommandWindowPtr(wActiveChild)^.cwActiveCwPtr; {!!.10}
+  end;
+
+  procedure CommandWindow.SetCommandProcessor(var CP : CommandProcessor);
+    {-Set command processor to use}
+  begin
+    cwActiveCwPtr^.cwCmdPtr := @CP; {!!.01}
+  end;
+
+  function CommandWindow.GetCommandProcessor : CommandProcessorPtr;
+    {-Return pointer to window's command processor}
+  begin
+    GetCommandProcessor := cwActiveCwPtr^.cwCmdPtr; {!!.01}
+  end;
+
+  procedure CommandWindow.GetNextCommand;
+    {-Called by Process to get next command from user}
+  begin
+    with cwActiveCwPtr^ do begin {!!.01}
+      if cwCmdPtr = nil then begin
+        GotError(epFatal+ecNoProcessor, emNullError);
+        exit;
+      end;
+      cwCmd := cwCmdPtr^.GetCommand(cwKey);
+    end;                         {!!.01}
+  end;
+
+  procedure CommandWindow.RequestHelp(HelpIndex : Word);
+    {-Called by Process to request context-sensitive help}
+  begin
+    with cwActiveCwPtr^ do begin {!!.01}
+      if cwCmdPtr = nil then begin
+        GotError(epFatal+ecNoProcessor, emNullError);
+        exit;
+      end;
+      cwCmdPtr^.cpGetHelp(cwUnitCode, @Self, HelpIndex);
+    end;                         {!!.01}
+  end;
+
+  function CommandWindow.GetLastCommand : Word;
+    {-Return last command entered by user}
+  begin
+    GetLastCommand := cwActiveCwPtr^.cwCmd; {!!.01}
+  end;
+
+  procedure CommandWindow.SetLastCommand(Cmd : Word);
+    {-Change last command}
+  begin
+    cwActiveCwPtr^.cwCmd := Cmd; {!!.01}
+  end;
+
+  function CommandWindow.GetLastKey : Word;
+    {-Return last keystroke entered by user}
+  begin
+    GetLastKey := cwActiveCwPtr^.cwKey; {!!.01}
+  end;
+
+  procedure CommandWindow.SetHelpIndex(Index : Word);
+    {-Set help topic number for this window}
+  begin
+    cwActiveCwPtr^.wHelpIndex := Index; {!!.01}
+  end;
+
+  function CommandWindow.GetHelpIndex : Word;
+    {-Return the help topic number for this window}
+  begin
+    GetHelpIndex := cwActiveCwPtr^.wHelpIndex; {!!.01}
+  end;
+
+  procedure CommandWindow.SetErrorProc(EP : ErrorProc);
+    {-Set error handler}
+  begin
+    cwActiveCwPtr^.cwErrorProc := EP; {!!.01}
+  end;
+
+  function CommandWindow.ClassifyError(ErrorCode : Word) : Byte;
+    {-Return the class of the specified error code}
+  begin
+    if ErrorCode mod 10000 = 0 then
+      ClassifyError := etNoError
+    else if ErrorCode >= 40000 then
+      {invalid error code--treat it as fatal}
+      ClassifyError := etFatal
+    else
+      ClassifyError := ErrorCode div 10000;
+  end;
+
+  procedure CommandWindow.GotError(ErrorCode : Word; ErrorMsg : string);
+    {-To be called when an error occurs}
+  begin
+    {Store the error in a RawWindow field for internal use}
+    RawWindow.Error(ErrorCode);  {!!.01}
+    with cwActiveCwPtr^ do begin {!!.01}
+      cwError := ErrorCode;
+      if ErrorCode mod 10000 <> 0 then begin
+        cwErrorProc(cwUnitCode, cwError, ErrorMsg);
+        if ClassifyError(cwError) <> etFatal then
+          cwError := 0;
+      end;
+    end;
+  end;
+
+  procedure CommandWindow.Error(Code : Word);
+    {-Overrides RawWindow's routine that is called when an error occurs}
+  begin
+    {Special case for a very common error message} {!!.03}
+    if Code mod 10000 = ecOutOfMemory then         {!!.03}
+      GotError(Code, emInsufficientMemory)         {!!.03}
+    else                                           {!!.03}
+      GotError(Code, emNullError);
+  end;
+
+  function CommandWindow.GetLastError : Word;
+    {-Return last CommandWindow error code}
+  begin
+    with cwActiveCwPtr^ do begin {!!.01}
+      GetLastError := cwGetLastError;
+      cwError := 0;
+    end;
+  end;
+
+  function CommandWindow.PeekLastError : Word;
+    {-Return last I/O error code without resetting internal variable}
+  begin
+    PeekLastError := cwActiveCwPtr^.cwGetLastError; {!!.01}
+  end;
+
+  procedure CommandWindow.ClearErrors; {!!.01}
+    {-Clear all pending errors}
+  begin
+    {Clear RawWindow internal errors}
+    while RawWindow.GetLastError <> 0 do ;
+    {Clear CommandWindow or higher level errors}
+    AbstractWindow.ClearErrors;
+  end;
+
+  procedure CommandWindow.SetExitCommands(ExitSetPtr : ByteSetPtr);
+    {-Specify set of special exit commands}
+  begin
+    cwActiveCwPtr^.cwExitSetPtr := ExitSetPtr; {!!.01}
+  end;
+
+  function CommandWindow.GetExitCommandPtr : ByteSetPtr;
+    {-Return pointer to set of special exit commands}
+  begin
+    GetExitCommandPtr := cwActiveCwPtr^.cwExitSetPtr; {!!.01}
+  end;
+
+  function CommandWindow.cwGetLastError : Word;
+    {-Return last I/O error code (non-destructive)}
+  begin
+    {!!.01}
+    {Don't look at RawWindow internal errors here. These are
+     automatically stored in cwError when they are reported.
+     RawWindow internal errors are not automatically cleared
+     as CommandWindow errors are.}
+    {if cwError = 0 then
+      cwError := RawWindow.GetLastError;}
+    cwGetLastError := cwActiveCwPtr^.cwError; {!!.01}
+  end;
+
+{$IFDEF UseMouse}                                                      {!!.10}
+
+  procedure CommandWindow.cwSetLastDown(FramePos : FramePosType; {!!.03}
+                                        HotCode : Byte);
+    {-Store value for cwLastDownHs}
+  begin
+    cwLastDownHs := HotCode;
+    cwLastDownFp := FramePos; {!!.13}
+    if (HotCode = hsNone) and (FramePos <> frInsideActive) then
+      cwLastDownHs := hsOutsideActive;
+  end;
+
+  function CommandWindow.cwMouseResults(Cmd : Word;                    {!!.13}
+                                        var FramePos : FramePosType;   {!!.03}
+                                        var HotCode : Byte) : LongInt;
+  {!!.13} {New section added for new scrollbar dragging behavior}
+  var
+    SliPos : Byte;
+  begin
+    {$IFDEF UseScrollBars}
+    if cwCmdPtr^.cpOptionsAreOn(cpMouseDrag) and
+       (Cmd = ccMouseAuto) and (cwLastDownHs = hsBar) then begin
+      {Continuation of a drag on a scroll bar}
+      with FramePtr(ActiveFramePtr)^.frBars[cwLastDownFp]^ do begin
+        case cwLastDownFp of
+          frTT, frBB : SliPos := MouseKeyWordX+MouseXLo;
+          frLL, frRR : SliPos := MouseKeyWordY+MouseYLo;
+        end;
+        {Clip mouse to within slider portion of scroll bar}
+        if SliPos > sbMaxPos-1 then
+          SliPos := sbMaxPos-1
+        else if SliPos < sbMinPos+1 then
+          SliPos := sbMinPos+1;
+        {Adjust the mouse position to match our interpretation}
+        case cwLastDownFp of
+          frTT, frBB :
+            begin
+              MouseKeyWordX := SliPos-MouseXLo;
+              MouseKeyWordY := sbFixPos;
+            end;
+          frLL, frRR :
+            begin
+              MouseKeyWordY := SliPos-MouseYLo;
+              MouseKeyWordX := sbFixPos;
+            end;
+        end;
+        {Get the corresponding user value}
+        cwMouseResults := UserValue(SliPos);
+      end;
+      FramePos := cwLastDownFp;
+      HotCode := hsBar;
+    end else
+    {$ENDIF}
+    begin
+      {Determine position of mouse}
+      EvaluatePos(MouseKeyWordX+MouseXLo, MouseKeyWordY+MouseYLo);
+      cwMouseResults := PosResults(FramePos, HotCode);
+    end;
+  end;
+
+  function CommandWindow.cwIgnoreMouseEvent(var Dragging : Boolean;    {!!.03}
+                                            Cmd : Word;
+                                            FramePos : FramePosType;
+                                            HotCode : Byte) : Boolean;
+    {-Return True if event Cmd should be ignored by CommandWindow}
+  begin
+    {Is mouse dragging activated?}
+    Dragging := cwCmdPtr^.cpOptionsAreOn(cpMouseDrag);
+
+    {Exit if an auto or release command in a different window region} {!!}
+    if Dragging then
+      if (Cmd <> ccMouseDown) and (HotCode <> cwLastDownHs) then begin
+        cwIgnoreMouseEvent := True;
+        Exit;
+      end;
+    {Store region code for next entry to this routine}
+    if (Cmd = ccMouseDown) then
+      cwSetLastDown(FramePos, HotCode);
+    cwIgnoreMouseEvent := False;
+  end;
+
+{$ENDIF}                                                               {!!.10}
+
+{$IFDEF UseStreams}
+
+  constructor CommandWindow.Load(var S : IdStream);
+    {-Load from stream}
+  begin
+    wHelpIndex := 0;
+    cwCmd := ccNone;
+    cwKey := 0;
+    cwError := 0;
+    cwLastDownHs := hsNone; {!!.03}
+    cwLastDownFp := frOutsideFrame; {!!.13}
+
+    if not StackWindow.Load(S) then
+      Fail;
+
+    S.Read(wHelpIndex, SizeOf(wHelpIndex));
+    S.Read(cwUnitCode, SizeOf(Byte));
+    @cwErrorProc := S.ReadUserPointer(@DefaultErrorProc);
+    cwCmdPtr := S.ReadPointer;
+    cwExitSetPtr := S.ReadPointer;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure CommandWindow.Store(var S : IdStream);
+    {-Store to stream}
+  begin
+    StackWindow.Store(S);
+    S.Write(wHelpIndex, SizeOf(wHelpIndex));
+    S.Write(cwUnitCode, SizeOf(Byte));
+    S.WriteUserPointer(@cwErrorProc, ptDefaultErrorProc);
+    S.WriteUserPointer(cwCmdPtr, ptNil);
+    S.WriteUserPointer(cwExitSetPtr, ptNil);
+  end;
+
+  procedure CommandWindowStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing command windows}
+  begin
+    StackWindowStream(SPtr);
+    with SPtr^ do begin
+      RegisterType(otCommandWindow, veCommandWindow, TypeOf(CommandWindow),
+                   @CommandWindow.Store, @CommandWindow.Load);
+      RegisterPointer(ptDefaultErrorProc, @DefaultErrorProc);
+    end;
+  end;
+
+{$ENDIF}
+
+  {-------------------- VirtScreen Routines -------------------------}
+
+  procedure VirtScreen.vsZeroOut;
+    {-Clear the data fields of a virtual screen object}
+  begin
+    vsWidth := 0;
+    vsHeight := 0;
+    vsVideoSeg := 0;
+    vsSize := 0;
+    vsBufPtr := nil;
+    vsAllocated := False;
+  end;
+
+  constructor VirtScreen.Alloc(Height, Width : Word);
+    {-Create a virtual screen of the specified dimensions}
+  var
+    Size : LongInt;
+{$IFDEF Dpmi}              {!!.20}
+    SaveSize : LongInt;    {!!.20}
+{$ENDIF}                   {!!.20}
+  begin
+    vsZeroOut;
+    if not Root.Init then
+      Fail;
+
+    Size := LongInt(2)*Width*Height;
+    if (Size > $FFF1-15) or (Size <= 0) then begin
+      Done;
+      InitStatus := epFatal+ecWinCoordsBad;
+      Fail;
+    end;
+
+{$IFDEF Dpmi}              {!!.20 begin}
+    {set HeapLimit to our allocation size to force a 0-offset selector}
+    SaveSize := HeapLimit;
+    HeapLimit := Size;
+    if not GetMemCheck(vsBufPtr, Size) then begin
+      HeapLimit := SaveSize;
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+    HeapLimit := SaveSize;
+{$ELSE}                    {!!.20 end}
+    if not GetMemCheck(vsBufPtr, Size+15) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+{$ENDIF}                   {!!.20}
+
+    vsWidth := Width;
+    vsHeight := Height;
+    vsSize := Size;
+    vsAllocated := True;
+    {Choose segment such that vsVideoSeg:0 is within buffer}
+    {$IFDEF VIRTUALPASCAL}
+    vsVideoSeg := Word(vsBufPtr);
+    {$ELSE}
+    vsVideoSeg := OS(vsBufPtr).S;
+{$IFNDEF Dpmi}                                                         {!!.20}
+    if OS(vsBufPtr).O <> 0 then
+      inc(vsVideoSeg);
+{$ENDIF}                                                               {!!.20}
+    {$ENDIF}
+
+    {Initialize the buffer}
+    Clear(TextAttr, TextChar);
+  end;
+
+  constructor VirtScreen.Init(Height, Width : Word; BufSeg : Word);
+    {-Initialize a virtual screen with a preallocated buffer}
+  var
+    Size : LongInt;
+  begin
+    vsZeroOut;
+    if not Root.Init then
+      Fail;
+
+    Size := LongInt(2)*Width*Height;
+    if (Size > $FFF1-15) or (Size <= 0) then begin
+      Done;
+      InitStatus := epFatal+ecWinCoordsBad;
+      Fail;
+    end;
+
+    vsWidth := Width;
+    vsHeight := Height;
+    vsSize := Size;
+    vsVideoSeg := BufSeg;
+
+    {Initialize the buffer}
+    if BufSeg <> 0 then                 {!!.20}
+      Clear(TextAttr, TextChar);
+  end;
+
+  destructor VirtScreen.Done;
+    {-Deallocate a virtual screen}
+  begin
+    if vsAllocated then
+{$IFDEF Dpmi}                             {!!.22}
+      FreeMemCheck(vsBufPtr, vsSize);     {!!.22}
+{$ELSE}                                   {!!.22}
+      FreeMemCheck(vsBufPtr, vsSize+15);
+{$ENDIF}                                  {!!.22}
+    vsZeroOut;
+    Root.Done;
+  end;
+
+  procedure VirtScreen.Activate;
+    {-Activate fastwriting to virtual screen}
+  begin
+    vsSaveSeg := OpCrt.VirtualSegment;
+    vsSaveHeight := OpCrt.VirtualHeight;
+    vsSaveWidth := OpCrt.VirtualWidth;
+    OpCrt.VirtualSegment := vsVideoSeg;
+    OpCrt.VirtualHeight := vsHeight;
+    OpCrt.VirtualWidth := vsWidth;
+  end;
+
+  procedure VirtScreen.Deactivate;
+    {-Deactivate fastwriting to virtual screen}
+  begin
+    OpCrt.VirtualSegment := vsSaveSeg;
+    OpCrt.VirtualWidth := vsSaveWidth;
+    OpCrt.VirtualHeight := vsSaveHeight;
+  end;
+
+  procedure VirtScreen.Clear(Attr : Byte; Fill : Char);
+    {-Clear virtual screen}
+  var
+    FW : Word;
+  begin
+    FW := Swap(Word(Attr)) or Word(Fill);
+    {$IFDEF VIRTUALPASCAL}
+    FillWord(mem[vsVideoSeg+0], vsSize shr 1, FW);
+    {$ELSE}
+    FillWord(mem[vsVideoSeg:0], vsSize shr 1, FW);
+    {$ENDIF}
+  end;
+
+  procedure VirtScreen.WriteTo(S : string; Row, Col : Word; Attr : Byte);
+    {-Write a string to virtual screen}
+  var
+    Segm : Word;
+    Lofs : Word;
+    Width : Word;
+  begin
+    Segm := vsVideoSeg;
+    Lofs := vsSize;
+    Width := vsWidth;
+    {$IFDEF VIRTUALPASCAL}
+    asm
+      lea   esi,S
+      movzx ecx,byte ptr [esi]
+      jecxz @done
+      mov   eax,Row
+      dec   eax
+      mul   Width
+      add   eax,Col
+      dec   eax
+      shl   eax,1
+      mov   edi,eax
+      sub   eax,Lofs
+      ja    @done
+      neg   eax
+      shr   eax,1
+      cmp   eax,ecx
+
+      jae   @leavelen
+      mov   ecx,eax
+    @leavelen:
+      mov   ah,attr
+      add   edi,segm
+      inc   esi
+      cld
+    @next:
+      lodsb
+      stosw
+      loop   @next
+    @done:
+    end;
+    {$ELSE}
+    inline
+     ($1E/                 {push    ds                  ;save DS}
+      $16/                 {push    ss}
+      $1F/                 {pop     ds}
+      $8D/$B6/>S/          {lea     si,[bp+>S]          ;DS:SI -> string to write}
+      $8A/$0C/             {mov     cl,[si]}
+      $30/$ED/             {xor     ch,ch               ;CX = length to write}
+      $E3/$30/             {jcxz    done                ;get out if empty string}
+      $8B/$86/>Row/        {mov     ax,[bp+>Row]        ;row number}
+      $48/                 {dec     ax                  ;zero-based}
+      $F7/$A6/>Width/      {mul     word ptr [bp+>Width] ;multiply by columns in virtual screen}
+      $03/$86/>Col/        {add     ax,[bp+>Col]        ;add column}
+      $48/                 {dec     ax                  ;zero-based}
+      $D1/$E0/             {shl     ax,1                ;account for attributes}
+      $89/$C7/             {mov     di,ax               ;store destination offset}
+      $2B/$86/>Lofs/       {sub     ax,[bp+>Lofs]}
+      $77/$18/             {ja      done                ;jump if destination is beyond end of buffer}
+      $F7/$D8/             {neg     ax}
+      $D1/$E8/             {shr     ax,1                ;AX = number of chars left on virtual screen}
+      $39/$C8/             {cmp     ax,cx               ;compare to characters to write}
+      $73/$02/             {jae     leavelen            ;jump if space}
+      $89/$C1/             {mov     cx,ax               ;only write what fits}
+      {leavelen:}
+      $8A/$A6/>Attr/       {mov     ah,[bp+>attr]       ;get attribute to write with}
+      $8E/$86/>Segm/       {mov     es,[bp+>segm]       ;ES:DI -> output destination}
+      $46/                 {inc     si                  ;skip length byte}
+      $FC/                 {cld                         ;forward}
+      {next:}
+      $AC/                 {lodsb                       ;load character from string}
+      $AB/                 {stosw                       ;store character and attribute}
+      $E2/$FC/             {loop    next                ;write 'em all}
+      {done:}
+      $1F);                {pop     ds                  ;restore ds}
+    {$ENDIF}
+  end;
+
+  procedure VirtScreen.ReadFrom(Number : Byte; Row, Col : Word; var S : string);
+    {-Read number characters from the virtual screen starting at Row,Col}
+  var
+    Segm : Word;
+    Lofs : Word;
+    Width : Word;
+  begin
+    Segm := VsVideoSeg;
+    Lofs := VsSize;
+    Width := VsWidth;
+    {$IFDEF VIRTUALPASCAL}
+    asm
+      mov   edi,S
+      movzx ecx,byte ptr Number
+      mov   eax,Row
+      dec   eax
+      mul   Width
+      add   eax,Col
+      dec   eax
+      shl   eax,1
+      mov   esi,eax
+      sub   eax,Lofs
+      neg   eax
+      shr   eax,1
+      cmp   eax,ecx
+
+      jae   @storelen
+      mov   ecx,eax
+    @storelen:
+      cld
+      mov   al,cl
+      stosb
+      jcxz  @done
+    @next:
+      lodsb
+      stosw
+      loop   @next
+    @done:
+    end;
+    {$ELSE}
+    inline
+     ($1E/                 {push ds}
+      $8E/$5E/<Segm/       {mov  ds,[bp+<Segm]       ;DS -> virtual screen}
+      $C4/$7E/<S/          {les  di,[bp+<S]          ;ES:DI -> string S}
+      $8A/$4E/<Number/     {mov  cl,[bp+<Number]}
+      $30/$ED/             {xor  ch,ch               ;CX = number of characters to read}
+      $8B/$46/<Row/        {mov  ax,[bp+<Row]        ;AX = row number}
+      $48/                 {dec  ax                  ;zero-based}
+      $F7/$66/<Width/      {mul  word ptr [bp+<Width] ;multiply by columns in virtual screen}
+      $03/$46/<Col/        {add  ax,[bp+<Col]        ;add column}
+      $48/                 {dec  ax                  ;zero-based}
+      $D1/$E0/             {shl  ax,1                ;account for attributes}
+      $89/$C6/             {mov  si,ax               ;store starting source offset}
+      $2B/$46/<Lofs/       {sub  ax,[bp+<Lofs]}
+      $F7/$D8/             {neg  ax}
+      $D1/$E8/             {shr  ax,1                ;AX = characters left on virtual screen}
+      $39/$C8/             {cmp  ax,cx               ;compare characters left to requested}
+      $73/$02/             {jae  storelen            ;jump if enough left}
+      $89/$C1/             {mov  cx,ax               ;only return what there are}
+      {storelen:}
+      $FC/                 {cld                      ;forward}
+      $88/$C8/             {mov  al,cl}
+      $AA/                 {stosb                    ;store length of string}
+      $E3/$04/             {jcxz done                ;get out if no characters to transfer}
+      {next:}
+      $AD/                 {lodsw                    ;load next character/attribute pair}
+      $AA/                 {stosb                    ;store just the character}
+      $E2/$FC/             {loop next                ;get as many as requested}
+      {done:}
+      $1F);                {pop  ds                  ;restore DS}
+    {$ENDIF}
+  end;
+
+  procedure VirtScreen.ScrollHoriz(Cols : Integer; Attr : Byte; Fill : Char);
+    {-Scroll contents horizontally}
+  var
+    WordsToMove : Word;
+    BytesAcross : Integer;
+    SrcPos : Word;
+    DestPos : Word;
+    Row : Word;
+    FW : Word;
+    VSeg : Word;
+  begin
+    if Cols = 0 then
+      Exit;
+
+    BytesAcross := Integer(2)*vsWidth;
+    VSeg := vsVideoSeg;
+
+    {Shift existing text}
+    if Abs(Cols) < vsWidth then begin
+      WordsToMove := vsWidth-Abs(Cols);
+      SrcPos := 0;
+      DestPos := 0;
+      if Cols > 0 then
+        inc(SrcPos, 2*Cols)
+      else
+        inc(DestPos, 2*Abs(Cols));
+      for Row := 1 to vsHeight do begin
+        {$IFDEF VIRTUALPASCAL}
+        move(Mem[VSeg+SrcPos], Mem[VSeg+DestPos], WordsToMove);
+        {$ELSE}
+        move(Mem[VSeg:SrcPos], Mem[VSeg:DestPos], WordsToMove);
+        {$ENDIF}
+        Inc(SrcPos, BytesAcross);
+        Inc(DestPos, BytesAcross);
+      end;
+    end;
+
+    {Fill remaining region}
+    FW := Swap(Word(Attr)) or Word(Fill);
+    WordsToMove := Abs(Cols);
+    if Cols > 0 then
+      DestPos := Word(2)*(vsWidth-Cols)
+    else
+      DestPos := 0;
+    for Row := 1 to vsHeight do begin
+      {$IFDEF VIRTUALPASCAL}
+      FillWord(Mem[VSeg+DestPos], WordsToMove, FW);
+      {$ELSE}
+      FillWord(Mem[VSeg:DestPos], WordsToMove, FW);
+      {$ENDIF}
+      inc(DestPos, BytesAcross);
+    end;
+  end;
+
+  procedure VirtScreen.ScrollVert(Rows : Integer; Attr : Byte; Fill : Char);
+    {-Scroll contents vertically}   {!!.03} {rewritten--changes throughout}
+  var
+    SrcPos, DestPos : Word;
+    BytesPerRow, BytesToMove : Word;
+  begin
+    if (Rows = 0) or (Abs(Rows) >= vsHeight) then
+      Rows := vsHeight
+    else begin
+      {Move existing text}
+      BytesPerRow := vsWidth*2;
+      BytesToMove := BytesPerRow*(vsHeight-Abs(Rows));
+      if Rows > 0 then begin
+        SrcPos := Rows*BytesPerRow;
+        DestPos := 0;
+      end
+      else begin
+        SrcPos := 0;
+        DestPos := Abs(Rows)*BytesPerRow;
+      end;
+      {$IFDEF VIRTUALPASCAL}
+      Move(Mem[vsVideoSeg+SrcPos], Mem[vsVideoSeg+DestPos], BytesToMove);
+      {$ELSE}
+      Move(Mem[vsVideoSeg:SrcPos], Mem[vsVideoSeg:DestPos], BytesToMove);
+      {$ENDIF}
+    end;
+
+    {Fill remaining region}
+    if Rows > 0 then
+      DestPos := BytesPerRow*(vsHeight-Rows)
+    else
+      DestPos := 0;
+    {$IFDEF VIRTUALPASCAL}
+    FillWord(
+      Mem[vsVideoSeg+DestPos], vsWidth*Abs(Rows), Swap(Attr) or Word(Fill));
+    {$ELSE}
+    FillWord(
+      Mem[vsVideoSeg:DestPos], vsWidth*Abs(Rows), Swap(Attr) or Word(Fill));
+    {$ENDIF}
+  end;
+
+  procedure VirtScreenWindowSetup(var VS : VirtScreen;
+                                  Row, Col : Word;
+                                  var RMin, RMax, Vofs,
+                                  Cofs, Cwid : Word);
+    {-Set up factors for addressing virtual screen}
+  var
+    CMin : Word;
+  begin
+    with VS do begin
+      CMin := lo(OpCrt.WindMin);
+      CWid := MinWord(lo(OpCrt.WindMax)-CMin, vsWidth-Col)+1;
+      RMin := hi(OpCrt.WindMin);
+      RMax := MinWord(hi(OpCrt.WindMax)-RMin, vsHeight-Row)+RMin;
+      vOfs := 2*((Row-1)*vsWidth+(Col-1));
+      cOfs := 2*(RMin*OpCrt.VirtualWidth+CMin);
+    end;
+  end;
+
+  procedure VirtScreen.CopyFromWindow(Row, Col : Word);
+    {-Copy from physical window to position <Row,Col> on virtual screen}
+  var
+    CWid : Word;
+    RMin : Word;
+    RMax : Word;
+    cOfs : Word;
+    vOfs : Word;
+    R : Word;
+    vSeg : Word;
+    vWid : Word;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    if (Row = 0) or (Col = 0) then
+      Exit;
+    if (Row > vsHeight) or (Col > vsWidth) then
+      Exit;
+    VirtScreenWindowSetup(Self, Row, Col, RMin, RMax, Vofs, Cofs, Cwid);
+
+    vSeg := vsVideoSeg;
+    vWid := 2*vsWidth;
+
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+
+    for R := RMin to RMax do begin
+      {$IFDEF VIRTUALPASCAL}
+      MoveScreen(mem[OpCrt.VirtualSegment+cOfs], mem[vSeg+vOfs], CWid);
+      {$ELSE}
+      MoveScreen(mem[OpCrt.VirtualSegment:cOfs], mem[vSeg:vOfs], CWid);
+      {$ENDIF}
+      Inc(vOfs, vWid);
+      Inc(cOfs, 2*OpCrt.VirtualWidth);
+    end;
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+  end;
+
+  procedure VirtScreen.CopyToWindow(Row, Col : Word);
+    {-Copy from position <Row,Col> on virtual screen to physical window}
+  var
+    WWid : Word;
+    CWid : Word;
+    RMin : Word;
+    RMax : Word;
+    cOfs : Word;
+    vOfs : Word;
+    R : Word;
+    vSeg : Word;
+    vWid : Word;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    if (Row = 0) or (Col = 0) then
+      Exit;
+    if (Row > vsHeight) or (Col > vsWidth) then begin
+      {Beyond the virtual screen, just clear the window}
+      ClearRect(lo(OpCrt.WindMin)+1, hi(OpCrt.WindMin)+1,
+                lo(OpCrt.WindMax)+1, hi(OpCrt.WindMax)+1,
+                TextAttr, TextChar);
+      Exit;
+    end;
+    VirtScreenWindowSetup(Self, Row, Col, RMin, RMax, Vofs, Cofs, Cwid);
+
+    vSeg := vsVideoSeg;
+    vWid := 2*vsWidth;
+
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+
+    WWid := lo(OpCrt.WindMax)-lo(OpCrt.WindMin)+1;
+    for R := RMin to RMax do begin
+      {$IFDEF VIRTUALPASCAL}
+      MoveScreen(mem[vSeg+vOfs], mem[OpCrt.VirtualSegment+cOfs], CWid);
+      {$ELSE}
+      MoveScreen(mem[vSeg:vOfs], mem[OpCrt.VirtualSegment:cOfs], CWid);
+      {$ENDIF}
+      if CWid < WWid then
+        {Clear unfilled columns}
+        FastFill(WWid-CWid, TextChar, R+1, lo(OpCrt.WindMin)+CWid+1, TextAttr);
+      Inc(vOfs, vWid);
+      Inc(cOfs, 2*OpCrt.VirtualWidth);
+    end;
+
+    {Clear unfilled rows}
+    for R := RMax+1 to hi(OpCrt.WindMax) do
+      FastFill(WWid, TextChar, R+1, lo(OpCrt.WindMin)+1, TextAttr);
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+  end;
+
+  procedure VirtScreen.CopyFromScreen(Row, Col : Word);
+    {-Copy from physical screen to position <Row,Col> on virtual screen}
+  var
+    SaveMin : Word;
+    SaveMax : Word;
+  begin
+    SaveMin := WindMin;
+    SaveMax := WindMax;
+    WindMin := 0;
+    WindMax := Swap(Word(ScreenHeight-1)) or Word(ScreenWidth-1);
+    CopyFromWindow(Row, Col);
+    WindMin := SaveMin;
+    WindMax := SaveMax;
+  end;
+
+  procedure VirtScreen.CopyToScreen(Row, Col : Word);
+    {-Copy from position <Row,Col> on virtual screen to physical screen}
+  var
+    SaveMin : Word;
+    SaveMax : Word;
+  begin
+    SaveMin := WindMin;
+    SaveMax := WindMax;
+    WindMin := 0;
+    WindMax := Swap(Word(ScreenHeight-1)) or Word(ScreenWidth-1);
+    CopyToWindow(Row, Col);
+    WindMin := SaveMin;
+    WindMax := SaveMax;
+  end;
+
+  function VirtScreen.vRows : Word;
+    {-Return number of rows in virtual screen}
+  begin
+    vRows := vsHeight;
+  end;
+
+  function VirtScreen.vCols : Word;
+    {-Return number of columns in virtual screen}
+  begin
+    vCols := vsWidth;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor VirtScreen.Load(var S : IdStream);
+    {-Load from stream}
+  begin
+    vsZeroOut;
+    if not Root.Init then
+      Fail;
+
+    S.ReadRange(vsWidth, vsSaveSeg);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+    if vsAllocated then begin
+      if not GetMemCheck(vsBufPtr, vsSize+15) then begin
+        Done;
+        InitStatus := epFatal+ecOutOfMemory;
+        Fail;
+      end;
+      {Choose segment such that vsVideoSeg:0 is within buffer}
+      {$IFDEF VIRTUALPASCAL}
+      vsVideoSeg := Word( vsBufPtr );
+      {$ELSE}
+      vsVideoSeg := OS(vsBufPtr).S;
+{$IFNDEF Dpmi}
+      if OS(vsBufPtr).O <> 0 then
+        inc(vsVideoSeg);
+{$ENDIF}
+      {$ENDIF}
+    end;
+  end;
+
+  procedure VirtScreen.Store(var S : IdStream);
+    {-Store to stream}
+  begin
+    S.WriteRange(vsWidth, vsSaveSeg);
+  end;
+
+  procedure VirtScreenStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing virtual screens}
+  begin
+    with SPtr^ do
+      RegisterType(otVirtScreen, veVirtScreen,
+                   TypeOf(VirtScreen), @VirtScreen.Store, @VirtScreen.Load);
+  end;
+
+{$ENDIF}
+
+  {--------- PackedWindow Routines ----------}
+
+{$IFDEF VIRTUALPASCAL}
+  Const
+    PackRecSize = Sizeof( Packrec );
+
+  {$FRAME+} {$USES ebx,esi,edi}
+  function PackPrim(Height, Width : Byte; var Dest; SrcOfs : Word;
+                    var Delta : Word) : Word; assembler;
+    Var
+      pWords    : Word;
+      PRDelta   : Word;
+      LDelta    : Word;
+      LastLink  : Word;
+      Count     : Word;
+
+    asm
+      cld
+      mov   eax, VirtualWidth
+      shl   eax, 1
+      mov   pWords, eax
+
+      mov   Count,1
+      mov   PRDelta, 0
+      mov   LastLink, -1
+      mov   esi, VirtualSegment
+      add   esi, SrcOfs
+      mov   edi, Dest
+      push  edi
+
+      mov   ah,[esi]
+      movzx ecx, Height
+
+    @@OuterLoop1:
+      push  ecx
+      movzx ecx, Width
+      push  esi
+
+    @@InnerLoop1:
+      lodsb
+      inc   esi
+      not   al
+
+      stosb
+      inc   PRDelta
+      cmp   al,ah
+      jne   @@NoRepeat
+
+      inc   Count
+      loop  @@InnerLoop1
+      jmp   @@EndInner1
+
+    @@NoRepeat:
+      cmp   Count,PackRecSize
+      jbe   @@EndRepeat                     { Not worth packing }
+      mov   ebx,Count
+      inc   ebx
+      sub   prdelta,ebx
+      mov   ebx,LastLink
+      push  PRDelta
+      cmp   ebx,-1
+      jne   @@FixLastPackRec1
+      pop   LDelta
+      jmp   @@MakePackRec
+
+    @@FixLastPackRec1:
+      pop   dword ptr [ebx]
+
+    @@MakePackRec:
+      mov   ebx,Count
+      sub   edi,ebx
+      dec   edi
+      mov   LastLink,edi
+      inc   edi
+      inc   edi
+      inc   edi
+      inc   edi
+      xchg  ah,al
+      stosb                                 { The fill value }
+      xchg  ah,al
+      xchg  eax,ebx
+      stosd                                 { The FillCnt }
+      mov   eax,ebx
+      mov   PRDelta, 1
+      stosb                                 { New char after PackRec }
+
+    @@EndRepeat:
+      mov   ah,al
+      mov   Count,1
+      Loop  @@InnerLoop1
+
+    @@EndInner1:
+      pop   esi
+      add   esi,PWords
+      pop   ecx
+      loop  @@OuterLoop1
+
+      { Fill in the link from previous record }
+
+      mov   ecx, PRDelta
+      mov   ebx, Count
+      cmp   ebx, PackRecSize
+      jbe   @@DeltaOK
+      sub   ecx,ebx
+
+    @@DeltaOK:
+      cmp   LastLink,-1
+      jne   @@FixLastPackRec2
+      mov   LDelta,ecx
+      jmp   @@PackRecCheck
+
+    @@FixLastPackRec2:
+      mov   esi,LastLink
+      mov   [esi],ecx                        { Store PRDelta (Word) }
+
+    @@PackRecCheck:
+      cmp   ebx,PackRecSize
+      jbe   @@PPDone
+
+      sub   edi,ebx
+      mov   cl,ah
+      xor   eax,eax                         { Link is 0 }
+      stosd
+      mov   al,cl                           { Store FillVal }
+      stosb
+      mov   eax,ebx
+      stosd                                 { Store Repeat Count }
+
+    @@PPDone:
+      mov   ebx,edi
+      mov   edi,Delta
+      mov   eax,LDelta
+      stosd
+
+      pop   eax
+      sub   ebx,eax
+      mov   eax,ebx
+
+    end;
+
+  procedure PackedWindow.pwDisplay(Row, Col : Word);
+    {-Display the packed window at Row,Col}
+    Var
+      NextRecA : Word;
+      NextRecC : Word;
+      FillCntA : Word;
+      FillCntC : Word;
+      PWords   : Word;
+      LCols    : Word;
+      vOfs : Word;
+
+  begin
+    asm
+      push    esi
+      push    edi
+      push    ebx
+      cld
+
+      mov     eax,VirtualWidth
+      shl     eax,1
+      mov     Pwords,eax
+
+      { get fields in window record into local }
+      mov     ebx,Self
+      movzx   eax,[ebx].pwCols
+      mov     LCols,eax
+      movzx   ecx,[ebx].pwRows
+      mov     eax,[ebx].pwCDelta
+      mov     NextRecC,eax
+      mov     eax,[ebx].pwADelta
+      mov     NextRecA,eax
+
+      mov     edi,Col
+      dec     edi
+      shl     edi,1
+      mov     eax,Row
+      dec     eax
+      mul     PWords
+      add     edi,eax
+      mov     vOfs,edi
+
+      mov     eax,[ebx].pwAStart
+      dec     eax
+      add     edi,VirtualSegment
+      mov     esi,[ebx].pwScreen
+      mov     ebx,eax
+      add     ebx,esi
+
+      xor     eax,eax
+      mov     FillCntA,eax
+      mov     FillCntC,eax
+
+@@OuterLoop2:
+      push    ecx
+      mov     ecx,LCols
+      push    edi
+
+@@InnerLoop2:
+      cmp     FillCntC,0
+      je      @@NotFillingC
+      dec     FillCntC
+      jmp     @@NextAttr
+
+@@NotFillingC:
+      cmp     NextRecC,0
+      jne     @@NotAPackRecC
+      mov     edx,[esi]
+      mov     NextRecC,edx
+      inc     esi
+      inc     esi
+      inc     esi
+      inc     esi
+      lodsb
+      not     al
+      mov     edx,[esi]
+      dec     edx
+      mov     FillCntC,edx
+      inc     esi
+      inc     esi
+      inc     esi
+      inc     esi
+      jmp     @@NextAttr
+
+@@NotAPackRecC:
+      lodsb
+      not     al
+      dec     NextRecC
+
+@@NextAttr:
+      cmp     FillCntA,0
+      je      @@NotFillingA
+      dec     FillCntA
+      jmp     @@StoreWord
+
+@@NotFillingA:
+      cmp     NextRecA,0
+      jne     @@NotAPackRecA
+      mov     edx,[ebx]
+      mov     NextRecA,edx
+      inc     ebx
+      inc     ebx
+      inc     ebx
+      inc     ebx
+      mov     ah,[ebx]
+      not     ah
+      inc     ebx
+      mov     edx,[ebx]
+      dec     edx
+      mov     FillCntA,edx
+      inc     ebx
+      inc     ebx
+      inc     ebx
+      inc     ebx
+      JMP     @@StoreWord
+
+@@NotAPackRecA:
+      mov     ah,[ebx]
+      not     ah
+      inc     ebx
+      dec     NextRecA
+
+@@StoreWord:
+      push    ebx
+
+      stosw
+      pop     ebx
+      loop    @@InnerLoop2
+
+      pop     edi
+      add     edi,Pwords
+      pop     ecx
+      dec     ecx
+      jecxz   @@DPWdone
+      JMP     @@OuterLoop2
+
+@@DPWdone:
+      pop   ebx
+      pop   edi
+      pop   esi
+    end;
+
+    If VirtualSegment = VideoSegment then
+      SysTVShowBuf( vOfs, pwRows*VirtualWidth*2 );
+  end;
+
+{$ELSE}
+
+  {$L OPPACK.OBJ}
+
+  {routines in OPPACK.OBJ}
+  function PackPrim(Height, Width : Byte; var Dest; SrcOfs : Word;
+                    var Delta : Word) : Word; external;
+
+  procedure PackedWindow.pwDisplay(Row, Col : Word); external;
+    {-Display the packed window at Row,Col}
+{$ENDIF}
+
+  constructor PackedWindow.Init(XL, YL, XH, YH : Byte);
+    {-Create a packed window}
+  var
+    I, J : Word;
+    InitialSize : Word;
+    HeaderSize : Word;
+    FinalSize : Word;
+    Width : Integer;
+    Height : Integer;
+    SrcOfs : Word;
+    P : Pointer;
+    S : Word;       {!!.10}
+  begin
+    pwScreen := nil;
+    pwDealloc := False;
+    if not Root.Init then
+      Fail;
+
+    {compute bytes needed for screen buffer}
+    Width := Succ(Integer(XH)-XL);
+    Height := Succ(Integer(YH)-YL);
+    InitialSize := ((Width*Height) shl 1);
+
+    {check available memory}
+    if (Width <= 0) or (Height <= 0) then begin
+      Done;
+      InitStatus := epFatal+ecWinCoordsBad;
+      Fail;
+    end;
+    if GetMemCheck(pwScreen, InitialSize) then
+      pwDealloc := True
+    else begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+
+    {calculate starting offset on screen}
+    SrcOfs := ((Pred(YL)*VirtualWidth)+Pred(XL)) shl 1;
+
+    {pack the characters and attributes}
+    I := PackPrim(Height, Width, pwScreen^, SrcOfs, pwCDelta);
+    J := PackPrim(Height, Width, pwScreen^[I+1], SrcOfs+1, pwADelta);
+
+    {initialize the rest of the header}
+    pwSize := I+J;
+    pwTopRow := YL;
+    pwTopCol := XL;
+    pwRows := Height;
+    pwCols := Width;
+    pwAStart := I+1;
+
+    {free up unused portion of window}
+{$IFDEF Dpmi_OR_VirtualPascal}               {!!.20}
+    S := (pwSize+$07) and $FFF8;             {!!.20}
+    if GetMemCheck(P, S) then begin          {!!.20}
+      pwSize := S;                           {!!.20}
+      Move(pwScreen^, P^, S);                {!!.20}
+      FreeMemCheck(pwScreen, InitialSize);   {!!.20}
+      pwScreen := P;                         {!!.20}
+    end;                                     {!!.20}
+{$ELSE}                                      {!!.20}
+    {$IFDEF Heap6}                       {!!.10}
+    S := (pwSize+$07) and $FFF8;         {!!.11}
+    pwSize := S;                         {!!.20}
+    {$ELSE}                              {!!.10}
+    S := pwSize;                         {!!.10}
+    {$ENDIF}                             {!!.10}
+    P := Normalized( @pwScreen^[S+1] );  {!!.10}
+    FreeMem(P, InitialSize-S);           {!!.10}
+{$ENDIF}                                     {!!.20}
+  end;
+
+  constructor PackedWindow.InitFromMemory(P : Pointer);
+    {-Initialize a packed window from one stored to disk with Write
+      and bound into the EXE file with BINOBJ}
+  var
+    OSP : OS absolute P;
+  begin
+    pwScreen := nil;
+    pwDealloc := False;
+    if not Root.Init then
+      Fail;
+    Move(P^, pwSize, Ofs(pwScreen)-Ofs(pwSize));
+    {$IFDEF VIRTUALPASCAL}
+    pwScreen := Ptr( Word(P)+Ofs(pwScreen)-Ofs(pwSize));
+    {$ELSE}
+    pwScreen := Ptr(OSP.S, OSP.O+Ofs(pwScreen)-Ofs(pwSize));
+    {$ENDIF}
+  end;
+
+  destructor PackedWindow.Done;
+    {-Deallocate the packed screen}
+  begin
+    if pwDealloc then
+      FreeMemCheck(pwScreen, pwSize);
+    Root.Done;
+  end;
+
+  procedure PackedWindow.Display;
+    {-Display the packed window}
+  begin
+    pwDisplay(pwTopRow, pwTopCol);
+  end;
+
+  procedure PackedWindow.DisplayAt(Row, Col : Word);
+    {-Display the packed window at Row,Col. If necessary, the coordinates
+      are adjusted to allow it to fit on the screen.}
+  begin
+    {check for 0}
+    if Row = 0 then
+      Row := 1;
+    if Col = 0 then
+      Col := 1;
+
+    {make sure the window can be displayed}
+    if (pwRows > VirtualHeight) or (pwCols > VirtualWidth) then
+      Exit;
+
+    {adjust Row,Col if necessary}
+    if Row+Pred(pwRows) > VirtualHeight then
+      Row := Succ(VirtualHeight-pwRows);
+    if Col+Pred(pwCols) > VirtualWidth then
+      Col := Succ(VirtualWidth-pwCols);
+
+    {display the window}
+    pwDisplay(Row, Col);
+  end;
+
+  procedure PackedWindow.MapColors;
+    {-Map the colors of the packed window for improved appearance on
+      mono/B&W displays}
+  var
+    Segm, Ofst : Word;
+    LastOfst, Count : Word;
+  begin
+    {get out fast if color mapping not needed}
+    if UseColor or (pwScreen = nil) then
+      Exit;
+
+    {get starting address of the attributes in Contents}
+    {$IFDEF VIRTUALPASCAL}
+    Segm := Word( PwScreen );
+    {$ELSE}
+    Segm := OS(pwScreen).S;
+    {$ENDIF}
+    Ofst := Ofs(pwScreen^[pwAStart]);
+    LastOfst := Ofs(pwScreen^[pwSize]);
+
+    {get number of attributes before the first PackRec}
+    Count := pwADelta;
+
+    repeat
+      {is it a PackRec?}
+      if Count = 0 then begin
+        {get number of attributes before the next PackRec}
+        {$IFDEF VIRTUALPASCAL}
+        Count := MemW[Segm+Ofst];
+        {$ELSE}
+        Count := MemW[Segm:Ofst];
+        {$ENDIF}
+
+        {map the FillVal}
+        {$IFDEF VIRTUALPASCAL}
+        Mem[Segm+Ofst+2] := not ColorMap[not Mem[Segm+Ofst+2]];
+        {$ELSE}
+        Mem[Segm:Ofst+2] := not ColorMap[not Mem[Segm:Ofst+2]];
+        {$ENDIF}
+
+        {skip over the PackRec}
+        Inc(Ofst, SizeOf(PackRec));
+      end
+      else begin
+        {map the attribute}
+        {$IFDEF VIRTUALPASCAL}
+        Mem[Segm+Ofst] := not ColorMap[not Mem[Segm+Ofst]];
+        {$ELSE}
+        Mem[Segm:Ofst] := not ColorMap[not Mem[Segm:Ofst]];
+        {$ENDIF}
+
+        {decrement counter to next PackRec}
+        Dec(Count);
+
+        {skip ahead}
+        Inc(Ofst);
+      end;
+    until (Ofst > LastOfst) or (Ofst = 0);
+  end;
+
+  function PackedWindow.Write(FName : string) : Word;
+    {-Store the packed window pointed to by PWP in FName}
+  var
+    F : file;
+    I, Err : Word;
+  label
+    AllDone;
+  begin
+    {check for nil pointer}
+    if pwScreen = nil then begin
+      Write := epNonFatal+ecNilPointer;
+      Exit;
+    end;
+
+    {try to create the file}
+    Assign(F, FName);
+    Rewrite(F, 1);
+    Err := IoResult;
+    if Err <> 0 then
+      goto AllDone;
+
+    {write the static data to disk}
+    BlockWrite(F, pwSize, Ofs(pwScreen)-Ofs(pwSize));
+    Err := IoResult;
+    if Err <> 0 then
+      goto AllDone;
+
+    {write the packed screen to disk}
+    BlockWrite(F, pwScreen^, pwSize);
+    Err := IoResult;
+
+AllDone:
+    {close the file}
+    Close(F);
+    I := IoResult;
+    if Err = 0 then
+      Err := I;
+    if Err = 0 then
+      Write := 0
+    else
+      Write := epNonFatal+Err;
+  end;
+
+  constructor PackedWindow.Read(FName : string);
+    {-Read the packed window stored in FName into memory}
+  var
+    PWP : PackedWindowPtr;
+    F : file;
+    I, Err : Word;
+    FS : LongInt;
+  label
+    AllDone;
+  begin
+    pwScreen := nil;
+    pwDealloc := False;  {!!.12}
+    if not Root.Init then
+      Fail;
+
+    {try to open the file}
+    Assign(F, FName);
+    Reset(F, 1);
+    Err := IoResult;
+    if Err <> 0 then begin
+      Done;
+      InitStatus := epFatal+Err;
+      Fail;
+    end;
+
+    {read the static portion of the window into memory}
+    I := Ofs(pwScreen)-Ofs(pwSize);
+    BlockRead(F, pwSize, I);
+    Err := IoResult;
+    if Err <> 0 then
+      goto AllDone;
+
+    FS := FileSize(F);
+    if pwSize = FS then
+      {it's in TPRO 5.0 format}
+      Dec(pwSize, 12)
+    else
+      {check for a valid window}
+      if FS-I <> pwSize then begin
+        Err := ecInvalidFormat;
+        goto AllDone;
+      end;
+
+    {allocate memory for the window}
+    if not GetMemCheck(pwScreen, pwSize) then begin
+      Err := ecOutOfMemory;
+      goto AllDone;
+    end;
+    pwDealloc := True;  {!!.12}
+
+    {read the packed screen into memory}
+    BlockRead(F, pwScreen^, pwSize);
+    Err := IoResult;
+
+AllDone:
+    Close(F);
+    if Err = 0 then
+      Err := IoResult;
+    if Err <> 0 then begin
+      Done;
+      InitStatus := epFatal+Err;
+      Fail;
+    end;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor PackedWindow.Load(var S : IdStream);
+    {-Load a packed window from a stream}
+  begin
+    pwScreen := nil;
+    pwDealloc := False;  {!!.12}
+    if not Root.Init then
+      Fail;
+
+    {read in static data and allocate packed screen}
+    S.ReadRange(pwSize, pwScreen);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+    if not GetMemCheck(pwScreen, pwSize) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+    pwDealloc := True;  {!!.12}
+
+    {read in the packed window}
+    S.Read(pwScreen^, pwSize);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure PackedWindow.Store(var S : IdStream);
+    {-Store a packed window in a stream}
+  begin
+    if pwScreen = nil then
+      S.Error(epNonFatal+ecNilPointer)
+    else begin
+      {store the static data}
+      S.WriteRange(pwSize, pwScreen);
+
+      {store the packed screen}
+      S.Write(pwScreen^, pwSize);
+    end;
+  end;
+
+  procedure PackedWindowStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing packed windows}
+  begin
+    SPtr^ .RegisterType(otPackedWindow, vePackedWindow,
+                        TypeOf(PackedWindow),
+                        @PackedWindow.Store, @PackedWindow.Load);
+  end;
+
+{$ENDIF}
+
+  {---------- LoadableColorSet Routines ----------}
+
+  constructor LoadableColorSet.Init(var Colors : ColorSet);
+    {-Initialize this color set from another one}
+  begin
+    if not Root.Init then
+      Fail;
+    lcsColors := Colors;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor LoadableColorSet.Load(var S : IdStream);
+    {-Load a color set from a stream}
+  begin
+    if not Root.Init then
+      Fail;
+
+    S.Read(lcsColors, SizeOf(lcsColors));
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure LoadableColorSet.Store(var S : IdStream);
+    {-Store a color set in a stream}
+  begin
+    S.Write(lcsColors, SizeOf(lcsColors));
+  end;
+
+  procedure LoadableColorSetStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing loadable color sets}
+  begin
+    SPtr^.RegisterType(otLoadableColorSet, veLoadableColorSet,
+                       TypeOf(LoadableColorSet),
+                       @LoadableColorSet.Store, @LoadableColorSet.Load);
+  end;
+
+{$ENDIF}
+

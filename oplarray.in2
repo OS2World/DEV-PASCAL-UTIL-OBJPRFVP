@@ -1,0 +1,856 @@
+{*********************************************************}
+{*                  OPLARRAY.IN2 1.30                    *}
+{*     Copyright (c) TurboPower Software 1987, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+{implementation for Ems Arrays}
+
+const
+  EmsPageSize = 16384;       {Number of bytes in EMS page}
+  EmsWinMax = 1;             {Highest two page window 0..EmsWinMax}
+
+type
+  {Header for description of an array}
+  {DO NOT CHANGE WITHOUT UPDATING RECORD OFFSETS ABOVE}
+  EArrayHeader =
+    record
+      Cols : Word;
+      ElSize : Word;
+      Rows : Word;
+      PageCount : Word;
+      ID : string[6];
+    end;
+
+  {Data storage}
+  TpEArrayRec =
+    record
+      Handle : Word;
+      Header : EArrayHeader;
+    end;
+  TpEArrayInternal = ^TpEArrayRec;
+  {Window mapping - each window is two EMS pages}
+  {Largest allowable array element is 16384 bytes}
+  EmsRec =
+    record
+      Hand : Word;
+      Page : Word;
+      LastUsed : Word;
+    end;
+  EmsRecArray = array[0..EmsWinMax] of EmsRec;
+  EDataPage = array[0..PageSizeMax] of Byte;
+  EDataPagePtr = ^EDataPage;
+  EmsPtr = array[0..EmsWinMax] of EDataPagePtr;
+
+var
+  EmsInfo : EmsRecArray;     {Information about each EMS window}
+  EmsWindow : EmsPtr;        {Pointer to each window}
+  LruCount : Word;           {Quasi-time counter}
+
+function EArrayAddress(H : EArrayHeader; R, C : Word) : LongInt;
+  {-Return the page parameters for a given row and column}
+Inline(
+  $5B/                   {    pop bx                     ;Save column in bx}
+  $58/                   {    pop ax                     ;Row in ax}
+  $5F/                   {    pop di                     ;Offset of array header}
+  $07/                   {    pop es                     ;Segment of array header}
+  $26/                   {    es:}
+  $F7/$65/<EmsColsOfs/   {    mul word ptr [di+<EmsColsOfs] ;R*Cols in dx:ax}
+  $01/$D8/               {    add ax,bx                  ;Add in column}
+  $83/$D2/$00/           {    adc dx,0                   ;Carry into high word}
+  $26/                   {    es:}
+  $8B/$4D/<EmsSiOfs/     {    mov cx,[di+<EmsSiOfs]      ;ElSize in cx}
+  $89/$D7/               {    mov di,dx                  ;Save high word of multiplicand}
+  $F7/$E1/               {    mul cx                     ;Multiply low word}
+  $89/$C6/               {    mov si,ax                  ;Save low word result}
+  $89/$D3/               {    mov bx,dx                  ;Save partial high word result}
+  $89/$F8/               {    mov ax,di                  ;Get high word of multiplicand}
+  $F7/$E1/               {    mul cx                     ;Multiply high word}
+  $89/$C2/               {    mov dx,ax                  ;Save result in high word of output}
+  $01/$DA/               {    add dx,bx                  ;Add other part of high word}
+  $89/$F0/               {    mov ax,si                  ;Get low word result back}
+  $81/$E6/$FF/$3F/       {    and si,$3FFF               ;Mask off two top bits}
+  $D1/$D0/               {    rcl ax,1                   ;Top two bits of ax into dx}
+  $D1/$D2/               {    rcl dx,1}
+  $D1/$D0/               {    rcl ax,1}
+  $D1/$D2/               {    rcl dx,1                   ;DX now has PNum}
+  $89/$F0);              {    mov ax,si                  ;AX now has POfs}
+                         {Equivalent to}
+                         {ByteOfs := H.ElSize*(C+H.Cols*R)}
+                         {Pnum := ByteOfs div EmsPageSize}
+                         {Pofs := ByteOfs mod EmsPageSize}
+
+
+  procedure UnknownWindow(W : Word);
+    {-Indicate that we don't know what information is in window W}
+  begin
+    with EmsInfo[W] do begin
+      Hand := $FFFF;
+      Page := $FFFF;
+      LastUsed := 0;
+    end;
+  end;
+
+  procedure InitEms;
+    {-Initialize info about the EMS system}
+  var
+    W : Word;
+  begin
+    if EmsAvailable then begin
+      EmsInitialized := True;                {!!.01}
+      EmsWindow[0] := EmsPageFramePtr;
+      for W := 1 to EmsWinMax do
+        EmsWindow[W] := Ptr(Seg(EmsWindow[Pred(W)]^)+EmsPageSize shr 3, 0);
+    end;
+  end;
+
+  procedure InitEmsForEArray;
+    {-Initialize info about the data in the Ems page windows}
+  var
+    W : Word;
+  begin
+    {Indicate that we don't know what's in any window}
+    for W := 0 to EmsWinMax do
+      UnknownWindow(W);
+  end;
+
+  function EmsArray.RangeError(Row, Col : Word) : Boolean;
+    {-Check for addressing range errors}
+  begin
+    {begin !!.03}
+    with TpEArrayInternal(Internal)^.Header do
+      RangeError := (Row >= Dimension.dRows) or (Col >= Dimension.dCols);
+    {end !!.03}
+  end;
+
+  function MapWindow(Handle, Pnum : Word; A : EmsArrayPtr) : Word;
+    {-Return the EMS window number which has desired data mapped}
+  var
+    W : Word;
+    Win : Word;
+    MinLRU : Word;
+  begin
+    {Update quasi-time}
+    Inc(LruCount);
+    if LruCount = 0 then
+      {Reset all LRU at wraparound}
+      for W := 0 to EmsWinMax do
+        EmsInfo[W].LastUsed := 0;
+
+    MinLRU := $FFFF;
+    Win := 0;
+
+    {Scan for desired window, or least recently used one}
+    for W := 0 to EmsWinMax do
+      with EmsInfo[W] do
+        if (Hand = Handle) and (Page = Pnum) then begin
+          {Correct handle and page mapped into this window}
+          LastUsed := LruCount;
+          MapWindow := W;
+          Exit;
+        end else if LastUsed < MinLRU then begin
+          {Get the least recently used page}
+          MinLRU := LastUsed;
+          Win := W;
+        end;
+
+    {Desired mapping was not found}
+    with EmsInfo[Win] do begin
+      W := Win shl 1;
+      {Map two pages}
+      if (MapEmsPage(Handle, Pnum, W) and
+        MapEmsPage(Handle, Succ(Pnum), Succ(W))) then begin
+        Hand := Handle;
+        Page := Pnum;
+        LastUsed := LruCount;
+        MapWindow := Win;
+      end
+      else
+        A^.Error(epNonFatal+ecEmsPageMapping);              {!!.03}
+    end;
+  end;
+
+  procedure EmsArray.RetA(Row, Col : Word; var Value);
+    {-Return the value of A[r,c]}
+  var
+    L : LongInt;
+  begin
+    with TpEArrayInternal(Internal)^ do begin
+      {Compute page number and offset}
+      L := EArrayAddress(Header, Row, Col);
+
+      {Return the data from the mapped window}
+      with Header do
+        Move(EmsWindow[MapWindow(Handle,
+             ArrayLI(L).Pnum,@Self)]^[ArrayLI(L).Pofs],
+             Value, ElSize);
+    end;
+  end;
+
+  procedure EmsArray.SetA(Row, Col : Word; var Value);
+    {-Set the array element A[r,c] to value}
+  var
+    L : LongInt;
+  begin
+    with TpEArrayInternal(Internal)^ do begin
+      {Compute page number and offset}
+      L := EArrayAddress(Header, Row, Col);
+
+      {Save the data to the mapped window}
+      with Header do
+        Move(Value,
+             EmsWindow[MapWindow(Handle,
+             ArrayLI(L).Pnum,@Self)]^[ArrayLI(L).Pofs],
+             ElSize);
+    end;
+  end;
+
+  procedure EmsRCArray.RetA(Row, Col : Word; var Value);
+    {-Return the value of A[r,c] with Range checking}
+  var
+    L : LongInt;
+  begin
+    with TpEArrayInternal(Internal)^ do begin
+      if Row >= Header.Rows then begin
+        Error(epNonFatal+ecRowOutOfRange);                {!!.03}
+        Exit;
+      end;
+      if Col >= Header.Cols then begin
+        Error(epNonFatal+ecColOutOfRange);                {!!.03}
+        Exit;
+      end;
+
+      {Compute page number and offset}
+      L := EArrayAddress(Header, Row, Col);
+
+      {Return the data from the mapped window}
+      with Header do
+        Move(EmsWindow[MapWindow(Handle,
+             ArrayLI(L).Pnum,@Self)]^[ArrayLI(L).Pofs],
+             Value, ElSize);
+    end;
+  end;
+
+  procedure EmsRCArray.SetA(Row, Col : Word; var Value);
+    {-Set the array element A[r,c] to value with Range Checking}
+  var
+    L : LongInt;
+  begin
+    with TpEArrayInternal(Internal)^ do begin
+      if Row >= Header.Rows then begin
+        Error(epNonFatal+ecRowOutOfRange);                {!!.03}
+        Exit;
+      end;
+      if Col >= Header.Cols then begin
+        Error(epNonFatal+ecColOutOfRange);                {!!.03}
+        Exit;
+      end;
+
+      {Compute page number and offset}
+      L := EArrayAddress(Header, Row, Col);
+
+      {Save the data to the mapped window}
+      with Header do
+        Move(Value,
+             EmsWindow[MapWindow(Handle,
+             ArrayLI(L).Pnum,@Self)]^[ArrayLI(L).Pofs],
+             ElSize);
+    end;
+  end;
+
+  procedure EmsArray.SafeRetA(Row, Col : Word; var Value);
+    {-Return the value of A[r,c] ignoring invalid Rows and Cols}
+  var
+    L : LongInt;
+  begin
+    with TpEArrayInternal(Internal)^ do begin
+      if (Row >= Header.Rows) or (Col >= Header.Cols) then
+        Exit;
+
+      {Compute page number and offset}
+      L := EArrayAddress(Header, Row, Col);
+
+      {Return the data from the mapped window}
+      with Header do
+        Move(EmsWindow[MapWindow(Handle,
+             ArrayLI(L).Pnum,@Self)]^[ArrayLI(L).Pofs],
+             Value, ElSize);
+    end;
+  end;
+
+  procedure EmsArray.SafeSetA(Row, Col : Word; var Value);
+    {-Set the array element A[r,c] to value ignoring invalid Rows and Cols}
+  var
+    L : LongInt;
+  begin
+    with TpEArrayInternal(Internal)^ do begin
+      if (Row >= Header.Rows) or (Col >= Header.Cols) then
+        Exit;
+
+      {Compute page number and offset}
+      L := EArrayAddress(Header, Row, Col);
+
+      {Save the data to the mapped window}
+      with Header do
+        Move(Value,
+             EmsWindow[MapWindow(Handle,
+             ArrayLI(L).Pnum,@Self)]^[ArrayLI(L).Pofs],
+             ElSize);
+    end;
+  end;
+
+  procedure EmsArray.ClearA(var Value; Initialize : InitType);
+    {-Reset all array values to Value}
+  var
+    B : Byte absolute Value;
+    R : Word;
+    C : Word;
+    P : Word;
+    SaveFlags : Word;
+  begin
+    with TpEArrayInternal(Internal)^, Header do
+      case Initialize of
+        FastInit :
+          begin
+            {The first page window will be wiped out}
+            UnknownWindow(0);
+
+            for P := 0 to PageCount-2 do begin
+              if not MapEmsPage(Handle, P, 0) then begin
+                Error(epNonFatal+ecEmsPageMapping);          {!!.03}
+                Exit;
+              end;
+              FillChar(EmsWindow[0]^, EmsPageSize, B);
+            end;
+          end;
+
+        ExactInit :
+          begin
+            for R := 0 to Pred(Rows) do
+              for C := 0 to Pred(Cols) do begin
+                SetA(R, C, Value);
+                if LastError <> 0 then
+                  Exit;
+              end;
+          end;
+      end;
+  end;
+
+  function EMakeA(Rows : Word;
+                  Cols : Word;
+                  ElementSize : Word;
+                  A : EmsArrayPtr) : Boolean;
+    {-Determine page structure and allocate array}
+  var
+    H : EArrayHeader;
+  begin
+    EMakeA := False;
+
+    {if the Ems system has not been initialized, do so now}
+    if not EmsInitialized then
+      InitEms;
+
+    {if Ems is available, initialize it, else exit}
+
+    with A^ do begin
+      {Assure EMS is available}
+      if EmsAvailable then                              {!!.01}
+        InitEmsForEArray                                {!!.01}
+      else begin                                        {!!.01}
+        Error(epFatal+ecNoEms);
+        Exit;
+      end;
+
+      {Assure at least one element on each axis}
+      if (Rows = 0) or (Cols = 0) then begin
+        Error(epFatal+ecBadDimensions);                 {!!.03}
+        Exit;
+      end;
+
+      {Assure element size is valid}
+      if ElementSize = 0 then begin
+        Error(epFatal+ecElSizeIsZero);
+        Exit;
+      end;
+      if ElementSize > EmsPageSize then begin
+        Error(epFatal+ecElementTooBig);
+        Exit;
+      end;
+
+      {Init the header H}
+      H.Rows := Rows;
+      H.Cols := Cols;
+      H.ElSize := ElementSize;
+      H.ID := IdString;
+
+      {Compute page count, adding one for overflow mapping}
+      H.PageCount := Succ(DivUp(LongInt(Rows)*Cols*ElementSize, EmsPageSize));
+
+      {check for sufficient EMS}
+      if H.PageCount > EmsPagesAvail then begin
+        Error(epFatal+ecInsufficientEms);
+        Exit;
+      end;
+
+      {allocate the internal TpEArrayRec}
+      if not GetMemCheck(Internal,SizeOf(TpEArrayRec)) then begin
+        Error(epFatal+ecOutOfMemory);
+        Exit;
+      end;
+      with A^, TpEArrayInternal(Internal)^ do begin
+        {Initialize header}
+        Header := H;
+        {Allocate data pages in EMS}
+        Handle := AllocateEmsPages(H.PageCount);
+        if Handle = $FFFF then begin
+          Error(epFatal+ecEmsAllocation);
+          FreeMemCheck(Internal, SizeOf(TpEArrayRec));
+        end;
+      end;
+      EMakeA := LastError = 0;
+    end;
+  end;
+
+  destructor EmsArray.Done;
+    {-Deallocate an Ems array}
+  var
+    P : Word;
+  begin
+    {if internal is NIL then no array allocated so Exit}
+    if Internal = NIL then
+      Exit;
+
+    with TpEArrayInternal(Internal)^  do begin
+      {Mark windows that own this array as unknown}     {!!.01}
+      for P := 0 to EmsWinMax do                        {!!.01}
+        if EmsInfo[P].Hand = Handle then                {!!.01}
+          UnKnownWindow(P);                             {!!.01}
+
+      {Deallocate data pages}
+      if not DeallocateEmsHandle(Handle) then begin
+        Error(epFatal+ecCantFreeEms);
+        Exit;
+      end;
+      {Deallocate the array internal TpEArrayRec}
+      FreeMemCheck(Internal, SizeOf(TpEArrayRec));
+    end;
+  end;
+
+  procedure EmsArray.StoreA(FileName : string);
+    {-Write array to disk in VARRAY format}
+  type
+    IOBuffer    = Array[0..PageSizeMax] of Byte;
+    IOBufferPtr = ^IOBuffer;
+  var
+    F : file;
+    Bytes : Word;
+    P,
+    PageIndexSz,
+    IOBufSize,
+    Index,
+    R,
+    C,
+    PD,
+    RowOffset,
+    RowsAtATime,
+    ElsPerBuf : Word;
+    H : VArrayHeader;
+    OldH : OldVArrayHeader absolute H;                {!!.03}
+    N : LongInt;
+    I : Word;
+    PIndex : ^DiskPageMap;
+    IOBuf  : IOBufferPtr;
+
+    procedure UnDo(ErrorCode : Word);
+      {-Free allocated heap space, close file and call Error method}
+    var
+      E : Word;
+    begin
+      FreeMemCheck(PIndex,PageIndexSz);
+      FreeMemCheck(IOBuf,H.PageSize);                      {!!.03}
+      Close(F);
+      E := IoResult;
+      Error(ErrorCode);
+    end;
+
+  begin
+    PIndex := NIL;
+    IOBuf  := NIL;
+
+    with TpEArrayInternal(Internal)^, Header do begin
+      {can only write this if the Element Size is less than PageSizeMax}
+      if ElSize > PageSizeMax then begin
+        UnDo(epNonFatal+ecElementTooBig);                  {!!.03}
+        Exit;
+      end;
+
+      {init the VArrayHeader}
+      {begin !!.03}
+      H.PageCount := Pred(PageCount);       {Total pages = EMS Pages - 1}
+      H.ColsInPage := Cols;                 {always equal to number of Cols}
+      H.PagesAcross := 1;                   {always just one page across}
+      H.ElSize := ElSize;
+
+      H.RowsInPage := (Rows+(H.PageCount-1)) DIV H.PageCount; {rows in a page}
+      H.PagesDown := H.PageCount;           {Pages down = total page count}
+      H.PageSize := (H.RowsInPage * H.ColsInPage * H.ElSize);
+
+      if ByteFlagIsSet(lFlags, lTpVArrayFormat) then begin   {begin !!.03}
+        {calculate next available byte in file}
+        OldH.NextAvail := LongInt(SizeOf(VArrayHeader)) +
+                          (H.PageCount*SizeOf(LongInt)) +
+                          (LongInt(H.PageSize) * H.PageCount);
+        OldH.ID := VArrayID;
+      end
+      else begin                                             {end !!.03}
+        {calculate next available byte in file}
+        H.NextAvail := LongInt(SizeOf(VArrayHeader)) +
+                       (H.PageCount*SizeOf(LongInt)) +
+                       (LongInt(H.PageSize) * H.PageCount);
+        H.ID := IDString;                                    {!!.03}
+      end;                                                   {!!.03}
+    end;
+
+    {calculate the number of elements per buffer}
+    with H do
+      ElsPerBuf := RowsInPage * ColsInPage;
+
+    {allocate the I/O Buffer}
+    if not GetMemCheck(IOBuf,H.PageSize) then begin          {!!.03}
+      UnDo(epNonFatal+ecOutOfMemory);                        {!!.03}
+      Exit;
+    end;
+
+    {calculate size needed for disk page index and allocate}
+    PageIndexSz := SizeOf(LongInt) * H.PageCount;
+    if not GetMemCheck(PIndex,PageIndexSz) then begin
+      UnDo(epNonFatal+ecOutOfMemory);                        {!!.03}
+      Exit;
+    end;
+
+    {Open the output file}
+    Assign(F, FileName);
+    Rewrite(F, 1);
+    I := IoResult;
+    if I <> 0 then begin
+      UnDo(epNonFatal+I);                                    {!!.03}
+      Exit;
+    end;
+
+    {Write the header}
+    BlockWrite(F, H, SizeOf(VArrayHeader), Bytes);
+    I := IoResult;
+    if Bytes <> SizeOf(VArrayHeader) then
+      I := ecDeviceWrite;
+    if I <> 0 then begin
+      UnDo(epNonFatal+I);                                    {!!.03}
+      Exit;
+    end;
+
+    {calculate the values for each entry in the Disk Page Index by counting
+     backwards from NextAvail}
+    if ByteFlagIsSet(lFlags, lTpVArrayFormat) then           {!!.03}
+      N := OldH.NextAvail                                    {!!.03}
+    else                                                     {!!.03}
+      N := H.NextAvail;
+    for I := Pred(H.PageCount) downto 0 do begin
+      N := N - H.PageSize;
+      PIndex^[I] := N;
+    end;
+
+    {write the page index}
+    BlockWrite(F,PIndex^,PageIndexSz,Bytes);
+    I := IoResult;
+    if Bytes <> PageIndexSz then
+      I := ecDeviceWrite;
+    if (I <> 0) then begin
+      UnDo(epNonFatal+I);                                   {!!.03}
+      Exit;
+    end;
+
+    {all done with Disk Page Index so free memory}
+    FreeMemCheck(PIndex,PageIndexSz);
+
+    {The first page window will be wiped out}
+    UnknownWindow(0);
+
+    with TpEArrayInternal(Internal)^, Header do begin
+      Index := 0;
+      {Calculate the number of contiguos rows per run}
+      RowsAtATime := (Rows + Pred(H.PagesDown)) div H.PagesDown; {!!.01}
+
+      for PD := 0 to Pred(H.PagesDown) do begin
+        {starting row number based on PD}
+        RowOffset := (RowsAtATime * PD);
+        for C := 0 to Pred(Cols) do begin
+          for R := 0 to Pred(RowsAtATime) do begin
+            SafeRetA(R + RowOffset,C,IOBuf^[Index * H.ElSize]);  {!!.01}
+            Inc(Index);
+
+            {if buffer full, then flush it to disk}
+            if Index >= ElsPerBuf then begin
+              Index := 0;
+              BlockWrite(F,IOBuf^,H.PageSize,Bytes);             {!!.03}
+              I := IoResult;
+              if Bytes <> H.PageSize then                        {!!.03}
+                I := ecDeviceWrite;
+              if I <> 0 then begin
+                UnDo(epNonFatal+I);                              {!!.03}
+                Exit;
+              end;
+            end;
+          end;
+        end;
+      end;
+
+      {flush whatever is left in page}
+      if Index > 0 then begin
+        BlockWrite(F, IOBuf^, H.PageSize, Bytes);                {!!.03}
+        I := IoResult;
+        if Bytes <> H.PageSize then                              {!!.03}
+          I := ecDeviceWrite;
+        if I <> 0 then begin
+          UnDo(epNonFatal+I);                                    {!!.03}
+          Exit;
+        end;
+      end;
+    end;
+    FreeMemCheck(IOBuf,H.PageSize);                              {!!.03}
+    Close(F);
+    I := IoResult;
+    if I <> 0 then
+      Error(epNonFatal+I);                                       {!!.03}
+  end;
+
+  constructor EmsArray.LoadA(FileName : string; HeapToUse : LongInt;
+                             ArrayOptions : Byte);
+    {-Allocate and read array from disk in VARRAY format}
+  var
+    Bytes             : Word;
+    P,R,C             : Word;
+    ElementSize       : Word;
+    ElementsInBuf     : Word;
+    ElementsPerBuf    : Word;
+    NumInBuf          : Word;
+    CalcCols          : Word;
+    CalcRows          : Word;
+    PageNo            : Word;
+    PageOfs           : Word;
+    BufferSize        : LongInt;
+    HeapFree          : LongInt;
+    I                 : LongInt;
+    N                 : LongInt;
+    Buf               : Pointer;
+    E                 : Pointer;
+    H                 : VArrayHeader;
+    OldH              : OldVArrayHeader absolute H;    {!!.03}
+    F                 : File;
+    RC                : ArrayRC;
+    SaveBeep : Boolean;                     {!!.03}
+
+    procedure UnDo(ErrorCode : Word);
+      {-Free memory for Buffer, Close file, and call Error method}
+    begin
+      InitStatus := LastError;
+      FreeMemCheck(Buf,BufferSize);
+      Close(F);
+      P := IoResult;
+      Error(ErrorCode);
+      Done;
+      DefBeepOnError := SaveBeep;           {!!.03}
+    end;
+
+  begin
+    SaveBeep := DefBeepOnError;             {!!.03}
+    DefBeepOnError := False;                {!!.03}
+    AbstractArray.LoadA(HeapToUse, ArrayOptions);
+    TypeOfLArray := lEMSArray;
+
+    {if the Ems system has not been initialized, do so now}
+    if not EmsInitialized then
+      InitEms;
+
+    {if Ems is available, initialize it, else Fail}
+    if EmsAvailable then
+      InitEmsForEArray
+    else begin
+      InitStatus := ecNoEms;
+      DefBeepOnError := SaveBeep;           {!!.03}
+      Fail;
+    end;
+
+    {Open the input file}
+    Assign(F, FileName);
+    Reset(F, 1);
+    I := IoResult;
+    if I <> 0 then begin
+      Error(epFatal+I);
+      InitStatus := LastError;
+      DefBeepOnError := SaveBeep;           {!!.03}
+      Fail;
+    end;
+    Buf := NIL;
+
+    {Read the header}
+    BlockRead(F, H, SizeOf(VArrayHeader), Bytes);
+    if (IoResult <> 0) or (Bytes <> SizeOf(VArrayHeader)) then begin
+      Close(F);
+      P := IoResult;
+      Error(epFatal+ecNotLArrayFile);
+      InitStatus := LastError;
+      DefBeepOnError := SaveBeep;           {!!.03}
+      Fail;
+    end;
+
+    with H do begin
+      {Check for proper file format (either OpLArray or TpVArray format OK)}
+      if not ((ID = IdString) or (ID = VArrayID)) then begin
+        if (OldH.ID <> VArrayID) then begin            {!!.03}
+          UnDo(epFatal+ecNotLArrayFile);
+          Fail;
+        end                                            {!!.03}
+        else                                           {!!.03}
+          SetByteFlag(lFlags, lTpVArrayFormat);        {!!.03}
+      end;
+      ElementsInBuf := RowsInPage*ColsInPage;
+      BufferSize := ElementsInBuf*ElSize;
+      if BufferSize > LongInt(MaxHeapBlock) then
+        BufferSize := MaxHeapBlock;
+      {calculate the rows and cols based on page info}
+      CalcCols := ColsInPage * PagesAcross;
+      CalcRows := RowsInPage * PagesDown;
+    end;
+
+    {allocate memory and make the ems array}
+    if not EMakeA(CalcRows,CalcCols,H.ElSize,@Self) then begin
+      Close(F);                                      {!!.02}
+      P := IoResult;                                 {!!.02}
+      InitStatus := LastError;
+      Done;
+      DefBeepOnError := SaveBeep;           {!!.03}
+      Fail;
+    end;
+
+    with Dimension do begin
+      dRows := CalcRows;
+      dCols := CalcCols;
+    end;
+
+    HeapFree := MaxAvail;
+    if HeapFree > BufferSize then
+      HeapFree := BufferSize;
+    ElementsPerBuf := Word(HeapFree div H.ElSize);{size of buffer in Elements}
+    BufferSize := H.ElSize * ElementsPerBuf;      {size of buffer in bytes}
+    if ElementsPerBuf = 0 then begin
+      UnDo(epFatal+ecOutOfMemory);
+      Fail;
+    end;
+
+    if not GetMemCheck(Buf,Word(BufferSize)) then begin
+      UnDo(epFatal+ecOutOfMemory);
+      Fail;
+    end;
+    with TpEArrayInternal(Internal)^, Header do begin
+      ElementSize := ElSize;
+      NumInBuf := 0;
+      {for each page, read the disk page index and process page}
+      for PageNo := 0 to Pred(H.PageCount) do begin
+        Seek(F,SizeOf(VArrayHeader)+(SizeOf(LongInt)*PageNo));
+        BlockRead(F,N,SizeOf(LongInt),Bytes);
+        I := IoResult;
+        if Bytes <> SizeOf(LongInt) then
+          I := ecDeviceRead;
+        if I <> 0 then begin
+          UnDo(epFatal+I);
+          Fail;
+        end;
+        {goto disk page offset for this page}
+        Seek(F,N);
+        {for each element in the page, add it to the Array}
+        for PageOfs := 0 to Pred(ElementsInBuf) do begin
+          {calculate row and col from PageNo and PageOfs}
+          LongInt(RC) := VArrayRC(H,PageNo,PageOfs);
+          {if buffer is empty, read next buffer full}
+          if (NumInBuf = 0) then begin
+            E := Buf;                  {reset ptr to beginning of buffer}
+            {Refill the buffer}
+            BlockRead(F,Buf^,BufferSize,Bytes);
+            I := IoResult;
+            if (Bytes = 0) then                            {!!.02}
+              I := ecDeviceRead;
+            if I <> 0 then begin
+              UnDo(epFatal+I);
+              Fail;
+            end;
+            NumInBuf := Bytes div ElementSize;
+            if (NumInBuf < ElementsInBuf) and              {!!.02}
+               (PageNo = Pred(H.PageCount)) then           {!!.02}
+              NumInBuf := ElementsInBuf;                   {!!.02}
+          end;
+          if NumInBuf > 0 then                                         {!!.01}
+            Dec(NumInBuf);               {indicate we used an element}
+          with RC do
+            SafeSetA(RC.R,RC.C,E^);         {add the element to the array}
+          Inc(SegOfs(E).Ofst,ElementSize);  {point to next element}
+        end;
+      end;
+    end;
+
+    {dispose of I/O Buffer}
+    FreeMemCheck(Buf,BufferSize);
+    Close(F);                          {close the file}
+    I := IoResult;
+    if I <> 0 then begin
+      Error(epNonFatal+I);                  {!!.03}
+      InitStatus := LastError;
+      DefBeepOnError := SaveBeep;           {!!.03}
+      Fail;
+    end;
+    DefBeepOnError := SaveBeep;             {!!.03}
+  end;
+
+  constructor EmsArray.Init(Rows, Cols : Word; ElementSize : Word;
+                            HeapToUse : LongInt; ArrayOptions : Byte);
+    {-create a new EMS array}
+  var
+    SaveBeep : Boolean;                     {!!.03}
+
+  begin
+    SaveBeep := DefBeepOnError;             {!!.03}
+    DefBeepOnError := False;                {!!.03}
+    AbstractArray.Init(Rows,Cols,ElementSize,HeapToUse,ArrayOptions);
+    TypeOfLArray := lEMSArray;
+    if not EMakeA(Rows,Cols,ElementSize,@Self) then begin
+      InitStatus := LastError;
+      DefBeepOnError := SaveBeep;           {!!.03}
+      Fail;
+    end;
+    DefBeepOnError := SaveBeep;             {!!.03}
+  end;
+
+  constructor EmsRCArray.LoadA(FileName : String; HeapToUse : LongInt;
+                               ArrayOptions : Byte);
+    {-Allocate and read array from disk in VARRAY format. Object Instance will
+      perform range checking on SetA and RetA method calls.}
+  begin
+    if not EmsArray.LoadA(FileName, HeapToUse,
+                          ArrayOptions or lRangeCheck) then
+      Fail;
+  end;
+
+  constructor EmsRCArray.Init(Rows, Cols : Word; ElementSize : Word;
+                              HeapToUse : LongInt;
+                              ArrayOptions : Byte);
+    {-create a new RAM array. Object Instance will
+      perform range checking on SetA and RetA method calls.}
+  begin
+    if not EmsArray.Init(Rows,Cols,ElementSize,HeapToUse,ArrayOptions or lRangeCheck) then
+      Fail;
+  end;
+
+  function EmsArray.GetElementSize : Word;
+    {-Return the element size for the array}
+  begin
+    GetElementSize := TpEArrayInternal(Internal)^.Header.ElSize;
+  end;
+

@@ -1,0 +1,752 @@
+{*********************************************************}
+{*                  OPLARRAY.IN1 1.30                    *}
+{*     Copyright (c) TurboPower Software 1987, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+{Code specific to RAM based large arrays}
+
+type
+  {Header for description of an array}
+  {DO NOT CHANGE WITHOUT UPDATING RECORD OFFSETS ABOVE}
+  RArrayHeaderPtr = ^RArrayHeader;
+  RArrayHeader =
+    record
+      RowsInPage : Word;
+      ColsInPage : Word;
+      PagesDown : Word;
+      PagesAcross : Word;
+      ElSize : Word;
+      PageSize : Word;
+      PageCount : Word;
+      ID : string[6];
+    end;
+  ArrayHeaderPtr = Pointer;
+  TpRArrayRec =
+    record
+      Header : RArrayHeader;
+      Pages : PageIndex;
+    end;
+  TpRArrayInternal = ^TpRArrayRec;
+  LongPtr = ^LongInt;
+
+function RArrayAddress(H : RArrayHeader; R, C : Word) : LongInt;
+  {-Return the page parameters for a given row and column}
+{$IFDEF VirtualPascal}
+var
+  POR, PR, POC, PC, PNum, POfs : Word;
+begin
+  POR:=R MOD H.RowsInPage;
+  PR:=R DIV H.RowsInPage;
+  POC:=C MOD H.ColsInPage;
+  PC:=C DIV H.ColsInPage;
+  PNum:=PR+H.PagesDown*PC;
+  POfs:=H.ElSize*(POR+H.RowsInPage*POC);
+  RArrayAddress:=(LongInt(PNum) SHL 16)+POfs;
+end;
+{$ELSE}
+Inline(
+  $5B/                   {  pop bx                    ;save column in bx}
+  $58/                   {  pop ax                    ;save row in ax}
+  $5F/                   {  pop di                    ;offset of array header}
+  $07/                   {  pop es                    ;segment of array header}
+  $31/$D2/               {  xor dx,dx                 ;prepare to divide}
+  $26/                   {  es:}
+  $F7/$75/<RPPOFS/       {  div word ptr [di+<RPPOfs] ;divide by RowsInPage (POR in DX, PR in AX)}
+  $89/$D1/               {  mov cx,dx                 ;save POR in cx}
+  $89/$C6/               {  mov si,ax                 ;save PR in si}
+  $89/$D8/               {  mov ax,bx                 ;col into ax}
+  $31/$D2/               {  xor dx,dx                 ;prepare to divide}
+  $26/                   {  es:}
+  $F7/$75/<CPPOFS/       {  div word ptr [di+<CPPOfs] ;divide by ColsInPage (POC in DX, PC in AX)}
+  $89/$C3/               {  mov bx,ax                 ;save PC in BX}
+  $26/                   {  es:}
+  $8B/$45/<PDOFS/        {  mov ax,[di+<PDOfs]        ;get PagesDown in AX}
+  $52/                   {  push dx                   ;save POC a moment}
+  $F7/$E3/               {  mul bx                    ;PagesDown*PC}
+  $01/$F0/               {  add ax,si                 ;Pnum = PR+PagesDown*PC}
+  $89/$C2/               {  mov dx,ax                 ;Store Pnum in dx}
+  $89/$D6/               {  mov si,dx}
+  $58/                   {  pop ax                    ;get POC back}
+  $26/                   {  es:}
+  $F7/$65/<RPPOFS/       {  mul word ptr [di+<RPPOfs] ;RowsPerPage*POC}
+  $01/$C8/               {  add ax,cx                 ;POR+RowsPerPage*POC}
+  $26/                   {  es:}
+  $F7/$65/<ESOFS/        {  mul word ptr [di+<ESOfs]  ;ElSize*(POR+RowsPerPage*POC)}
+                         {                            ;POfs in ax}
+  $89/$F2);              {  mov dx,si                 ;PNum in DX}
+{$ENDIF}
+
+  procedure RamArray.RetA(Row, Col : Word; var Value);
+    {-Return the value of A[r,c] as a VAR parameter}
+  var
+    L : LongInt;
+
+  begin
+    with TpRArrayInternal(Internal)^ do begin
+      L := RArrayAddress(Header, Row, Col);        {calculate Page and Ofs}
+      {simply move data at calculated page and ofs into Value}
+      Move(Pages[ArrayLI(L).Pnum]^[ArrayLI(L).POfs], Value, Header.ElSize);
+    end;
+  end;
+
+  procedure RamArray.SetA(Row, Col : Word; var Value);
+    {-Set the array element A[r,c] to value}
+  var
+    L : LongInt;
+  begin
+    with TpRArrayInternal(Internal)^ do begin
+      L := RArrayAddress(Header, Row, Col);        {calculate Page and Ofs}
+      {simply move data in value into calculated page and ofs}
+      Move(Value, Pages[ArrayLI(L).Pnum]^[ArrayLI(L).Pofs], Header.ElSize);
+    end;
+  end;
+
+  procedure RamRCArray.RetA(Row, Col : Word; var Value);
+    {-Return the value of A[r,c] as a VAR parameter with Range Checking}
+  var
+    L : LongInt;
+
+  begin
+    with TpRArrayInternal(Internal)^ do begin
+      {Check to see if Row is valid, if not, call Error method and exit}
+      if Row >= Dimension.dRows then begin
+        Error(epNonFatal+ecRowOutOfRange);                         {!!.03}
+        Exit;
+      end;
+      {Check to see if Col is valid, if not, call Error method and exit}
+      if Col >= Dimension.dCols then begin
+        Error(epNonFatal+ecColOutOfRange);                         {!!.03}
+        Exit;
+      end;
+      {same as regular RamArray.RetA after range check}
+      L := RArrayAddress(Header, Row, Col);
+      Move(Pages[ArrayLI(L).Pnum]^[ArrayLI(L).POfs], Value, Header.ElSize);
+    end;
+  end;
+
+  procedure RamRCArray.SetA(Row, Col : Word; var Value);
+    {-Set the array element A[r,c] to value}
+  var
+    L : LongInt;
+  begin
+    with TpRArrayInternal(Internal)^ do begin
+      {Check to see if Row is valid, if not, call Error method and exit}
+      if Row >= Dimension.dRows then begin
+        Error(epNonFatal+ecRowOutOfRange);                     {!!.03}
+        Exit;
+      end;
+      {Check to see if Col is valid, if not, call Error method and exit}
+      if Col >= Dimension.dCols then begin
+        Error(epNonFatal+ecColOutOfRange);                     {!!.03}
+        Exit;
+      end;
+      {same as regular RamArray.SetA after range check}
+      L := RArrayAddress(Header, Row, Col);
+      Move(Value, Pages[ArrayLI(L).Pnum]^[ArrayLI(L).Pofs], Header.ElSize);
+    end;
+  end;
+
+  procedure RamArray.SafeRetA(Row, Col : Word; var Value);
+    {-Return the value of A[r,c] as a VAR parameter ignoring invalid
+      Rows and Cols}
+  var
+    L : LongInt;
+  begin
+    with TpRArrayInternal(Internal)^ do begin
+      {implements silent range checking- no error is generated on a range
+       violation, the routine just safely exits}
+      if (Row >= Dimension.dRows) or (Col >= Dimension.dCols) then
+        Exit;
+      L := RArrayAddress(Header, Row, Col);
+      Move(Pages[ArrayLI(L).Pnum]^[ArrayLI(L).POfs], Value, Header.ElSize);
+    end;
+  end;
+
+  procedure RamArray.SafeSetA(Row, Col : Word; var Value);
+    {-Set the array element A[r,c] to value ignoring invalid
+      Rows and Cols}
+  var
+    L : LongInt;
+  begin
+    with TpRArrayInternal(Internal)^ do begin
+      {implements silent range checking- no error is generated on a range
+       violation, the routine just safely exits}
+      if (Row >= Dimension.dRows) or (Col >= Dimension.dCols) then
+        Exit;
+      L := RArrayAddress(Header, Row, Col);
+      Move(Value, Pages[ArrayLI(L).Pnum]^[ArrayLI(L).Pofs], Header.ElSize);
+    end;
+  end;
+
+  function RamArray.RangeError(Row, Col : Word) : Boolean;
+    {-Performs on demand range checking for a given row and column.  Returns
+      True if Row and Col are invalid.}
+  begin
+    {begin !!.03}
+    with TpRArrayInternal(Internal)^.Header do
+      RangeError := (Row >= Dimension.dRows) or (Col >= Dimension.dCols);
+    {end !!.03}
+  end;
+
+  procedure RamArray.ClearA(var Value; Initialize : InitType);
+    {-Reset all array values to Value}
+  var
+    B : Byte absolute Value;
+    Pofs : Word;
+    R : Word;
+    C : Word;
+    P : Word;
+  begin
+    with TpRArrayInternal(Internal)^, Header do begin
+
+      {Initialize the first page}
+      case Initialize of
+        FastInit :
+          FillChar(Pages[0]^, PageSize, B);
+        ExactInit :
+          FillStruct(Pages[0]^, RowsInPage*ColsInPage, Value, Header.ElSize);
+      else
+        Exit;
+      end;
+
+      {Initialize the rest of the pages}
+      for P := 1 to Pred(PageCount) do
+        Move(Pages[0]^, Pages[P]^, PageSize);
+    end;
+  end;
+
+  destructor RamArray.Done;
+    {-Deallocate an array}
+  var
+    P : Word;
+  begin
+    if Internal = NIL then
+      Exit;
+    with TpRArrayInternal(Internal)^, Header do begin
+      {Deallocate data pages}
+      for P := 0 to Pred(PageCount) do
+        FreeMemCheck(Pages[P], PageSize);
+      {Deallocate the page array}
+      FreeMemCheck(Internal, SizeOf(RArrayHeader)+PageCount*SizeOf(Pointer));
+    end;
+  end;
+
+  procedure RMakeAPrimitive(RowsInPage : Word;
+                            ColsInPage : Word;
+                            PagesDown : Word;
+                            PagesAcross : Word;
+                            ElementSize : Word;
+                            A : RamArrayPtr);
+    {-Allocate array memory}
+  var
+    PageIndexSize : LongInt;
+    PageCount : LongInt;
+    PageSize : LongInt;
+    P : Word;
+  begin
+    with A^ do begin
+      {Assure element size is valid}
+      if ElementSize = 0 then begin
+        Error(epFatal+ecElSizeIsZero);
+        Exit;
+      end;
+
+      {Assure row and column dimensions are valid}
+      if (PagesDown or RowsInPage = 0) or (PagesAcross or ColsInPage = 0) then begin
+        Error(epFatal+ecElSizeIsZero);
+        Exit;
+      end;
+
+      {Assure page size is valid}
+      PageSize := LongInt(RowsInPage)*ColsInPage*ElementSize;
+      if PageSize > MaxHeapBlock then begin
+        Error(epFatal+ecBadDimensions);
+        Exit;
+      end;
+
+      {Assure page index size is valid}
+      PageCount := PagesDown*PagesAcross;
+      PageIndexSize := SizeOf(Pointer)*PageCount;
+      if PageIndexSize > MaxHeapBlock-SizeOf(RArrayHeader) then begin
+        Error(epFatal+ecBadDimensions);
+        Exit;
+      end;
+
+      if LongInt(PageSize) * PageCount > TotalHeapToUse then begin
+        Error(epFatal+ecOutOfMemory);
+        Exit;
+      end;
+
+      {Allocate page array}
+      if not GetMemCheck(Internal, SizeOf(RArrayHeader) + PageIndexSize) then
+      begin
+        Error(epFatal+ecOutOfMemory);
+        Exit;
+      end;
+
+      {Initialize header}
+      with TPRArrayInternal(Internal)^ do begin
+        FillChar(Pages[0],PageCount*SizeOf(Pointer),0);
+        Header.RowsInPage := RowsInPage;
+        Header.ColsInPage := ColsInPage;
+        Header.PagesDown := PagesDown;
+        Header.PagesAcross := PagesAcross;
+        Header.ElSize := ElementSize;
+        Header.PageSize := PageSize;
+        Header.PageCount := PageCount;
+        Header.ID := IdString;
+        {Allocate data pages}
+        for P := 0 to Pred(PageCount) do
+          if not GetMemCheck(Pages[P], PageSize) then begin
+            Done;
+            Error(epFatal+ecOutOfMemory);
+            Exit;
+          end;
+      end;
+    end;
+  end;
+
+  function RMakeA(Rows : Word;
+                 Cols : Word;
+                 ElementSize : Word;
+                 A : RamArrayPtr) : Boolean;
+    {-Determine page structure and allocate array}
+  var
+    H : RArrayHeader;
+    TotalBytes : LongInt;
+    NumPages : Word;
+    AllDone : Boolean;
+  begin
+    RMakeA := False;
+    with A^ do begin
+      {Be sure at least one element on each axis}
+      if (Rows = 0) or (Cols = 0) then begin
+        Error(epFatal+ecBadDimensions);
+        Exit;
+      end;
+
+      {Be sure element size is valid}
+      if ElementSize = 0 then begin
+        Error(epFatal+ecElSizeIsZero);
+        Exit;
+      end;
+
+      {Compute total bytes in array}
+      TotalBytes := LongInt(Rows)*Cols*ElementSize;
+
+      with H do begin
+        {Store element size}
+        ElSize := ElementSize;
+
+        {Determine page organization}
+        if TotalBytes <= MaxHeapBlock then begin
+          {Whole array fits into one 64K page}
+          RowsInPage := Rows;
+          ColsInPage := Cols;
+          PagesDown := 1;
+          PagesAcross := 1;
+
+        end else begin
+          {Array larger than a page}
+          {First estimate of number of pages required}
+          NumPages := DivUp(TotalBytes, MaxHeapBlock);
+
+          {Iterate to find page organization with minimum waste}
+          repeat
+            RowsInPage := DivUp(Rows, NumPages);
+            ColsInPage := DivUp(Cols, NumPages);
+
+            {Determine whether to divide horizontally or vertically}
+            if ((LongInt(RowsInPage)*NumPages-Rows)*Cols <
+              (LongInt(ColsInPage)*NumPages-Cols)*Rows) then begin
+              {Divide up the rows}
+              ColsInPage := Cols;
+              PagesAcross := 1;
+              PagesDown := NumPages;
+            end else begin
+              {Divide up the columns}
+              RowsInPage := Rows;
+              PagesDown := 1;
+              PagesAcross := NumPages;
+            end;
+
+            AllDone := (LongInt(RowsInPage)*ColsInPage*ElSize <= MaxHeapBlock);
+            if not(AllDone) then
+              {Add another page}
+              Inc(NumPages);
+
+          until AllDone;
+        end;
+
+        {Allocate the array}
+        RMakeAPrimitive(RowsInPage, ColsInPage, PagesDown, PagesAcross,
+                        ElSize, A);
+        RMakeA := LastError = 0;
+      end;
+    end;
+  end;
+
+  function RamArray.GetElementSize : Word;
+    {-Return the element size for the array}
+  begin
+    GetElementSize := TpRArrayInternal(Internal)^.Header.ElSize;
+  end;
+
+{$IFNDEF VirtualPascal}
+function VArrayRC(Header : VArrayHeader; PNum,POfs : Word) : LongInt;
+Inline(
+  $5B/                   {  pop   bx                     ; POfs}
+  $58/                   {  pop   ax                     ; PNum}
+  $5F/                   {  pop   di                     ; Header offset}
+  $07/                   {  pop   es                     ; Header segment}
+  $55/                   {  push  bp}
+  $31/$D2/               {  xor   dx,dx}
+  $26/                   {  es:}
+  $F7/$75/<VPDOFS/       {  div   word ptr [di+<vPDOfs]  ; ax has PR, dx has PC}
+  $89/$D1/               {  mov   cx,dx                  ; cx now has PC}
+  $89/$C6/               {  mov   si,ax                  ; si now has PR}
+  $31/$D2/               {  xor   dx,dx}
+  $89/$D8/               {  mov   ax,bx                  ; ax now has POfs}
+  $26/                   {  es:}
+  $F7/$75/<VRPPOFS/      {  div   word ptr [di+<vRPPOfs] ; ax has POR, dx has POC}
+  $89/$C5/               {  mov   bp,ax                  ; bp now has POR}
+  $89/$F0/               {  mov   ax,si                  ; ax now has PR}
+  $89/$D6/               {  mov   si,dx                  ; si now has POC}
+  $26/                   {  es:}
+  $F7/$65/<VCPPOFS/      {  mul   word ptr [di+<vCPPOfs] ; C := PR * CPP}
+  $01/$E8/               {  add   ax,bp                  ; C := C + ROR}
+  $89/$C5/               {  mov   bp,ax                  ; bp now has Column}
+  $89/$C8/               {  mov   ax,cx                  ; ax now has PC}
+  $26/                   {  es:}
+  $F7/$65/<VRPPOFS/      {  mul   word ptr [di+<vRPPOfs] ; R := PC * RPP}
+  $01/$F0/               {  add   ax,si                  ; R := R + POC}
+  $89/$EA/               {  mov   dx,bp}
+  $5D);                  {  pop   bp}
+{$ELSE}
+
+ { This is the equivalent Pascal code to the above inline macro}
+  function VArrayRC(Header : VArrayHeader; PNum,POfs : Word) : LongInt;
+  {-given a VArray header, a page number, and page offset calculate the row
+   and column numbers}
+  var
+    RC : ArrayRC;
+    PR,PC,POR,POC,Sz : Word;
+
+  begin
+    with Header do begin
+      PR := PNum DIV PagesDown;
+      PC := PNum MOD PagesDown;
+      POR := POfs DIV RowsInPage;
+      POC := POfs MOD RowsInPage;
+      with RC do begin
+        C := PR * ColsInPage + POR;
+        R := PC * RowsInPage + POC;
+      end;
+      VArrayRC := LongInt(RC);
+    end;
+  end;
+{$ENDIF}
+
+  procedure RamArray.StoreA(FileName : string);
+    {-Write array to disk in VARRAY format}
+  var
+    Bytes : LongInt;  {!!.SAG Word;}
+    I, P : Word;
+    N : LongInt;
+    VHeader : VArrayHeader;
+    OldVHeader : OldVArrayHeader absolute VHeader;    {!!.03}
+    F : file;
+  begin
+    {Create the output file}
+    Assign(F, FileName);
+    Rewrite(F, 1);
+    I := IoResult;
+    if I <> 0 then begin
+      Error(epNonFatal+I);                                 {!!.03}
+      Exit;
+    end;
+
+    with TpRArrayInternal(Internal)^, Header do begin
+      {Initialize a VARRAY header}
+      Move(Header, VHeader, SizeOf(RArrayHeader));
+      if ByteFlagIsSet(lFlags, lTpVArrayFormat) then begin        {begin !!.03}
+        OldVHeader.NextAvail := (SizeOf(VArrayHeader)+
+                            LongInt(PageCount)*(SizeOf(LongInt)+PageSize));
+        OldVHeader.ID := VArrayID;
+      end
+      else begin                                                  {end !!.03}
+        VHeader.NextAvail := (SizeOf(VArrayHeader)+
+                            LongInt(PageCount)*(SizeOf(LongInt)+PageSize));
+        VHeader.ID := IdString;
+      end;                                                        {!!.03}
+      {Write the header}
+      BlockWrite(F, VHeader, SizeOf(VArrayHeader), Bytes);
+      I := IoResult;
+      if Bytes <> SizeOf(VArrayHeader) then
+        I := ecDeviceWrite;
+      if I <> 0 then begin
+        Close(F);
+        P := IoResult;
+        Error(epNonFatal+I);                              {!!.03}
+        Exit;
+      end;
+
+      {Write the index}
+      N := SizeOf(VArrayHeader)+LongInt(PageCount)*SizeOf(LongInt);
+      for P := 0 to Pred(PageCount) do begin
+        BlockWrite(F, N, SizeOf(LongInt), Bytes);
+        I := IoResult;
+        if Bytes <> SizeOf(LongInt) then
+          I := ecDeviceWrite;
+        if I <> 0 then begin
+          Close(F);
+          P := IoResult;
+          Error(epNonFatal+I);                            {!!.03}
+          Exit;
+        end;
+        inc(N, PageSize);
+      end;
+
+      {Write data pages}
+      for P := 0 to Pred(PageCount) do begin
+        BlockWrite(F, Pages[P]^, PageSize, Bytes);
+        I := IoResult;
+        if Bytes <> PageSize then
+          I := ecDeviceWrite;
+        if I <> 0 then begin
+          Close(F);
+          P := IoResult;
+          Error(epNonFatal+I);                            {!!.03}
+          Exit;
+        end;
+      end;
+    end;
+
+    {close the file}
+    Close(F);
+    I := IoResult;
+    if I <> 0 then
+      Error(epNonFatal+I);                                {!!.03}
+  end;
+
+  constructor RamArray.Init(Rows, Cols : Word; ElementSize : Word;
+                            HeapToUse : LongInt; ArrayOptions : Byte);
+    {-create a new RAM array}
+  var
+    SaveBeep : Boolean;                     {!!.03}
+  begin
+    SaveBeep := DefBeepOnError;             {!!.03}
+    DefBeepOnError := False;                {!!.03}
+    AbstractArray.Init(Rows, Cols, ElementSize, HeapToUse, ArrayOptions);
+    TypeOfLArray := lRAMArray;
+    if not RMakeA(Rows,Cols,ElementSize,@Self) then begin
+      InitStatus := LastError;
+      DefBeepOnError := SaveBeep;           {!!.03}
+      Fail;
+    end;
+    DefBeepOnError := SaveBeep;             {!!.03}
+  end;
+
+  constructor RamArray.LoadA(FileName : String; HeapToUse : LongInt;
+                             ArrayOptions : Byte);
+    {-Allocate and read array from disk in VARRAY format}
+  var
+    Bytes : LongInt; {!!.SAG Word;}
+    P,R,C : Word;
+    BufferSize,
+    HeapFree          : LongInt;
+    ElementSize,
+    ElementsInBuf,
+    ElementsPerBuf,
+    NumInBuf          : Word;
+    CalcCols,CalcRows : Word;
+    PageNo,PageOfs : Word;
+    I : LongInt;
+    N : LongInt;
+    HeapSpace : LongInt;
+    Buf : Pointer;
+    E   : Pointer;
+    H : VArrayHeader;
+    OldH : OldVArrayHeader absolute H;      {!!.03}
+    F : File;
+    RC : ArrayRC;
+    BufferEmpty : Boolean;
+    SaveBeep : Boolean;                     {!!.03}
+
+    procedure UnDo(ErrorCode : Word);
+
+    begin
+      FreeMemCheck(Buf,BufferSize);
+      Close(F);
+      P := IoResult;
+      Error(ErrorCode);
+      InitStatus := LastError;
+      DefBeepOnError := SaveBeep;           {!!.03}
+    end;
+
+  begin
+    SaveBeep := DefBeepOnError;             {!!.03}
+    DefBeepOnError := False;                {!!.03}
+    AbstractArray.LoadA(HeapToUse, ArrayOptions); {init the common fields}
+    TypeOfLArray := lRAMArray;     {indicate the type of the array}
+
+    {Open the input file}
+    Assign(F, FileName);
+    Reset(F, 1);
+    I := IoResult;
+    if I <> 0 then begin
+      Error(epFatal+I);
+      InitStatus := LastError;
+      DefBeepOnError := SaveBeep;           {!!.03}
+      Fail;
+    end;
+    Buf := NIL;
+    {Read the header}
+    BlockRead(F, H, SizeOf(VArrayHeader), Bytes);
+    {If I/O error or bytes read is less than bytes requested, then error}
+    I := IoResult;
+    if Bytes <> SizeOf(VArrayHeader) then
+      I := ecDeviceRead;
+    if I <> 0 then begin
+      Close(F);
+      P := IoResult;
+      Error(epFatal+I);
+      InitStatus := LastError;
+      DefBeepOnError := SaveBeep;           {!!.03}
+      Fail;
+    end;
+
+    with H do begin
+      {Check for proper file format (either OpLArray or TpVArray format OK)}
+      if not ((ID = IdString) or (ID = VArrayID)) then begin
+        if (OldH.ID <> VArrayID) then begin   {!!.03}
+          UnDo(epFatal+ecNotLArrayFile);
+          Fail;
+        end                                   {!!.03}
+        else                                  {!!.03}
+          SetByteFlag(lFlags, lTpVArrayFormat); {!!.03}
+      end;
+      ElementsInBuf := RowsInPage*ColsInPage;
+      BufferSize := ElementsInBuf*ElSize;
+      if BufferSize > LongInt(MaxHeapBlock) then
+        BufferSize := MaxHeapBlock;
+      {calculate the rows and cols based on page info}
+      CalcCols := ColsInPage * PagesAcross;
+      CalcRows := RowsInPage * PagesDown;
+    end;
+
+    if (LongInt(CalcRows) * CalcCols * H.ElSize) > HeapToUse then begin
+      UnDo(epFatal+ecOutOfMemory);
+      Fail;
+    end;
+
+    {allocate memory and make the ram array}
+    if not RMakeA(CalcRows,CalcCols,H.ElSize,@Self) then begin
+      UnDo(LastError);
+      Done;
+      Fail;
+    end;
+
+    with Dimension do begin
+      dRows := CalcRows;
+      dCols := CalcCols;
+    end;
+
+    {if RMakeA set LastError then Fail}
+    if LastError <> 0 then begin
+      UnDo(epFatal+ecOutOfMemory);
+      Fail;
+    end;
+    HeapFree := MaxAvail;
+    if HeapFree > BufferSize then
+      HeapFree := BufferSize;
+    ElementsPerBuf := Word(HeapFree div H.ElSize);{size of buffer in Elements}
+    BufferSize := H.ElSize * ElementsPerBuf;      {size of buffer in bytes}
+    if ElementsPerBuf = 0 then begin
+      UnDo(epFatal+ecOutOfMemory);
+      Fail;
+    end;
+
+    {allocate memory for the I/O buffer}
+    if not GetMemCheck(Buf,Word(BufferSize)) then begin
+      UnDo(epFatal+ecOutOfMemory);
+      Fail;
+    end;
+
+    with TpRArrayInternal(Internal)^, Header do begin
+      ElementSize := ElSize;
+      {NumInBuf := 0;}                                           {!!.10}
+      {for each page, read the disk page index and process page}
+      for PageNo := 0 to Pred(H.PageCount) do begin
+        Seek(F,SizeOf(VArrayHeader)+(SizeOf(LongInt)*PageNo));
+        BlockRead(F,N,SizeOf(LongInt),Bytes);
+        I := IoResult;
+        if Bytes <> SizeOf(LongInt) then
+          I := ecDeviceRead;
+        if I <> 0 then begin
+          UnDo(epFatal+I);
+          Fail;
+        end;
+        {goto disk page offset for this page}
+        Seek(F,N);
+        NumInBuf := 0;                                           {!!.10}
+        {for each element in the page, add it to the Array}
+        for PageOfs := 0 to Pred(ElementsInBuf) do begin
+          {calculate row and col from PageNo and PageOfs}
+          LongInt(RC) := VArrayRC(H,PageNo,PageOfs);
+          {if buffer is empty, read next buffer full}
+          if (NumInBuf = 0) then begin
+            E := Buf;                  {reset ptr to beginning of buffer}
+            {Refill the buffer}
+            BlockRead(F,Buf^,BufferSize,Bytes);
+            I := IoResult;
+            if Bytes = 0 then
+              I := ecDeviceRead;
+            if I <> 0 then begin
+              UnDo(epFatal+I);
+              Fail;
+            end;
+            NumInBuf := Bytes div ElementSize;
+          end;
+          Dec(NumInBuf);               {indicate we used an element}
+          with RC do
+            SafeSetA(RC.R,RC.C,E^);         {add the element to the array}
+          Inc(SegOfs(E).Ofst,ElementSize);  {point to next element}
+        end;
+      end;
+    end;
+
+    {dispose of I/O Buffer}
+    FreeMemCheck(Buf,BufferSize);
+    Close(F);                          {close the file}
+    I := IoResult;
+    if I <> 0 then begin
+      Error(epNonFatal+I);                  {!!.03}
+      InitStatus := LastError;
+      DefBeepOnError := SaveBeep;           {!!.03}
+      Fail;
+    end;
+    DefBeepOnError := SaveBeep;             {!!.03}
+  end;
+
+  constructor RamRCArray.LoadA(FileName : String; HeapToUse : LongInt;
+                               ArrayOptions : Byte);
+    {-Allocate and read array from disk in VARRAY format.  Object Instance
+      will perform range checking on SetA and RetA method calls.}
+  begin
+    if not RamArray.LoadA(FileName,HeapToUse,ArrayOptions or lRangeCheck) then
+      Fail;
+  end;
+
+  constructor RamRCArray.Init(Rows, Cols : Word; ElementSize : Word;
+                              HeapToUse : LongInt;
+                              ArrayOptions : Byte);
+    {-create a new RAM array. Object Instance will perform range checking on
+      SetA and RetA method calls.}
+
+  begin
+    if not RamArray.Init(Rows,Cols,ElementSize,HeapToUse,
+                         ArrayOptions or lRangeCheck) then
+      Fail;
+  end;

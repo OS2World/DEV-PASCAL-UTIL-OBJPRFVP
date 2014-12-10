@@ -1,0 +1,2354 @@
+{*********************************************************}
+{*                   OPROOT.IN3 1.30                     *}
+{*     Copyright (c) TurboPower Software 1989, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  constructor StringDict.InitCustom(PoolSize : Word); {!!.10}
+    {-Allocate hash pool}
+  var
+    S : Word;
+  begin
+    sdUsed := 0;
+    sdPool := nil;
+    sdStatus := 0;
+
+    if not Root.Init then
+      Fail;
+
+    {Validate that PoolSize is a proper factor of two}
+    if (PoolSize > 8192) or (PoolSize < 8) then begin
+      Done;
+      InitStatus := epFatal+ecBadParam;
+      Fail;
+    end;
+    S := PoolSize;
+    while S > 1 do begin
+      if odd(S) then begin
+        Done;
+        InitStatus := epFatal+ecBadParam;
+        Fail;
+      end;
+      S := S shr 1;
+    end;
+
+    if not GetMemCheck(sdPool, PoolSize*SizeOf(StringPtr)) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+    FillChar(sdPool^, PoolSize*SizeOf(StringPtr), 0);
+    sdSize := PoolSize;
+  end;
+
+  constructor StringDict.Init;
+    {-Allocate hash pool}
+  begin
+    if not StringDict.InitCustom(InitPoolSize) then
+      Fail;
+  end;
+
+  destructor StringDict.Done;
+    {-Deallocate pool}
+  begin
+    if sdPool <> nil then begin
+      Clear;
+      FreeMemCheck(sdPool, sdSize*SizeOf(StringPtr));
+    end;
+    Root.Done;
+  end;
+
+  procedure StringDict.StoreData(H : Word; var S : string; var D);
+    {-Allocate data space and store string and data}
+  begin
+    {Allocate space for string and store it}
+    if not GetMemCheck(sdPool^[H], Length(S)+1+SizeOf(LongInt)) then begin
+      Error(epNonFatal+ecOutOfMemory);
+      Exit;
+    end;
+    sdPool^[H]^ := S;
+    {Store the longint beyond the string}
+    move(D, sdPool^[H]^[Length(S)+1], SizeOf(LongInt));
+  end;
+
+  procedure StringDict.FreeData(H : Word);
+    {-Deallocate data space}
+  begin
+    if sdPool^[H] <> nil then                                          {!!.20}
+      FreeMemCheck(sdPool^[H], Length(sdPool^[H]^)+1+SizeOf(LongInt));
+  end;
+
+
+  procedure StringDict.Add(S : String; Value : LongInt);
+    {-Add string and associated value to set}
+  var
+    H : Word;
+    D : Byte;
+  begin
+    if sdStatus <> 0 then
+      Exit;
+
+    H := Hash(S);
+    if sdPool^[H] <> nil then begin
+      {Element in use, find unused element}
+      repeat {!!.03}
+        if Equal(sdPool^[H]^, S) then begin
+          {String already in set}
+          Error(epWarning+ecDupString);
+          Exit;
+        end;
+        {repeat} {!!.03}
+        H := (H+1) and (sdSize-1);
+      until sdPool^[H] = nil;
+    end;
+
+    {Allocate space and store string and data value}
+    StoreData(H, S, Value);
+
+    inc(sdUsed);
+    if sdSize = 8192 then begin
+      {Pool is as large as we allow}
+      if sdUsed > 8000 then
+        Error(epNonFatal+ecOutOfMemory);
+    end else if 4*sdUsed > 3*sdSize then
+      {Expand pool when 3/4 full}
+      if not Expand then
+        Error(epNonFatal+ecOutOfMemory);
+  end;
+
+  function StringDict.Member(S : String; var Value : LongInt) : Boolean;
+    {-Return true and associated value if P is element of set}
+  var
+    H : Word;
+    P : StringPtr;
+  begin
+    H := Hash(S);
+    while sdPool^[H] <> nil do begin
+      {Element in use}
+      P := sdPool^[H];
+      if Equal(P^, S) then begin
+        {Found it}
+        Member := True;
+        {Return the longint beyond the string}
+        move(P^[Length(P^)+1], Value, SizeOf(LongInt));
+        Exit;
+      end;
+      {Try next}
+      H := (H+1) and (sdSize-1);
+    end;
+    Member := False;
+  end;
+
+  procedure StringDict.Update(S : String; Value : LongInt);
+    {-Change the data value associated with a string}
+  var
+    H : Word;
+    P : StringPtr;
+  begin
+    H := Hash(S);
+    while sdPool^[H] <> nil do begin
+      {Element in use}
+      P := sdPool^[H];
+      if Equal(P^, S) then begin
+        {Found string, update the data value}
+        move(Value, P^[Length(P^)+1], SizeOf(LongInt));
+        Exit;
+      end;
+      {Try next}
+      H := (H+1) and (sdSize-1);
+    end;
+  end;
+
+  {!!.10} {Various changes}
+  {Thanks to Scott Samet and Wayne R. Martin for optimizing this routine}
+  procedure StringDict.Remove(S : String);
+    {-Remove string from set}
+  var
+    H : Word;
+    L : Word;
+    C : Word;
+    R : Word;
+    Size1 : Word;
+
+    function Within(Test, Left, Right : Word): Boolean;
+    begin
+      if Left <= Right then
+        Within := (Left <= Test) and (Test <= Right)
+      else
+        WithIn := (Left <= Test) or (Test <= Right);
+    end;
+
+ begin
+    {Precompute this value}
+    Size1 := sdSize-1;
+
+    H := Hash(S);
+
+    while sdPool^[H] <> nil do begin
+      {Element in use}
+
+      if Equal(sdPool^[H]^, S) then begin
+        {Found one to remove}
+        FreeData(H);
+        dec(sdUsed);
+
+        {Find R, the right end of the list that starts with H}
+        {The implementation guarantees that the table is never full}
+        R := (H+1) and Size1;
+        while sdPool^[R] <> nil do
+          R := (R+1) and Size1;
+        R := (R-1) and Size1;
+
+        {Find L, the left end of the list that ends with H}
+        L := (H-1) and Size1;
+        while sdPool^[L] <> nil do
+          L := (L-1) and Size1;
+        L := (L+1) and Size1;
+
+        {Check all C from R downto H to see if it needs to be moved}
+        C := R;
+        while C <> H do
+          if Within(Hash(sdPool^[C]^), L, H) then begin
+            {C belongs left of (or at) H, so move it to H}
+            sdPool^[H] := sdPool^[C];
+            sdPool^[C] := nil;
+            {C is the new hole, check items to its right}
+            H := C;
+            C := R;
+          end else
+            C := (C-1) and Size1;
+
+        Exit;
+      end;
+
+      {Try next slot}
+      H := (H+1) and Size1;
+    end;
+  end;
+
+  procedure StringDict.Clear;
+    {-Remove all strings from set}
+  var
+    H : Word;
+  begin
+    for H := 0 to sdSize-1 do
+      if sdPool^[H] <> nil then
+        FreeData(H);
+    sdUsed := 0; {!!.10}
+  end;
+
+  function StringDict.GetStatus : Word;
+    {-Return status code and reset internal result to zero}
+  begin
+    GetStatus := sdStatus;
+    sdStatus := 0;
+  end;
+
+  procedure StringDict.VisitAll(SDF : StringDictFunc); {!!.02}
+    {-Visit all elements in dictionary, calling SDF for each one} {!!.02}
+  var
+    H : Word;
+    P : StringPtr;
+    Value : LongInt;
+  begin
+    for H := 0 to sdSize-1 do begin
+      P := sdPool^[H];
+      if P <> nil then begin
+        move(P^[Length(P^)+1], Value, SizeOf(LongInt));
+        if not SDF(P, Value, @Self) then
+          Exit;
+      end;
+    end;
+  end;
+
+  var {!!.02}
+    MatchVal : LongInt;
+    MatchP : StringPtr;
+
+  function SearchContinue(SP : StringPtr; Value : LongInt;  {!!.02}
+                          SDPtr : StringDictPtr) : Boolean; {!!.02}
+  begin
+    if Value = MatchVal then begin
+      MatchP := SP;
+      SearchContinue := False;
+    end else
+      SearchContinue := True;
+  end;
+
+  function StringDict.GetString(Value : LongInt; var S : String) : Boolean; {!!.02}
+    {-Return the first string that has given Value, False if none}
+  begin
+    MatchVal := Value;
+    MatchP := nil;
+    VisitAll(SearchContinue);
+    if MatchP <> nil then begin
+      S := MatchP^;
+      GetString := True;
+    end else
+      GetString := False;
+  end;
+
+  {!!.10} {New algorithm written in assembly language}
+  {Thanks to Marc Perkel for the original version of this hash function}
+  function StringDict.Hash(var S : String) : Word;
+    {-Return hash of S}
+  var
+    Sum : Word;
+  begin
+  {$IFDEF VIRTUALPASCAL}
+    asm
+      push   esi
+      push   ebx
+      mov    esi,s
+      xor    eax,eax
+      xor    ebx,ebx
+      xor    ecx,ecx
+      cld
+      lodsb                  { Length of string }
+      mov    cl,al           { cl=length }
+      mov    bl,al           { ebx will contain hash }
+      jcxz   @done           { done if length is 0 }
+    @next:
+      lodsb
+      cmp    al,'a'          { if upper case... }
+      jb     @NoUpCase       { keep case }
+      cmp    al,'z'
+      ja     @NoUpCase
+      sub    al,$20          { else convert to uppercase }
+    @NoUpCase:
+      xor    bh,al           { hash high byte }
+      mov    dl,cl           { save value of cl }
+      and    cl,3            { random-ish }
+      shl    eax,cl
+      add    ebx,eax         { add to the hash }
+      mov    cl,dl           { restore ecx }
+      loop   @next
+    @done:
+      mov    sum,ebx
+      pop    ebx
+      pop    esi
+    end;
+  {$ELSE}
+    Inline(
+      $1E/                   {  PUSH    DS}
+      $C5/$76/<S/            {  LDS     SI,[BP+<S]   ;DS:SI -> St}
+      $FC/                   {  CLD                  ;go forward}
+      $AC/                   {  LODSB                ;AL = Length(St)}
+      $30/$E4/               {  XOR     AH,AH        ;zero AH,BH,CH}
+      $88/$E5/               {  MOV     CH,AH}
+      $88/$E7/               {  MOV     BH,AH}
+      $88/$C1/               {  MOV     CL,AL        ;CX = Length(St)}
+      $88/$C3/               {  MOV     BL,AL        ;BX to contain Hash}
+      $E3/$1A/               {  JCXZ    Done         ;done if CX is 0}
+                             {Next:}
+      $AC/                   {  LODSB                ;next char into AL}
+      $3C/$61/               {  CMP     AL,'a'       ;uppercase it}
+      $72/$06/               {  JB      NoUpcase}
+      $3C/$7A/               {  CMP     AL,'z'}
+      $77/$02/               {  JA      NoUpcase}
+      $2C/$20/               {  SUB     AL,$20}
+                             {NoUpcase:}
+      $30/$C7/               {  XOR     BH,AL        ;hash high byte}
+      $88/$CA/               {  MOV     DL,CL        ;save CL}
+      $80/$E1/$03/           {  AND     CL,3         ;pseudo-random SHL 0-3}
+      $D3/$E0/               {  SHL     AX,CL        ;shift left}
+      $01/$C3/               {  ADD     BX,AX        ;add to hash}
+      $88/$D1/               {  MOV     CL,DL        ;restore count in CX}
+      $E2/$E6/               {  LOOP    Next         ;repeat}
+                             {Done:}
+      $1F/                   {  POP     DS           ;restore DS}
+      $89/$5E/<SUM);         {  MOV     [BP+<Sum],BX ;store sum}
+  {$ENDIF VIRTUALPASCAL}
+    Hash := Sum and (sdSize-1);
+  end;
+(* previous version
+  var
+    Sum : Word;
+    I : Word;
+  begin
+    Sum := 0;
+    for I := 0 to Length(S) do
+      Sum := (Sum shl 1)+Byte(Upcase(S[I]));
+    Hash := Sum and (sdSize-1);
+  end;
+*)
+
+  function StringDict.Equal(var S, T : String) : Boolean;
+    {-Return True if S = T}
+  begin
+    Equal := (OpString.CompUCString(S, T) = OpString.Equal);
+  end;
+
+  function StringDict.Expand : Boolean;
+    {-Expand pool size when needed}
+  var
+    oldH : Word;
+    H : Word;
+    oldP : StringPtr;
+    oldPool : HashPoolPtr;
+  begin
+    Expand := False;
+    {Make sure new table fits in 64K}
+    if sdSize > 4096 then
+      Exit;
+
+    {Allocate new table}
+    oldPool := sdPool;
+    sdSize := sdSize shl 1;
+    if not GetMemCheck(sdPool, sdSize*SizeOf(StringPtr)) then begin
+      sdPool := oldPool;
+      sdSize := sdSize shr 1;
+      Exit;
+    end;
+    FillChar(sdPool^, sdSize*SizeOf(StringPtr), 0);
+
+    {Transfer old elements to new table}
+    for oldH := 0 to (sdSize shr 1)-1 do begin
+      oldP := oldPool^[oldH];
+      if oldP <> nil then begin
+        {Get new hash}
+        H := Hash(oldP^);
+        if sdPool^[H] <> nil then
+          {New element in use, find unused element}
+          repeat
+            H := (H+1) and (sdSize-1);
+          until sdPool^[H] = nil;
+        sdPool^[H] := oldP;
+      end;
+    end;
+
+    {Free up old table}
+    FreeMemCheck(oldPool, (sdSize shr 1)*SizeOf(StringPtr));
+
+    Expand := True;
+  end;
+
+  procedure StringDict.Error(Code : Word);
+    {-Assign error code}
+  begin
+    sdStatus := Code;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor StringDict.Load(var S : IdStream);
+    {-Load a list from a stream}
+  var
+    Str : String;
+    Value : LongInt;
+  begin
+    sdUsed := 0;
+    sdPool := nil;
+    sdStatus := 0;
+    if not Root.Init then
+      Fail;
+
+    {Read the pool size from the stream}
+    S.Read(sdSize, SizeOf(Word));
+    if S.PeekStatus <> 0 then
+      Fail;
+
+    {Allocate the pool area}
+    if not GetMemCheck(sdPool, sdSize*SizeOf(StringPtr)) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+    FillChar(sdPool^, sdSize*SizeOf(StringPtr), 0); {!!.02}
+
+    {Read the strings and values}
+    Str := S.ReadString;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+    while Length(Str) <> 0 do begin
+      S.Read(Value, SizeOf(LongInt));
+      Add(Str, Value);
+      if sdStatus <> 0 then begin
+        Done;
+        InitStatus := epFatal+(sdStatus mod 10000);
+        Fail;
+      end;
+      Str := S.ReadString;
+      if S.PeekStatus <> 0 then begin
+        Done;
+        Fail;
+      end;
+    end;
+  end;
+
+  procedure StringDict.Store(var S : IdStream);
+    {-Store a list in a stream}
+  var
+    H : Word;
+    P : StringPtr;
+  begin
+    {Write the current size}
+    S.Write(sdSize, SizeOf(Word));
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Write all the strings}
+    for H := 0 to sdSize-1 do begin
+      P := sdPool^[H];
+      if P <> nil then begin
+        S.Write(P^, Length(P^)+1+SizeOf(LongInt));
+        if S.PeekStatus <> 0 then
+          Exit;
+      end;
+    end;
+
+    {Terminate with zero}
+    H := 0;
+    S.Write(H, SizeOf(Byte));
+  end;
+
+{$ENDIF}
+
+  {---------------------------------------------------------------------}
+
+  procedure StringSet.StoreData(H : Word; var S : string; var D);
+    {-Allocate data space and store string (no data for this variant)}
+  begin
+    {Allocate space for string and store it}
+    if not GetMemCheck(sdPool^[H], Length(S)+1) then begin
+      Error(epNonFatal+ecOutOfMemory);
+      Exit;
+    end;
+    sdPool^[H]^ := S;
+  end;
+
+  procedure StringSet.FreeData(H : Word);
+    {-Deallocate data space}
+  begin
+    if sdPool^[H] <> nil then                                          {!!.20}
+      FreeMemCheck(sdPool^[H], Length(sdPool^[H]^)+1);
+  end;
+
+  procedure StringSet.Add(S : String);
+    {-Add string to set}
+  var
+    D : Byte;
+  begin
+    StringDict.Add(S, D);
+  end;
+
+  function StringSet.Member(S : String) : Boolean;
+    {-Return true if P is element of set}
+  var
+    H : Word;
+  begin
+    H := Hash(S);
+    while sdPool^[H] <> nil do begin
+      {Element in use}
+      if Equal(sdPool^[H]^, S) then begin
+        {Found it}
+        Member := True;
+        Exit;
+      end;
+      {Try next}
+      H := (H+1) and (sdSize-1);
+    end;
+    Member := False;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor StringSet.Load(var S : IdStream);
+    {-Load a list from a stream}
+  var
+    Str : String;
+  begin
+    sdUsed := 0;
+    sdPool := nil;
+    sdStatus := 0;
+    if not Root.Init then
+      Fail;
+
+    {Read the pool size from the stream}
+    S.Read(sdSize, SizeOf(Word));
+    if S.PeekStatus <> 0 then
+      Fail;
+
+    {Allocate the pool area}
+    if not GetMemCheck(sdPool, sdSize*SizeOf(StringPtr)) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+    FillChar(sdPool^, sdSize*SizeOf(StringPtr), 0);
+
+    {Read the strings}
+    Str := S.ReadString;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+    while Length(Str) <> 0 do begin
+      Add(Str);
+      if sdStatus <> 0 then begin
+        Done;
+        InitStatus := epFatal+(sdStatus mod 10000);
+        Fail;
+      end;
+      Str := S.ReadString;
+      if S.PeekStatus <> 0 then begin
+        Done;
+        Fail;
+      end;
+    end;
+  end;
+
+  procedure StringSet.Store(var S : IdStream);
+    {-Store a list in a stream}
+  var
+    H : Word;
+    P : StringPtr;
+  begin
+    {Write the current size}
+    S.Write(sdSize, SizeOf(Word));
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Write all the strings}
+    for H := 0 to sdSize-1 do begin
+      P := sdPool^[H];
+      if P <> nil then begin
+        S.Write(P^, Length(P^)+1);
+        if S.PeekStatus <> 0 then
+          Exit;
+      end;
+    end;
+
+    {Terminate with zero}
+    H := 0;
+    S.Write(H, SizeOf(Byte));
+  end;
+
+  {---------------------------------------------------------------------}
+
+{$ENDIF}
+  function GetMemCheck(var P; Bytes : Word) : Boolean;
+    {-Allocate heap space, returning true if successful}
+  var
+    Pt : LongInt absolute P;             {!!.20}
+  begin
+    GetMem(Pointer(Pt), Bytes);          {!!.20}
+    GetMemCheck := (Pt <> 0);            {!!.20}
+  end;
+
+{$IFDEF Debug}
+
+function ReturnAddr : Pointer;
+  inline(
+    $C4/$46/$02/           {les ax,[bp+2]}
+    $8C/$C2);              {mov dx,es}
+
+const
+  fmReturn : Pointer = nil;
+
+{$ENDIF}
+
+  procedure FreeMemCheck(var P; Bytes : Word);
+    {-Deallocate heap space}
+  var
+    Pt : Pointer absolute P;
+  begin
+    {$IFDEF Debug}
+    fmReturn := ReturnAddr;
+    Dec(os(fmReturn).s, prefixseg+$10);
+    {$ENDIF}
+
+    if Pt <> nil then begin
+      FreeMem(Pt, Bytes);
+      Pt := nil;
+    end;
+
+    {$IFDEF Debug}
+    fmreturn := nil;
+    {$ENDIF}
+  end;
+
+  {---------------------------------------------------------------------}
+
+  procedure Abstract;
+    {-Generate a runtime error if an abstract method has not been overridden}
+  begin
+    RunError(ecAbstractCall);
+  end;
+
+  {---------------------------------------------------------------------}
+
+  destructor Root.Done;
+    {-Does nothing unless overridden}
+  begin
+  end;
+
+  constructor Root.Init;
+    {-General hook for initialization of all objects}
+  begin
+    InitStatus := 0;
+  end;
+
+  {---------------------------------------------------------------------}
+
+{$IFDEF UseStreams}  {!!.20}
+
+const
+  FlushModeRead = 0;
+  FlushModeWrite = 1;
+  FlushModeBoth = 2;
+
+  constructor IdNode.Init(Code, Ver : SmallWord; Vmt : Word; Store, Load : Pointer);
+    {-Initialize an IdNode}
+  begin
+    idNext := nil;
+    idCode := Code;
+    idVer := Ver;
+    idVmt := Vmt;
+    StorePtr := Store;
+    LoadPtr := Load;
+  end;
+
+  {---------------------------------------------------------------------}
+
+  procedure IdList.Clear;
+    {-Initialize an empty list of items}
+  begin
+    idHead := nil;
+  end;
+
+  procedure IdList.Deallocate;
+    {-Dispose of list of items}
+  var
+    P : IdNodePtr;
+    N : IdNodePtr;
+  begin
+    P := idHead;
+    while P <> nil do begin
+      {Get pointer to next node}
+      N := P^.idNext;
+      {Destroy this node}
+      Dispose(P);
+      P := N;
+    end;
+    idHead := nil;
+  end;
+
+  procedure IdList.Append(I : IdNodePtr);
+    {-Add element to end of list}
+  begin
+    {Exit for bad input}
+    if I = nil then
+      Exit;
+    if idHead = nil then
+      idHead := I
+    else
+      Tail^.idNext := I;
+    I^.idNext := nil;
+  end;
+
+  function IdList.Head : IdNodePtr;
+    {-Return pointer to head of list}
+  begin
+    Head := idHead;
+  end;
+
+  function IdList.Tail : IdNodePtr;
+    {-Return pointer to tail of list}
+  var
+    I : IdNodePtr;
+  begin
+    I := idHead;
+    if I = nil then
+      Tail := nil
+    else begin
+      while I^.idNext <> nil do
+        I := I^.idNext;
+      Tail := I;
+    end;
+  end;
+
+  function IdList.Next(P : IdNodePtr) : IdNodePtr;
+    {-Returns a pointer to the next node}
+  begin
+    Next := P^.idNext;
+  end;
+
+  function IdList.FindByVmt(Vmt : Word) : IdNodePtr;
+    {-Return pointer to matching IdNode, nil for none. Used by Put}
+  var
+    I : IdNodePtr;
+  begin
+    I := Head;
+    while I <> nil do
+      with I^ do begin
+        if (Vmt = idVmt) and (StorePtr <> nil) then begin
+          FindByVmt := I;
+          Exit;
+        end;
+        I := Next(I);
+      end;
+    FindByVmt := nil;
+  end;
+
+  function IdList.FindByVmtVer(Vmt, Ver : Word) : IdNodePtr;
+    {-Return pointer to matching IdNode, nil for none. Used by TypeVerRegistered}
+  var
+    I : IdNodePtr;
+  begin
+    I := Head;
+    while I <> nil do
+      with I^ do begin
+        if (Vmt = idVmt) and (Ver = idVer) then begin
+          FindByVmtVer := I;
+          Exit;
+        end;
+        I := Next(I);
+      end;
+    FindByVmtVer := nil;
+  end;
+
+  function IdList.FindPointer(Ptr : Pointer) : IdNodePtr;
+    {-Return pointer to matching IdNode, nil for none. Used by Put}
+  var
+    I : IdNodePtr;
+  begin
+    I := Head;
+    while I <> nil do
+      with I^ do begin
+        if (idVer = PtrVersion) and (Ptr = StorePtr) then begin
+          FindPointer := I;
+          Exit;
+        end;
+        I := Next(I);
+      end;
+    FindPointer := nil;
+  end;
+
+  function IdList.FindByCodeVer(Code, Ver : SmallWord) : IdNodePtr;
+    {-Return pointer to matching IdNode, nil for none. Used by Get}
+  var
+    I : IdNodePtr;
+  begin
+    I := Head;
+    while I <> nil do
+      with I^ do begin
+        if (Code = idCode) and (Ver = idVer) then begin
+          FindByCodeVer := I;
+          Exit;
+        end;
+        I := Next(I);
+      end;
+    FindByCodeVer := nil;
+  end;
+
+  function IdList.Add(Code, Ver : SmallWord; Vmt : Word; StoreP, LoadP : Pointer) : Word;
+    {-Add new Id to list, returning zero for success, non-zero for error}
+  var
+    I : IdNodePtr;
+  begin
+    {See if already on the list}
+    I := Head;
+    while I <> nil do
+      with I^ do begin
+        if Code = idCode then
+          {Matching code}
+          if (Vmt = idVmt) and (Ver = idVer) then begin
+            {Complete match, exit without error}
+            Add := 0;
+            StorePtr := StoreP; {!!.03}
+            LoadPtr := LoadP;   {!!.03}
+            Exit;
+          end else if (Vmt = idVmt) and (StoreP = nil) then
+            {Old Load version being registered}
+          else if (idVer = PtrVersion) or (Ver = PtrVersion) then
+            {One of the nodes is a procedure pointer and the other is not}
+            {Ignore this one so we add the new one}
+          else begin
+            {Duplicate registration error}
+            Add := epNonFatal+ecIdRegisteredDup;
+            Exit;
+          end;
+        I := Next(I);
+      end;
+
+    {No matching node found}
+    New(I, Init(Code, Ver, Vmt, StoreP, LoadP));
+    if I = nil then
+      {Out of heap space}
+      Add := epFatal+ecOutOfMemory
+    else begin
+      {Append new node to end of id list}
+      Append(I);
+      Add := 0;
+    end;
+  end;
+
+  function IdList.AddPointer(Code : SmallWord; Ptr : Pointer) : Word;
+    {-Add new pointer to list}
+  begin
+    AddPointer := Add(Code, PtrVersion, PtrVersion, Ptr, nil);
+  end;
+
+  {---------------------------------------------------------------------}
+
+  constructor IdStream.Init;
+    {-Clears IdList and Status variable}
+  begin
+    {Empty id list}
+    idRegistered.Clear;
+    {No errors}
+    idStatus := 0;
+    InitStatus := 0;
+  end;
+
+  destructor IdStream.Done;
+    {-Disposes IdList}
+  begin
+    idRegistered.Deallocate;
+  end;
+
+  procedure IdStream.Read(var Buf; Count : Word);
+    {-Must be overridden}
+  begin
+    Abstract;
+  end;
+
+  function IdStream.ReadString : String;
+    {-Read next variable length string from stream}
+  var
+    S : String;
+  begin
+    Read(S[0], SizeOf(Byte));
+    if Byte(S[0]) <> 0 then
+      Read(S[1], Byte(S[0]));
+    ReadString := S;
+  end;
+
+  procedure IdStream.ReadRange(var BufStart, BufBeyond);
+    {-Read Ofs(BufBeyond)-Ofs(BufStart) bytes into BufStart}
+  begin
+    Read(BufStart, Ofs(BufBeyond)-Ofs(BufStart));
+  end;
+
+  procedure IdStream.WriteString(S : String);
+    {-Write a variable length string to stream}
+  begin
+    Write(S, Length(S)+1);
+  end;
+
+  procedure IdStream.WriteRange(var BufStart, BufBeyond);
+    {-Write Ofs(BufBeyond)-Ofs(BufStart) bytes to stream}
+  begin
+    Write(BufStart, Ofs(BufBeyond)-Ofs(BufStart));
+  end;
+
+  procedure IdStream.Write(var Buf; Count : Word);
+    {-Must be overridden}
+  begin
+    Abstract;
+  end;
+
+  procedure IdStream.Flush;
+    {-Does nothing unless overridden}
+  begin
+  end;
+
+  procedure IdStream.Truncate;
+    {-Must be overridden}
+  begin
+    Abstract;
+  end;
+
+  function IdStream.GetSize : Longint;
+    {-Calls GetPos and SetPos to determine size}
+  var
+    P : Longint;
+  begin
+    P := GetPos;
+    SetPos(0, PosEnd);
+    GetSize := GetPos;
+    SetPos(P, PosAbs);
+  end;
+
+  procedure IdStream.Seek(Pos : Longint);
+    {-Calls SetPos to Seek relative to beginning of stream}
+  begin
+    SetPos(Pos, PosAbs);
+  end;
+
+  function IdStream.GetStatus : Word;
+    {-Return status of stream and reset internal status variable}
+  begin
+    GetStatus := idStatus;
+    idStatus := 0;
+  end;
+
+  function IdStream.PeekStatus : Word;
+    {-Return status and leave internal variable unchanged}
+  begin
+    PeekStatus := idStatus;
+  end;
+
+  procedure IdStream.RegisterType(Code, Version : SmallWord;
+                                  TypePtr, StorePtr, LoadPtr : Pointer);
+    {-Registers one object type of current version for IdStream I/O.
+      May set Status to non-zero}
+  var
+    S : Word;
+  begin
+    if (Code = 0) or (Version = PtrVersion) then
+      {Code 0 is reserved for writing nil pointers}
+      {Version PtrVersion is reserved for registering pointers in general}
+      Error(epNonFatal+ecIdRegisteredDup)
+    else begin
+      {$IFDEF VIRTUALPASCAL}
+      S := idRegistered.Add(Code, Version, Longint(TypePtr), StorePtr, LoadPtr);
+      {$ELSE}
+      S := idRegistered.Add(Code, Version, OS(TypePtr).O, StorePtr, LoadPtr);
+      {$ENDIF}
+      if S <> 0 then
+        Error(S);
+    end;
+  end;
+
+  procedure IdStream.RegisterOldVersion(Code, Version : SmallWord;
+                                        TypePtr, LoadPtr : Pointer);
+    {-Registers an alternate loader for an old version of an object type}
+  begin
+    RegisterType(Code, Version, TypePtr, nil, LoadPtr);
+  end;
+
+  function IdStream.TypeRegistered(TypePtr : Pointer) : Boolean;
+    {-Return True if specified type is registered for store *and* load}
+  begin
+    {$IFDEF VIRTUALPASCAL}
+    TypeRegistered := (idRegistered.FindByVmt(Longint(TypePtr)) <> nil);
+    {$ELSE}
+    TypeRegistered := (idRegistered.FindByVmt(OS(TypePtr).O) <> nil);
+    {$ENDIF}
+  end;
+
+  function IdStream.TypeVerRegistered(TypePtr : Pointer; Version : Word) : Boolean;
+    {-Return True if specified type and version is registered for load}
+  begin
+    {$IFDEF VIRTUALPASCAL}
+    TypeVerRegistered := (idRegistered.FindByVmtVer(Longint(TypePtr), Version) <> nil);
+    {$ELSE}
+    TypeVerRegistered := (idRegistered.FindByVmtVer(OS(TypePtr).O, Version) <> nil);
+    {$ENDIF}
+  end;
+
+  function IdStream.CodeVerRegistered(Code, Version : SmallWord) : Boolean;
+    {-Return True if specified code and version number are registered}
+  begin
+    CodeVerRegistered := (idRegistered.FindByCodeVer(Code, Version) <> nil);
+  end;
+
+  procedure IdStream.RegisterHier(RProc : StreamRegisterProc);
+    {-Call a supplied routine to register a hierarchy of object types}
+  begin
+    RProc(@Self);
+  end;
+
+  procedure IdStream.PutPtr(RPtr : RootPtr);
+    {-Calls registered Store method to write object RPtr^ to disk}
+  var
+    Code : SmallWord;
+    Ver : SmallWord;
+    Vmt : SmallWord;
+    I : IdNodePtr;
+    Store : Pointer;
+  begin
+    if idStatus <> 0 then
+      Exit;
+
+    if RPtr = nil then begin
+      {Special flag indicates nil pointer}
+      Code := 0;
+      Ver :=PtrVersion;
+
+    end else begin
+      I := idRegistered.FindByVmt(Word(RPtr^)); {<-- counts on VMT in first word}
+      if I = nil then begin
+        idVmtError := Word(RPtr^); {!!.03}
+        Error(epNonFatal+ecIdNotRegistered);
+        Exit;
+      end;
+      with I^ do begin
+        Code := idCode;
+        Ver := idVer;
+        {Get needed pointer in convenient place for inline}
+        Store := StorePtr;
+      end;
+    end;
+
+    {Write the id codes to the stream}
+    Write(Code, SizeOf(Code));
+    Write(Ver, SizeOf(Code));
+    if idStatus <> 0 then
+      Exit;
+
+    {Call the object store routine if available}
+    if RPtr <> nil then
+      {$IFDEF VIRTUALPASCAL}
+      asm
+        push    Self
+        push    RPtr
+        Call    Store
+      end;
+     {$ELSE}
+      Inline(
+        $FF/$76/<Self+2/ {push word ptr [bp+<Self+2] ;push segment of Stream}
+        $FF/$76/<Self/   {push word ptr [bp+<Self]   ;push offset of Stream}
+        $FF/$76/<RPtr+2/ {push word ptr [bp+<RPtr+2] ;push segment of RPtr}
+        $FF/$76/<RPtr/   {push word ptr [bp+<RPtr]   ;push offset of RPtr}
+        $FF/$5E/<Store); {call far [bp+<Store]       ;call Store routine}
+      {$ENDIF VIRTUALPASCAL}
+  end;
+
+  procedure IdStream.Put(var R : Root);
+    {-Calls registered Store method to write object R}
+  begin
+    PutPtr(@R);
+  end;
+
+  function IdStream.GetPrim(NewSelf : RootPtr) : RootPtr;
+    {-Call load constructor for static or dynamic instance}
+  var
+    Code : SmallWord;
+    Ver : SmallWord;
+    Vmt : Word;
+    I : IdNodePtr;
+    Load : Pointer;
+  begin
+    GetPrim := nil;
+    Read(Code, SizeOf(Code));
+    Read(Ver, SizeOf(Code));
+    if idStatus <> 0 then
+      Exit;
+    if (Code = 0) and (Ver = PtrVersion) then
+      {Return nil for this special case}
+      Exit;
+
+    I := idRegistered.FindByCodeVer(Code, Ver);
+    if I = nil then begin
+      Error(epNonFatal+ecIdUnknown);
+      Exit;
+    end;
+    with I^ do begin
+      {Get needed pointers in convenient place for inline}
+      Vmt := idVmt;
+      Load := LoadPtr;
+    end;
+
+    {Call the registered load constructor}
+    {If NewSelf is nil, constructor will dynamically allocate instance}
+    {Otherwise it treats NewSelf as a static instance}
+    {$IFDEF VIRTUALPASCAL}
+    asm
+      push    self
+      push    vmt
+      push    newself
+      call    load
+      mov     newself,eax
+    end;
+    {$ELSE}
+    Inline(
+      $FF/$76/<Self+2/     {push word ptr [bp+<Self+2];segment of stream}
+      $FF/$76/<Self/       {push word ptr [bp+<Self]  ;offset of stream}
+      $FF/$76/<Vmt/        {push word ptr [bp+<Vmt]   ;VMT offset of object type}
+      $FF/$76/<NewSelf+2/  {push word ptr [bp+<NewSelf+2] ;segment of new self}
+      $FF/$76/<NewSelf/    {push word ptr [bp+<NewSelf]   ;offset of new self}
+      $FF/$5E/<Load/       {call far [bp+<Load]       ;call Load constructor}
+      $89/$46/<NewSelf/    {mov [bp+<NewSelf],ax      ;store pointer returned by constructor}
+      $89/$56/<NewSelf+2); {mov [bp+<NewSelf+2],dx}
+    {$ENDIF VIRTUALPASCAL}
+
+    if (NewSelf = nil) and (idStatus = 0) then
+      Error(epNonFatal+ecLoadFailed);
+    GetPrim := NewSelf;
+  end;
+
+  function IdStream.GetPtr : RootPtr;
+    {-Calls registered Load constructor to allocate and read object from disk}
+  begin
+    GetPtr := GetPrim(nil);
+  end;
+
+  procedure IdStream.Get(var R : Root);
+    {-Calls registered Load constructor to initialize static object from disk}
+  var
+    Dummy : Pointer;
+  begin
+    Dummy := GetPrim(@R);
+  end;
+
+  procedure IdStream.RegisterPointer(Code : SmallWord; Ptr : Pointer);
+    {-Registers one pointer for IdStream I/O}
+  var
+    S : Word;
+  begin
+    S := idRegistered.AddPointer(Code, Ptr);
+    if S <> 0 then
+      Error(S);
+  end;
+
+  function IdStream.PointerRegistered(Ptr : Pointer) : Boolean;
+    {-Return True if specified pointer is registered with stream}
+  begin
+    PointerRegistered := (idRegistered.FindPointer(Ptr) <> nil);
+  end;
+
+  procedure IdStream.WritePointer(Ptr : Pointer);
+    {-Writes identifier for pointer to stream}
+  var
+    Code : SmallWord;
+    Ver  : SmallWord;
+    I : IdNodePtr;
+  begin
+    Ver := PtrVersion;
+    if Ptr = nil then
+      Code := ptNil
+    else begin
+      I := idRegistered.FindPointer(Ptr);
+      if I = nil then begin
+        Error(epNonFatal+ecPtrNotRegistered); {!!.03}
+        Exit;
+      end;
+      Code := I^.idCode;
+    end;
+    Write(Code, SizeOf(Code));
+    Write(Ver, SizeOf(Code));
+  end;
+
+  procedure IdStream.WriteUserPointer(Ptr : Pointer; DefaultCode : SmallWord);
+    {-Writes Ptr code if registered, else DefaultCode}
+  var
+    Code : SmallWord;
+    Ver : SmallWord;
+    I : IdNodePtr;
+  begin
+    Ver := PtrVersion;
+    if Ptr = nil then
+      Code := ptNil
+    else begin
+      I := idRegistered.FindPointer(Ptr);
+      if I = nil then
+        Code := DefaultCode
+      else
+        Code := I^.idCode;
+    end;
+    Write(Code, SizeOf(Code));
+    Write(Ver, SizeOf(Code));
+  end;
+
+  function IdStream.ReadPointer : Pointer;
+    {-Reads procedure pointer from stream}
+  var
+    Code : SmallWord;
+    Ver : SmallWord;
+    I : IdNodePtr;
+  begin
+    ReadPointer := nil;
+    Read(Code, SizeOf(Code));
+    Read(Ver, SizeOf(Code));
+    if (idStatus = 0) and (Code <> ptNil) then begin
+      I := idRegistered.FindByCodeVer(Code, Ver);
+      if I <> nil then
+        ReadPointer := I^.StorePtr;
+    end;
+  end;
+
+  function IdStream.ReadUserPointer(DefaultPtr : Pointer) : Pointer;
+    {-Reads pointer and assigns default instead of nil}
+  var
+    P : Pointer;
+  begin
+    P := ReadPointer;
+    if P = nil then
+      ReadUserPointer := DefaultPtr
+    else
+      ReadUserPointer := P;
+  end;
+
+  procedure IdStream.Error(Code : Word);
+    {-Set error code}
+  begin
+    idStatus := Code;
+  end;
+
+  function IdStream.GetPos : Longint;
+    {-Return position in stream}
+  begin
+    Abstract;
+  end;
+
+  procedure IdStream.SetPos(Pos : Longint; Mode : Byte);
+    {-Set position in stream}
+  begin
+    Abstract;
+  end;
+
+  {---------------------------------------------------------------------}
+
+  constructor DosIdStream.Init(FileName : String; Mode : Word);
+    {-Open DOS file in specified mode and initialize stream}
+  var
+    Len : Word;
+  begin
+    if not IdStream.Init then
+      Fail;
+    Len := Length(FileName);
+    Move(FileName[1], FileName[0], Len);
+    FileName[Len] := #0;
+    Open(FileName, Mode);
+    if PeekStatus <> 0 then begin
+      InitStatus := GetStatus;
+      Fail;
+    end;
+  end;
+
+  destructor DosIdStream.Done;
+    {-Flush and close file, and dispose stream}
+  begin
+    Close;
+    IdStream.Done;
+  end;
+
+  procedure DosIdStream.Read(var Buf; Count : Word);
+    {-Read bytes from DOS file}
+  {$IFDEF VIRTUALPASCAL}
+    var
+      Actual, rc: Longint;
+    begin
+      if Count = 0 then
+        exit;
+      if idStatus = 0 then
+        begin
+          rc := SysFileRead(Handle, Buf, Count, Actual);
+          if rc <> 0 then
+            Error(epNonFatal+rc)
+          else
+            if Actual <> Count then
+              Error(epNonFatal+ecDiskRead)
+            else
+              exit;
+        end;
+      FillChar(Buf, Count, 0);
+    end;
+  {$ELSE}
+  var
+    Regs : Registers;
+  begin
+    if Count = 0 then
+      Exit;
+    if idStatus = 0 then
+      with Regs do begin
+        AH := $3F;
+        BX := Handle;
+        CX := Count;
+        DX := Ofs(Buf);
+        DS := Seg(Buf);
+        MsDos(Regs);
+        if Odd(Flags) then
+          Error(epNonFatal+AX)
+        else if (AX <> CX) then
+          Error(epNonFatal+ecDiskRead)
+        else
+          Exit;
+      end;
+    FillChar(Buf, Count, 0);
+  end;
+  {$ENDIF VIRTUALPASCAL}
+
+  procedure DosIdStream.Write(var Buf; Count : Word);
+    {-Write bytes to DOS file}
+  {$IFDEF VIRTUALPASCAL}
+    var
+      Actual, rc: Longint;
+    begin
+      if idStatus = 0 then
+        begin
+          rc := SysFileWrite(Handle, Buf, Count, Actual);
+          if rc <> 0 then
+            Error(epNonFatal+rc)
+          else
+            if Actual <> Count then
+              Error(epNonFatal+ecDiskFull);
+        end;
+    end;
+  {$ELSE}
+  var
+    Regs : Registers;
+  begin
+    if idStatus = 0 then
+      with Regs do begin
+        AH := $40;
+        BX := Handle;
+        CX := Count;
+        DX := Ofs(Buf);
+        DS := Seg(Buf);
+        MsDos(Regs);
+        if Odd(Flags) then
+          Error(epNonFatal+AX)
+        else if AX <> CX then
+          Error(epNonFatal+ecDiskFull);
+      end;
+  end;
+  {$ENDIF VIRTUALPASCAL}
+
+  procedure DosIdStream.Truncate;
+    {-Truncate file at current position}
+  {$IFDEF VIRTUALPASCAL}
+    var
+      rc: Longint;
+      FilePos: Longint;
+    begin
+      Flush;
+      if idStatus = 0 then
+        begin
+          rc := SysFileSeek(Handle, 0, 1, FilePos);
+          if rc = 0 then
+            rc := SysFileSetSize(Handle, FilePos);
+          if rc <> 0 then
+            Error(epNonFatal+rc);
+        end;
+    end;
+  {$ELSE}
+  var
+    Regs : Registers;
+  begin
+    Flush;
+    if idStatus = 0 then
+      with Regs do begin
+        AH := $40;
+        BX := Handle;
+        CX := 0;
+        MsDos(Regs);
+        if Odd(Flags) then
+          Error(epNonFatal+AX);
+      end;
+  end;
+  {$ENDIF VIRTUALPASCAL}
+
+  {&Delphi+}
+
+  function DosIdStream.GetPos : Longint;
+    {-Return current stream position}
+  {$IFDEF VIRTUALPASCAL}
+    var
+      rc: Longint;
+    begin
+      Result := -1;
+      if idStatus = 0 then
+        begin
+          rc := SysFileSeek(Handle, 0, 1, Result);
+          if Result <> 0 then
+            Error(epNonFatal + rc);
+        end;
+    end;
+  {$ELSE}
+  var
+    Regs : Registers;
+  begin
+    GetPos := -1;
+    if idStatus = 0 then
+      with Regs do begin
+        AX := $4201;
+        BX := Handle;
+        CX := 0;
+        DX := 0;
+        MsDos(Regs);
+        if Odd(Flags) then
+          Error(epNonFatal+AX)
+        else
+          GetPos := MakeLongInt(DX, AX);
+      end;
+  end;
+  {$ENDIF VIRTUALPASCAL}
+
+  procedure DosIdStream.SetPos(Pos : Longint; Mode : Byte);
+    {-Set stream position according to Mode}
+  {$IFDEF VIRTUALPASCAL}
+    var
+      NewPosition: Longint;
+      rc: Longint;
+    begin
+      Flush;
+      if idStatus = 0 then
+        begin
+          rc := SysFileSeek(Handle, Pos, Mode, NewPosition);
+          if rc <> 0 then
+            Error(epNonFatal+rc);
+        end;
+    end;
+  {$ELSE}
+  var
+    Regs : Registers;
+  begin
+    Flush;
+    if idStatus = 0 then
+      with Regs do begin
+        AH := $42;
+        AL := Mode;
+        BX := Handle;
+        CX := LH(Pos).H;
+        DX := LH(Pos).L;
+        MsDos(Regs);
+        if Odd(Flags) then
+          Error(epNonFatal+AX);
+      end;
+  end;
+  {$ENDIF VIRTUALPASCAL}
+
+  procedure DosIdStream.Close;
+    {-Close DOS file}
+  {$IFDEF VIRTUALPASCAL}
+    var
+      rc: Longint;
+    begin
+      Flush;
+      if idStatus = 0 then
+        begin
+          rc := SysFileClose(Handle);
+          if rc <> 0 then
+            Error(epNonFatal+rc);
+        end;
+    end;
+  {$ELSE}
+  var
+    Regs : Registers;
+  begin
+    Flush;
+    if idStatus = 0 then
+      with Regs do begin
+        AH := $3E;
+        BX := Handle;
+        MsDos(Regs);
+        if Odd(Flags) then
+          Error(epNonFatal+AX);
+      end;
+  end;
+  {$ENDIF VIRTUALPASCAL}
+
+  procedure DosIdStream.Open(var Name; Mode : Word);
+    {-Open DOS file}
+  {$IFDEF VIRTUALPASCAL}
+    var
+      rc: Longint;
+    begin
+      if Mode and $ff00 = SCreate then // Create file
+        rc := SysFileCreate(@Name, (SCreate OR 2) and $ff, 0, Handle)
+      else
+        rc := SysFileOpen(@Name, (Mode and $ff), Handle);
+      if rc <> 0 then
+        begin
+          Error(epNonFatal+rc);
+          Handle := -1;
+        end;
+    end;
+  {$ELSE}
+  var
+    Regs : Registers;
+  begin
+    with Regs do begin
+      AX := Mode;
+      CX := 0;
+      DX := Ofs(Name);
+      DS := Seg(Name);
+      MsDos(Regs);
+      if Odd(Flags) then begin
+        Error(epNonFatal+AX);
+        Handle := $FFFF;
+      end else
+        Handle := AX;
+    end;
+  end;
+  {$ENDIF VIRTUALPASCAL}
+
+  {---------------------------------------------------------------------}
+
+  constructor BufIdStream.Init(FileName : String; Mode, Size : Word);
+    {-Open DOS file in mode, and allocate buffer of Size bytes}
+  begin
+    if (Size = 0) or (Size > 65520) then begin    {!!.14}
+      InitStatus := epFatal+ecBadParam;           {!!.14}
+      Fail;                                       {!!.14}
+    end;                                          {!!.14}
+    if not DosIdStream.Init(FileName, Mode) then
+      Fail;
+    if not GetMemCheck(Buffer, Size) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+    BufSize := Size;
+    BufPtr := 0;
+    BufEnd := 0;
+{$IFDEF DPMI} {!!.22 new block}
+    {Access the buffer selector to assure the segment is in memory}
+    {Deals with an apparent Cyrix 486 bug reported by Scott Samet}
+    FillChar(Buffer^, Size, 0);
+{$ENDIF}
+  end;
+
+  destructor BufIdStream.Done;
+    {-Flush and close file, and deallocate buffer}
+  begin
+    DosIdStream.Done;
+    {Must follow DosIdStream.Done in order for buffer to flush correctly}
+    FreeMemCheck(Buffer, BufSize);
+  end;
+
+  function BufIdStream.FlushBuffer(FlushMode : Byte) : Boolean;
+    {-Flush buffer for read, write, or both}
+  var
+    Bytes : LongInt;
+    rc    : Longint;
+    Actual: Longint;
+  {$IFNDEF VIRTUALPASCAL}
+    Regs : Registers;
+  {$ENDIF}
+  begin
+    FlushBuffer := True;
+    Bytes := LongInt(BufPtr)-BufEnd;
+    if Bytes = 0 then begin
+      {mark buffer as empty}
+      BufPtr := 0;
+      BufEnd := 0;
+      Exit;
+    end;
+
+    {$IFDEF VIRTUALPASCAL}
+    if (Bytes > 0) and (FlushMode <> FlushModeRead) then
+      begin
+        rc := SysFileWrite(Handle, Buffer^, Bytes, Actual);
+        if rc <> 0 then
+          Error(epNonFatal+rc)
+        else
+          if Actual <> Bytes then
+            Error(epNonFatal+ecDiskFull);
+      end
+    else
+      if (Bytes < 0) and (FlushMode <> FlushModeWrite) then
+        begin
+          {Purge data in buffer by seeking just beyond what has been used}
+          rc := SysFileSeek(Handle, Bytes, 1, Actual);
+{          if rc = 0 then
+            rc := SysFileSetSize(Handle, FilePos);}
+        end
+      else
+        Exit;
+    {$ELSE}
+    with Regs do begin
+      BX := Handle;
+      if (Bytes > 0) and (FlushMode <> FlushModeRead) then begin
+        {Write data from buffer to disk}
+        AH := $40;
+        CX := LH(Bytes).L;
+        DX := OS(Buffer).O;
+        DS := OS(Buffer).S;
+        MsDos(Regs);
+        if Odd(Flags) then
+          Error(epNonFatal+AX)
+        else if AX <> CX then
+          Error(epNonFatal+ecDiskFull);
+      end else if (Bytes < 0) and (FlushMode <> FlushModeWrite) then begin
+        {Purge data in buffer by seeking just beyond what has been used}
+        AX := $4201;         {Reverse seek relative to current position}
+        DX := LH(Bytes).L;
+        CX := LH(Bytes).H;
+        MsDos(Regs);
+      end else
+        Exit;
+    end;
+    {$ENDIF VIRTUALPASCAL}
+
+    {Buffer is empty now}
+    BufPtr := 0;
+    BufEnd := 0;
+
+    FlushBuffer := (idStatus = 0);
+  end;
+
+  procedure BufIdStream.Flush;
+    {-Flush the current buffer}
+  begin
+    if idStatus <> 0 then
+      Exit;
+    {Perform flush for reading or writing, whichever is appropriate}
+    if FlushBuffer(FlushModeBoth) then
+      ;
+  end;
+
+  function BufIdStream.GetPos : Longint;
+    {-Return current stream position}
+  var
+    Pos : LongInt;
+  begin
+    Pos := DosIdStream.GetPos;
+    if Pos <> -1 then
+      inc(Pos, LongInt(BufPtr)-BufEnd);
+    GetPos := Pos;
+  end;
+
+  procedure BufIdStream.Read(var Buf; Count : Word);
+    {-Read from the buffer or disk}
+  label
+    ErrorExit;
+  var
+    UserBuf : ByteArray absolute Buf;
+    UserPos : Word;
+    Bytes : Word;
+    rc: Longint;
+    Actual: Longint;
+  {$IFNDEF VIRTUALPASCAL}
+    Regs : Registers;
+  {$ENDIF VIRTUALPASCAL}
+  begin
+    if idStatus <> 0 then
+      goto ErrorExit;
+
+    {Flush any data pending write}
+    if not FlushBuffer(FlushModeWrite) then
+      goto ErrorExit;
+
+    {UserPos counts how many bytes have been transferred to user buffer}
+    UserPos := 0;
+
+    {Loop until Count bytes have been read}
+    while Count > 0 do begin
+      if BufPtr >= BufEnd then
+        {Refill buffer}
+        {$IFDEF VIRTUALPASCAL}
+        begin
+          rc := SysFileRead(Handle, Buffer^, BufSize, Actual);
+          if rc <> 0 then
+            begin
+              Error(epNonFatal+rc);
+              goto ErrorExit;
+            end;
+          BufPtr := 0;
+          BufEnd := Actual;
+          if Actual = 0 then
+            begin
+              Error(epNonFatal+ecDiskRead);
+              goto ErrorExit;
+            end;
+        end;
+        {$ELSE}
+        with Regs do begin
+          AH := $3F;
+          BX := Handle;
+          CX := BufSize;
+          DX := OS(Buffer).O;
+          DS := OS(Buffer).S;
+          MsDos(Regs);
+          if Odd(Flags) then begin
+            Error(epNonFatal+AX);
+            goto ErrorExit;
+          end;
+          BufPtr := 0;
+          BufEnd := AX;
+          if AX = 0 then begin
+            Error(epNonFatal+ecDiskRead);
+            goto ErrorExit;
+          end;
+        end;
+      {$ENDIF VIRTUALPASCAL}
+
+      {Transfer from buffer to user area}
+      Bytes := BufEnd-BufPtr;
+      if Count < Bytes then
+        Bytes := Count;
+      move(Buffer^[BufPtr], UserBuf[UserPos], Bytes);
+
+      {Adjust counters}
+      inc(BufPtr, Bytes);
+      inc(UserPos, Bytes);
+      dec(Count, Bytes);
+    end;
+
+  {Exit on success}
+  Exit;
+
+ErrorExit:
+    {Clear user buffer if error}
+    FillChar(Buf, Count, 0);
+  end;
+
+  procedure BufIdStream.Write(var Buf; Count : Word);
+    {-Write to the buffer or disk}
+  var
+    UserBuf : ByteArray absolute Buf;
+    UserPos : Word;
+    Bytes : Word;
+  begin
+    if idStatus <> 0 then
+      Exit;
+
+    {Flush any data pending read}
+    if not FlushBuffer(FlushModeRead) then
+      Exit;
+
+    {UserPos counts how many bytes have been transferred from user buffer}
+    UserPos := 0;
+
+    while Count > 0 do begin
+      if BufPtr >= BufSize then
+        {Buffer full, flush it}
+        if not FlushBuffer(FlushModeWrite) then
+          Exit;
+
+      {Transfer from buffer to user area}
+      Bytes := BufSize-BufPtr;
+      if Count < Bytes then
+        Bytes := Count;
+      move(UserBuf[UserPos], Buffer^[BufPtr], Bytes);
+
+      {Adjust counters}
+      inc(BufPtr, Bytes);
+      inc(UserPos, Bytes);
+      dec(Count, Bytes);
+    end;
+  end;
+
+  {---------------------------------------------------------------------}
+
+  constructor MemIdStream.Init(BasePtr : Pointer; Size : Word);
+    {-Initialize stream to point to a location in memory}
+  begin
+    if not IdStream.Init then
+      Fail;
+    MPtr := BasePtr;
+    MPos := 0;
+    if Size = 0 then
+      Size := 1;
+    MSize := Size;
+  end;
+
+  procedure MemIdStream.Read(var Buf; Count : Word);
+    {-Read bytes from memory stream}
+  begin
+    if MSize-MPos < Count then begin
+      {Not enough bytes to read}
+      Error(epNonFatal+ecDiskRead);
+      FillChar(Buf, Count, 0);
+      Exit;
+    end;
+    {Transfer from memory stream to user buffer}
+    move(MPtr^[MPos], Buf, Count);
+    inc(MPos, Count);
+  end;
+
+  procedure MemIdStream.Write(var Buf; Count : Word);
+    {-Write bytes to memory stream}
+  begin
+    if MSize-MPos < Count then begin
+      {Not enough space to write}
+      Error(epNonFatal+ecDiskFull);
+      Exit;
+    end;
+    {Transfer from user buffer to memory stream}
+    move(Buf, MPtr^[MPos], Count);
+    inc(MPos, Count);
+  end;
+
+  procedure MemIdStream.Truncate;
+    {-Truncate at current position. Does nothing but reduce Size.}
+  begin
+    MSize := MPos+1;
+  end;
+
+  function MemIdStream.GetPos : Longint;
+    {-Return current position within memory stream}
+  begin
+    GetPos := MPos;
+  end;
+
+  procedure MemIdStream.SetPos(Pos : Longint; Mode : Byte);
+    {-Set current position within memory stream}
+  begin
+    case Mode of
+      PosCur : Inc(Pos, MPos);
+      PosEnd : Inc(Pos, MSize-1);
+    end;
+    if Pos <= 0 then
+      MPos := 0
+    else if Pos >= MSize-1 then
+      MPos := MSize-1
+    else
+      MPos := Pos;
+  end;
+
+  {---------------------------------------------------------------------}
+
+  procedure PointerStackStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing PointerStacks}
+  begin
+    SPtr^.RegisterType(otPointerStack, vePointerStack, TypeOf(PointerStack),
+                       @PointerStack.Store, @PointerStack.Load);
+  end;
+
+  procedure StaticQueueStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing StaticQueues}
+  begin
+    SPtr^.RegisterType(otStaticQueue, veStaticQueue, TypeOf(StaticQueue),
+                       @StaticQueue.Store, @StaticQueue.Load);
+  end;
+
+  procedure SingleListStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing SingleLists}
+  begin
+    SPtr^.RegisterType(otSingleList, veSingleList, TypeOf(SingleList),
+                       @SingleList.Store, @SingleList.Load);
+  end;
+
+  procedure DoubleListStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing DoubleLists}
+  begin
+    SPtr^.RegisterType(otDoubleList, veDoubleList, TypeOf(DoubleList),
+                       @DoubleList.Store, @DoubleList.Load);
+  end;
+
+  procedure CircularListStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing CircularLists}
+  begin
+    SPtr^.RegisterType(otCircularList, veCircularList, TypeOf(CircularList),
+                       @CircularList.Store, @CircularList.Load);
+  end;
+
+  procedure BitSetStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing BitSets}
+  begin
+    SPtr^.RegisterType(otBitSet, veBitSet, TypeOf(BitSet),
+                       @BitSet.Store, @BitSet.Load);
+  end;
+
+  procedure LargeBitSetStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing LargeBitSets}
+  begin
+    BitSetStream(SPtr);
+    SPtr^.RegisterType(otLargeBitSet, veLargeBitSet, TypeOf(LargeBitSet),
+                       @LargeBitSet.Store, @LargeBitSet.Load);
+  end;
+
+  procedure StringDictStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing StringDicts}
+  begin
+    SPtr^.RegisterType(otStringDict, veStringDict, TypeOf(StringDict),
+                       @StringDict.Store, @StringDict.Load);
+  end;
+
+  procedure StringSetStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing StringSets}
+  begin
+    SPtr^.RegisterType(otStringSet, veStringSet, TypeOf(StringSet),
+                       @StringSet.Store, @StringSet.Load);
+  end;
+
+  procedure StringArrayStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing StringArrays}
+  begin
+    SPtr^.RegisterType(otStringArray, veStringArray, TypeOf(StringArray),
+                       @StringArray.Store, @StringArray.Load);
+  end;
+
+{$ENDIF} {!!.20}
+
+  {---------------------------------------------------------------------}
+  {!!.03} {Various changes to support string deletion}
+
+  procedure StringArray.paZeroOut;
+    {-Zero out the data fields}
+  begin
+    paIndex := nil;
+    paInfo := nil;
+    paCount := 0;
+    paISize := 0;
+    paUsed := 0;
+    paAmount := 0;
+  end;
+
+  constructor StringArray.Init(StrMax, Amount : Word);
+    {-Allocate space for StrMax strings in Amount space}
+  begin
+    paZeroOut;
+    if not Root.Init then
+      Fail;
+
+    paISize := StrMax*SizeOf(Word);
+    paAmount := Amount;
+
+    if StrMax <> 0 then
+      if StrMax > paMaxIndexSize then begin
+        Done;
+        InitStatus := epFatal+ecBadParam;
+        Fail;
+      end else if not GetMemCheck(paIndex, paISize) then begin
+        Done;
+        InitStatus := epFatal+ecOutOfMemory;
+        Fail;
+      end;
+
+    if Amount <> 0 then
+      if Amount > SizeOf(ByteArray) then begin
+        Done;
+        InitStatus := epFatal+ecBadParam;
+        Fail;
+      end else if not GetMemCheck(paInfo, paAmount) then begin
+        Done;
+        InitStatus := epFatal+ecOutOfMemory;
+        Fail;
+      end;
+  end;
+
+  constructor StringArray.ReadText(FileName : PathStr);
+    {-Initialize a packed array from a text file}
+  var
+    Count : Word;
+    Used : LongInt; {!!.02}
+    IO : Word;
+    InStr : String;
+    RawFile : Text;
+  begin
+    paZeroOut;
+    if not Root.Init then
+      Fail;
+
+    Assign(RawFile, FileName);
+    Reset(RawFile);
+    IO := IoResult;
+    if IO <> 0 then begin
+      Done;
+      InitStatus := epFatal+IO;
+      Fail;
+    end;
+
+    {Read RawFile once through to establish parameters}
+    Count := 0;
+    Used := 0;
+    while not Eof(RawFile) do begin
+      ReadLn(RawFile, InStr);
+      IO := IoResult;
+      if IO <> 0 then begin
+        Close(RawFile);
+        Done;
+        InitStatus := epFatal+IO;
+        Fail;
+      end;
+      Inc(Count);
+      Inc(Used, Length(InStr)+1);
+    end;
+
+    {Assure that size of the string storage buffer doesn't exceed 64K}
+    if Used > SizeOf(ByteArray) then begin {!!.02}
+      Close(RawFile);                      {!!.02}
+      Done;                                {!!.02}
+      InitStatus := epFatal+ecArrayTooBig; {!!.02}
+      Fail;                                {!!.02}
+    end;                                   {!!.02}
+
+    {Allocate space}
+    if not StringArray.Init(Count, Used) then
+      Fail;
+
+    {Fill packed array area}
+    if (paIndex <> nil) and (paInfo <> nil) then begin
+      {Read file again to initialize array areas}
+      Reset(RawFile);
+      while not Eof(RawFile) do begin
+        ReadLn(RawFile, InStr);
+        IO := IoResult;
+        if IO <> 0 then begin
+          Close(RawFile);
+          Done;
+          InitStatus := epFatal+IO;
+          Fail;
+        end;
+        if AddString(InStr) = 0 then begin
+          Close(RawFile);
+          Done;
+          InitStatus := epFatal+ecOutOfMemory;
+          Fail;
+        end;
+      end;
+    end;
+
+    Close(RawFile);
+    IO := IoResult;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor StringArray.Load(var S : IdStream);
+    {-Load a binary packed array from a stream}
+  begin
+    paZeroOut;
+    if not Root.Init then
+     Fail;
+
+    S.Read(paCount, Sizeof(Word));
+    S.Read(paUsed, Sizeof(Word));
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    paISize := paCount*SizeOf(Word);
+    paAmount := paUsed;
+
+    if not GetMemCheck(paIndex, paISize) or not GetMemCheck(paInfo, paAmount)
+    then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+
+    S.Read(paIndex^, paISize);
+    S.Read(paInfo^, paAmount);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure StringArray.Store(var S : IdStream);
+    {-Write a packed array to a stream}
+  begin
+    S.Write(paCount, SizeOf(Word));
+    S.Write(paUsed, SizeOf(Word));
+    {Store the used portion of the packed array}
+    S.Write(paIndex^, paCount*SizeOf(Word));
+    S.Write(paInfo^, paUsed);
+  end;
+
+{$ENDIF}
+
+  procedure StringArray.WriteText(FileName : PathStr);
+    {-Write a packed array to a text file}
+  var
+    Each : Word;
+    RawFile : Text;
+  begin
+    Assign(RawFile, FileName);
+    Rewrite(RawFile);
+    for Each := 1 to paCount do
+      WriteLn(RawFile, GetString(Each));
+    Close(RawFile);
+  end;
+
+  procedure StringArray.Clear; {!!.02}
+    {-Remove all strings from array}
+  begin
+    paCount := 0;
+    paUsed := 0;
+  end;
+
+  destructor StringArray.Done;
+    {-Deallocate data area}
+  begin
+    FreeMemCheck(paInfo, paAmount);
+    FreeMemCheck(paIndex, paISize);
+    paZeroOut;
+    Root.Done;
+  end;
+
+  function StringArray.GetString(Which : Word) : String;
+    {-Return string from packed array}
+  var
+    P : StringPtr;
+  begin {!!.03}
+    P := GetStringPtr(Which);
+    if P = nil then
+      GetString := ''
+    else
+      GetString := P^;
+  end;
+
+  function StringArray.GetStringPtr(Which : Word) : StringPtr;
+    {-Return pointer to string from packed array}
+  var
+    ByteIndex : Word;
+  begin
+    if (Which > 0) and (Which <= paCount) then begin
+      ByteIndex := paIndex^[Which]; {!!.03}
+      if ByteIndex = $FFFF then
+        GetStringPtr := nil
+      else
+        GetStringPtr := @paInfo^[ByteIndex];
+    end else
+      GetStringPtr := nil;
+  end;
+
+  function StringArray.ExpandIndex(Delta : Integer) : Boolean;
+    {-Increase size of packed array index}
+  var
+    P : paIndexArrayPtr;
+    NewSize : LongInt;
+    SizeToMove : Word;
+  begin
+    ExpandIndex := False;
+
+    if paMaxIndexSize < paCount+Delta then
+      NewSize := paMaxIndexSize*SizeOf(Word)
+    else
+      NewSize := paISize+Delta*SizeOf(Word);
+
+    if not GetMemCheck(P, NewSize) then
+      Exit;
+
+    {Copy old contents}
+    if paIndex <> nil then begin
+      if paISize <= NewSize then
+        SizeToMove := paISize
+      else
+        SizeToMove := NewSize;
+      move(paIndex^, P^, SizeToMove);
+    end;
+
+    {Free old contents}
+    FreeMemCheck(paIndex, paISize);
+    paIndex := P;
+    paISize := NewSize;
+
+    ExpandIndex := True;
+  end;
+
+  function StringArray.ExpandInfo(Delta : LongInt) : Boolean;
+    {-Increase size of Packed Array Information}
+  var
+    P : ByteArrayPtr;
+    NewSize : LongInt;
+    SizeToMove : Word;
+  begin
+    ExpandInfo := False;
+
+    NewSize := paAmount+Delta;
+    if NewSize > SizeOf(ByteArray) then
+      NewSize := SizeOf(ByteArray);
+
+    if not GetMemCheck(P, NewSize) then
+      Exit;
+
+    {Copy old contents}
+    if paInfo <> nil then begin
+      if paAmount <= NewSize then
+        SizeToMove := paAmount
+      else
+        SizeToMove := NewSize;
+      Move(paInfo^, P^, SizeToMove);
+    end;
+
+    {Free old contents}
+    FreeMemCheck(paInfo, paAmount);
+    paInfo := P;
+    paAmount := NewSize;
+
+    ExpandInfo := True;
+  end;
+
+  function StringArray.Shrink : Boolean;
+    {-Remove excess packed array space}
+  begin
+    Shrink := ExpandIndex(Integer(paCount)-(paISize div SizeOf(Word)))
+                and ExpandInfo(LongInt(paUsed)-paAmount);
+  end;
+
+  function StringArray.AddString(St : String) : Word;
+    {-Add a new string, returning its index, or 0 if error}
+  label
+    StoreString;
+  var
+    SLen : Byte Absolute St;
+    Index : Word;
+  begin {!!.03}
+    AddString := 0;
+
+    {Do we need to expand the information area?}
+    if paAmount <= LongInt(paUsed)+SLen then begin        {!!.11}
+      if not ExpandInfo(paGrowInfo) then
+        Exit;
+      if paAmount <= LongInt(paUsed)+SLen then            {!!.11}
+        {Still didn't expand enough to hold the string}   {!!.11}
+        Exit;                                             {!!.11}
+    end;
+
+    {Is there an unused entry in the index?}
+    for Index := 1 to paCount do
+      if paIndex^[Index] = $FFFF then begin
+        {Reuse unused entry}
+        paIndex^[Index] := paUsed;
+        AddString := Index;
+        goto StoreString;
+      end;
+
+    {Do we need to expand the index area?}
+    if paISize <= paCount*SizeOf(Word) then
+      if not ExpandIndex(paGrowIndex) then
+        Exit;
+
+    inc(paCount);
+    AddString := paCount;
+    paIndex^[paCount] := paUsed;
+
+StoreString:
+    move(St, paInfo^[paUsed], Slen+1);
+    inc(paUsed, SLen+1);
+  end;
+
+  function StringArray.NumStrings : Word;
+    {-Return number of strings in the packed array}
+  var
+    Deleted : Word;
+    Index : Word;
+  begin {!!.03}
+    Deleted := 0;
+    for Index := 1 to paCount do
+      if paIndex^[Index] = $FFFF then
+        inc(Deleted);
+    NumStrings := paCount-Deleted;
+  end;
+
+  function StringArray.Size : Word;
+    {-Return the number of bytes used by strings}
+  begin
+    Size := paUsed;
+  end;
+
+  procedure StringArray.RemoveString(Which : Word); {!!.03}
+    {-Remove specified string from array and pack character table}
+  var
+    DelPos : Word;
+    Index : Word;
+    Adjust : Word;
+  begin
+    {Assure we've asked to delete an existing string}
+    if (Which > 0) and (Which <= paCount) then begin
+      DelPos := paIndex^[Which];
+      if DelPos <> $FFFF then begin
+        {Mark index slot unused}
+        paIndex^[Which] := $FFFF;
+
+        {Get number of bytes to adjust byte array}
+        Adjust := paInfo^[DelPos];
+        inc(Adjust);
+
+        {Adjust the amount of used space}
+        dec(paUsed, Adjust);
+
+        {Pack following strings, if any, down}
+        move(paInfo^[DelPos+Adjust], paInfo^[DelPos], paUsed-DelPos);
+
+        {Fix up indexes whose targets were adjusted}
+        for Index := 1 to paCount do
+          if paIndex^[Index] <> $FFFF then
+            if paIndex^[Index] > DelPos then
+              dec(paIndex^[Index], Adjust);
+      end;
+    end;
+  end;
+

@@ -1,0 +1,1438 @@
+  {*********************************************************}
+  {*                   OPENTRY.IN1 1.30                    *}
+  {*      Copyright (c) TurboPower Software 1988,1992.     *}
+  {*                 All rights reserved.                  *}
+  {*********************************************************}
+
+  procedure EntryScreen.esAppendField(P : Pointer);
+    {-Append the field pointed to by P to the list of fields}
+  begin
+    {check for pending error}
+    if cwGetLastError <> 0 then begin  {!!.21}
+      asFields.Append(P);              {!!.21}
+      Exit;
+    end;                               {!!.21}
+
+    {check for overflow}
+    if asCount >= Pred(MaxFields) then
+      GotError(epFatal+ecTooManyFields, emNullError)
+    else if P = nil then
+      if (InitStatus = epFatal+ecOutOfMemory) or (InitStatus = 0) then {!!.21}
+        GotError(epFatal+ecOutOfMemory, emInsufficientMemory)
+      else                                                             {!!.21}
+        GotError(InitStatus, emNullError)                              {!!.21}
+    else begin
+      {append it to the linked list}
+      asFields.Append(P);
+
+      {set pointers if this is the first field}
+      if asCount = 0 then begin
+        asCurrent := P;
+        asKnown := P;
+        asNext := P;
+      end;
+
+      {increment field count}
+      Inc(asCount);
+    end;
+  end;
+
+  function EntryScreen.esCheckCoords(var Prompt : string; pRow, pCol : Word;
+                                     fRow, fCol, fWidth, fHeight : Word) : Boolean;
+    {-Check the coordinates of a field about to be added}
+  var
+    PLen : Byte absolute Prompt;
+  begin
+    {make sure the prompt coordinates are OK}        {!!.03}
+    if (PLen > 0) and not asCoordsOK(pRow, pCol, PLen, 1) then begin
+      esCheckCoords := False;
+      Exit;
+    end;
+
+    {make sure the field coordinates are OK}
+    if fWidth = 0 then
+      fWidth := 1;                   {!!.03}                        {!!.03}
+    esCheckCoords := asCoordsOK(fRow {+Pred(fHeight)} , fCol, fWidth, fHeight);
+  end;
+
+  function EntryScreen.esParamsOK(var Prompt : string;
+                                  pRow, pCol : Word;
+                                  var Picture : string;
+                                  fRow, fCol : Word;
+                                  var fWidth : Byte) : Boolean;
+    {-Return True if the specified values are OK for an EntryField}
+  var
+    PLen : Byte absolute Picture;
+    SaveLen : Byte;
+  begin
+    {make sure picture mask isn't too long}
+    if PLen = 255 then
+      Dec(PLen);
+
+    {make sure that 0 > fWidth <= PLen}
+    if (PLen > 0) then
+      if (fWidth = 0) or (fWidth > PLen) then
+        fWidth := PLen;
+
+    {make sure the coordinates are OK}
+    esParamsOK := esCheckCoords(Prompt, pRow, pCol, fRow, fCol, fWidth, 1);
+  end;
+
+  procedure EntryScreen.AddUserField(Prompt : string;
+                                     pRow, pCol : Word;
+                                     Picture : string;
+                                     fRow, fCol : Word;
+                                     fWidth : Byte;
+                                     HelpIndex : Word;
+                                     RangeLo : RangeType;
+                                     RangeHi : RangeType;
+                                     DataSize : Word;
+                                     DecimalPlaces : Byte;
+                                     Validate: ValidationFunc;
+                                     Convert : ConversionProc;
+                                     FDraw   : DrawProc;
+                                     Editor  : EditProc;
+                                     var EditVar);
+    {-Add a field of a user-defined type}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(EntryFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth,
+                 1, HelpIndex, RangeLo, RangeHi, DataSize, DecimalPlaces,
+                 Validate, Convert, FDraw, Editor, EditVar, esPadChar,
+                 asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddStringField(Prompt : string;
+                                       pRow, pCol : Word;
+                                       Picture : string;
+                                       fRow, fCol : Word;
+                                       fWidth : Byte;
+                                       HelpIndex : Word;
+                                       var EditSt : string);
+    {-Add a field of type string}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(StringFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth,
+                 HelpIndex, EditSt, esPadChar, asFieldOptions, esFieldFlags,
+                 asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleStringField(Prompt : string;
+                                             pRow, pCol : Word;
+                                             PicChar : Char;
+                                             fRow, fCol : Word;
+                                             fWidth, MaxLen : Byte;
+                                             HelpIndex : Word;
+                                             var EditSt : string);
+    {-Add a field of type string (simple)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(StringFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                 fWidth, MaxLen, HelpIndex, EditSt, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddArrayField(Prompt : string;
+                                      pRow, pCol : Word;
+                                      Picture : string;
+                                      fRow, fCol : Word;
+                                      fWidth : Byte;
+                                      HelpIndex : Word;
+                                      var EditVar);
+    {-Add a field of type array (of char)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(ArrayFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth,
+                 HelpIndex, EditVar, esPadChar, asFieldOptions, esFieldFlags,
+                 asColors) ) );
+  end;
+
+  procedure EntryScreen.AddCharField(Prompt : string;
+                                     pRow, pCol : Word;
+                                     Picture : string;
+                                     fRow, fCol : Word;
+                                     HelpIndex : Word;
+                                     CharLo, CharHi : Char;
+                                     var EditChar : Char);
+    {-Add a field of type char}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(CharFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 CharLo, CharHi, EditChar, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleCharField(Prompt : string;
+                                           pRow, pCol : Word;
+                                           PicChar : Char;
+                                           fRow, fCol : Word;
+                                           HelpIndex : Word;
+                                           CharLo, CharHi : Char;
+                                           var EditChar : Char);
+    {-Add a field of type char (simple)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := 1;
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(CharFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                 HelpIndex, CharLo, CharHi, EditChar, esPadChar,
+                 asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddBooleanField(Prompt : string;
+                                        pRow, pCol : Word;
+                                        Picture : string;
+                                        fRow, fCol : Word;
+                                        HelpIndex : Word;
+                                        var EditBool : Boolean);
+    {-Add a field of type boolean}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(BooleanFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 EditBool, esPadChar, asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleBooleanField(Prompt : string;
+                                              pRow, pCol : Word;
+                                              fRow, fCol : Word;
+                                              HelpIndex : Word;
+                                              var EditBool : Boolean);
+    {-Add a field of type boolean (simple)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := 1;
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(BooleanFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, fRow, fCol, HelpIndex,
+                 EditBool, esPadChar, asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddYesNoField(Prompt : string;
+                                      pRow, pCol : Word;
+                                      Picture : string;
+                                      fRow, fCol : Word;
+                                      HelpIndex : Word;
+                                      var EditYesNo : Boolean);
+    {-Add a field of type yes/no}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(YesNoFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 EditYesNo, esPadChar, asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleYesNoField(Prompt : string;
+                                            pRow, pCol : Word;
+                                            fRow, fCol : Word;
+                                            HelpIndex : Word;
+                                            var EditYesNo : Boolean);
+    {-Add a field of type yes/no (simple)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := 1;
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(YesNoFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, fRow, fCol, HelpIndex,
+                    EditYesNo, esPadChar, asFieldOptions, esFieldFlags,
+                    asColors) ) );
+  end;
+
+  procedure EntryScreen.AddLongField(Prompt : string;
+                                     pRow, pCol : Word;
+                                     Picture : string;
+                                     fRow, fCol : Word;
+                                     HelpIndex : Word;
+                                     LongLo, LongHi : LongInt;
+                                     var EditLong : LongInt);
+    {-Add a field of type LongInt}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(LongIntFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 LongLo, LongHi, EditLong, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddNumericLongField(Prompt : string;
+                                            pRow, pCol : Word;
+                                            Picture : string;
+                                            fRow, fCol : Word;
+                                            HelpIndex : Word;
+                                            LongLo, LongHi : LongInt;
+                                            var EditLong : LongInt);
+    {-Add a field of type LongInt (numeric)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(LongIntFieldPtr,
+            InitNum(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                    LongLo, LongHi, EditLong, esPadChar, asFieldOptions,
+                    esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleLongField(Prompt : string;
+                                           pRow, pCol : Word;
+                                           PicChar : Char;
+                                           fRow, fCol : Word;
+                                           fWidth : Byte;
+                                           HelpIndex : Word;
+                                           LongLo, LongHi : LongInt;
+                                           var EditLong : LongInt);
+    {-Add a field of type LongInt (simple)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(LongIntFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                 fWidth, HelpIndex, LongLo, LongHi, EditLong, esPadChar,
+                 asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddWordField(Prompt : string;
+                                     pRow, pCol : Word;
+                                     Picture : string;
+                                     fRow, fCol : Word;
+                                     HelpIndex : Word;
+                                     WordLo, WordHi : Word;
+                                     var EditWord : Word);
+    {-Add a field of type word}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(WordFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 WordLo, WordHi, EditWord, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddNumericWordField(Prompt : string;
+                                            pRow, pCol : Word;
+                                            Picture : string;
+                                            fRow, fCol : Word;
+                                            HelpIndex : Word;
+                                            WordLo, WordHi : Word;
+                                            var EditWord : Word);
+    {-Add a field of type word (numeric)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(WordFieldPtr,
+            InitNum(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                    WordLo, WordHi, EditWord, esPadChar, asFieldOptions,
+                    esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleWordField(Prompt : string;
+                                           pRow, pCol : Word;
+                                           PicChar : Char;
+                                           fRow, fCol : Word;
+                                           fWidth : Byte;
+                                           HelpIndex : Word;
+                                           WordLo, WordHi : Word;
+                                           var EditWord : Word);
+    {-Add a field of type word (simple)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(WordFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                 fWidth, HelpIndex, WordLo, WordHi, EditWord, esPadChar,
+                 asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSmallWordField(Prompt : string;
+                                          pRow, pCol : Word;
+                                          Picture : string;
+                                          fRow, fCol : Word;
+                                          HelpIndex : Word;
+                                          WordLo, WordHi : SmallWord;
+                                          var EditWord : SmallWord);
+    {-Add a field of type smallword}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(SmallWordFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 WordLo, WordHi, EditWord, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddNumericSmallWordField(Prompt : string;
+                                                 pRow, pCol : Word;
+                                                 Picture : string;
+                                                 fRow, fCol : Word;
+                                                 HelpIndex : Word;
+                                                 WordLo, WordHi : SmallWord;
+                                                 var EditWord : SmallWord);
+    {-Add a field of type smallword (numeric)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(SmallWordFieldPtr,
+            InitNum(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                    WordLo, WordHi, EditWord, esPadChar, asFieldOptions,
+                    esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleSmallWordField(Prompt : string;
+                                                pRow, pCol : Word;
+                                                PicChar : Char;
+                                                fRow, fCol : Word;
+                                                fWidth : Byte;
+                                                HelpIndex : Word;
+                                                WordLo, WordHi : SmallWord;
+                                                var EditWord : SmallWord);
+    {-Add a field of type smallword (simple)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(SmallWordFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                 fWidth, HelpIndex, WordLo, WordHi, EditWord, esPadChar,
+                 asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddIntField(Prompt : string;
+                                    pRow, pCol : Word;
+                                    Picture : string;
+                                    fRow, fCol : Word;
+                                    HelpIndex : Word;
+                                    IntLo, IntHi : Integer;
+                                    var EditInt : Integer);
+    {-Add a field of type integer}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(IntegerFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 IntLo, IntHi, EditInt, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddNumericIntField(Prompt : string;
+                                           pRow, pCol : Word;
+                                           Picture : string;
+                                           fRow, fCol : Word;
+                                           HelpIndex : Word;
+                                           IntLo, IntHi : Integer;
+                                           var EditInt : Integer);
+    {-Add a field of type integer (numeric)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(IntegerFieldPtr,
+            InitNum(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                    IntLo, IntHi, EditInt, esPadChar, asFieldOptions,
+                    esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleIntField(Prompt : string;
+                                          pRow, pCol : Word;
+                                          PicChar : Char;
+                                          fRow, fCol : Word;
+                                          fWidth : Byte;
+                                          HelpIndex : Word;
+                                          IntLo, IntHi : Integer;
+                                          var EditInt : Integer);
+    {-Add a field of type integer (simple)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(IntegerFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                 fWidth, HelpIndex, IntLo, IntHi, EditInt, esPadChar,
+                 asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSmallIntField(Prompt : string;
+                                         pRow, pCol : Word;
+                                         Picture : string;
+                                         fRow, fCol : Word;
+                                         HelpIndex : Word;
+                                         IntLo, IntHi : SmallInt;
+                                         var EditInt : SmallInt);
+    {-Add a field of type SmallInt}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(SmallIntFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 IntLo, IntHi, EditInt, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddNumericSmallIntField(Prompt : string;
+                                                pRow, pCol : Word;
+                                                Picture : string;
+                                                fRow, fCol : Word;
+                                                HelpIndex : Word;
+                                                IntLo, IntHi : SmallInt;
+                                                var EditInt : SmallInt);
+    {-Add a field of type SmallInt (numeric)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(SmallIntFieldPtr,
+            InitNum(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                    IntLo, IntHi, EditInt, esPadChar, asFieldOptions,
+                    esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleSmallIntField(Prompt : string;
+                                               pRow, pCol : Word;
+                                               PicChar : Char;
+                                               fRow, fCol : Word;
+                                               fWidth : Byte;
+                                               HelpIndex : Word;
+                                               IntLo, IntHi : SmallInt;
+                                               var EditInt : SmallInt);
+    {-Add a field of type SmallInt (simple)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(SmallIntFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                 fWidth, HelpIndex, IntLo, IntHi, EditInt, esPadChar,
+                 asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddByteField(Prompt : string;
+                                     pRow, pCol : Word;
+                                     Picture : string;
+                                     fRow, fCol : Word;
+                                     HelpIndex : Word;
+                                     ByteLo, ByteHi : Byte;
+                                     var EditByte : Byte);
+    {-Add a field of type byte}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(ByteFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 ByteLo, ByteHi, EditByte, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddNumericByteField(Prompt : string;
+                                            pRow, pCol : Word;
+                                            Picture : string;
+                                            fRow, fCol : Word;
+                                            HelpIndex : Word;
+                                            ByteLo, ByteHi : Byte;
+                                            var EditByte : Byte);
+    {-Add a field of type byte (numeric)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(ByteFieldPtr,
+            InitNum(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                    ByteLo, ByteHi, EditByte, esPadChar, asFieldOptions,
+                    esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleByteField(Prompt : string;
+                                           pRow, pCol : Word;
+                                           PicChar : Char;
+                                           fRow, fCol : Word;
+                                           fWidth : Byte;
+                                           HelpIndex : Word;
+                                           ByteLo, ByteHi : Byte;
+                                           var EditByte : Byte);
+    {-Add a field of type byte (simple)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(ByteFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                    fWidth, HelpIndex, ByteLo, ByteHi, EditByte, esPadChar,
+                    asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddShortField(Prompt : string;
+                                      pRow, pCol : Word;
+                                      Picture : string;
+                                      fRow, fCol : Word;
+                                      HelpIndex : Word;
+                                      ShortLo, ShortHi : ShortInt;
+                                      var EditShort : ShortInt);
+    {-Add a field of type shortint}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(ShortIntFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 ShortLo, ShortHi, EditShort, esPadChar,    asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddNumericShortField(Prompt : string;
+                                             pRow, pCol : Word;
+                                             Picture : string;
+                                             fRow, fCol : Word;
+                                             HelpIndex : Word;
+                                             ShortLo, ShortHi : ShortInt;
+                                             var EditShort : ShortInt);
+    {-Add a field of type shortint (numeric)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(ShortIntFieldPtr,
+            InitNum(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                    ShortLo, ShortHi, EditShort, esPadChar, asFieldOptions,
+                    esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleShortField(Prompt : string;
+                                            pRow, pCol : Word;
+                                            PicChar : Char;
+                                            fRow, fCol : Word;
+                                            fWidth : Byte;
+                                            HelpIndex : Word;
+                                            ShortLo, ShortHi : ShortInt;
+                                            var EditShort : ShortInt);
+    {-Add a field of type shortint (simple)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(ShortIntFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                    fWidth, HelpIndex, ShortLo, ShortHi, EditShort, esPadChar,
+                    asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddRealField(Prompt : string;
+                                     pRow, pCol : Word;
+                                     Picture : string;
+                                     fRow, fCol : Word;
+                                     HelpIndex : Word;
+                                     RealLo, RealHi : Real;
+                                     Places : Byte;
+                                     var EditReal : Real);
+    {-Add a field of type real}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(RealFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 RealLo, RealHi, Places, EditReal, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddNumericRealField(Prompt : string;
+                                            pRow, pCol : Word;
+                                            Picture : string;
+                                            fRow, fCol : Word;
+                                            HelpIndex : Word;
+                                            RealLo, RealHi : Real;
+                                            Places : Byte;
+                                            var EditReal : Real);
+    {-Add a field of type real (numeric)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(RealFieldPtr,
+            InitNum(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                    RealLo, RealHi, Places, EditReal, esPadChar, asFieldOptions,
+                    esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleRealField(Prompt : string;
+                                           pRow, pCol : Word;
+                                           PicChar : Char;
+                                           fRow, fCol : Word;
+                                           fWidth : Byte;
+                                           HelpIndex : Word;
+                                           RealLo, RealHi : Real;
+                                           Places : Byte;
+                                           var EditReal : Real);
+    {-Add a field of type real (simple)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(RealFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                    fWidth, HelpIndex, RealLo, RealHi, Places, EditReal,
+                    esPadChar, asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+{$IFDEF UseBcd}
+
+  procedure EntryScreen.AddBcdField(Prompt : string;
+                                    pRow, pCol : Word;
+                                    Picture : string;
+                                    fRow, fCol : Word;
+                                    HelpIndex : Word;
+                                    BcdLo, BcdHi : BCD;
+                                    Places : Byte;
+                                    var EditBcd : BCD);
+    {-Add a field of type BCD}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(BcdFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 BcdLo, BcdHi, Places, EditBcd, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddNumericBcdField(Prompt : string;
+                                    pRow, pCol : Word;
+                                    Picture : string;
+                                    fRow, fCol : Word;
+                                    HelpIndex : Word;
+                                    BcdLo, BcdHi : BCD;
+                                    Places : Byte;
+                                    var EditBcd : BCD);
+    {-Add a field of type BCD (numeric)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(BcdFieldPtr,
+            InitNum(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                    BcdLo, BcdHi, Places, EditBcd, esPadChar, asFieldOptions,
+                    esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleBcdField(Prompt : string;
+                                          pRow, pCol : Word;
+                                          PicChar : Char;
+                                          fRow, fCol : Word;
+                                          fWidth : Byte;
+                                          HelpIndex : Word;
+                                          BcdLo, BcdHi : BCD;
+                                          Places : Byte;
+                                          var EditBcd : BCD);
+    {-Add a field of type BCD (simple)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(BcdFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                 fWidth, HelpIndex, BcdLo, BcdHi, Places, EditBcd,
+                 esPadChar, asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+{$ENDIF}
+
+{$IFOPT N+}
+
+  procedure EntryScreen.AddExtField(Prompt : string;
+                                    pRow, pCol : Word;
+                                    Picture : string;
+                                    fRow, fCol : Word;
+                                    HelpIndex : Word;
+                                    ExtLo, ExtHi : Extended;
+                                    Places : Byte;
+                                    var EditExt : Extended);
+    {-Add a field of type extended}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(ExtendedFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 ExtLo, ExtHi, Places, EditExt, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddNumericExtField(Prompt : string;
+                                           pRow, pCol : Word;
+                                           Picture : string;
+                                           fRow, fCol : Word;
+                                           HelpIndex : Word;
+                                           ExtLo, ExtHi : Extended;
+                                           Places : Byte;
+                                           var EditExt : Extended);
+    {-Add a field of type extended (numeric)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(ExtendedFieldPtr,
+            InitNum(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                    ExtLo, ExtHi, Places, EditExt, esPadChar, asFieldOptions,
+                    esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleExtField(Prompt : string;
+                                          pRow, pCol : Word;
+                                          PicChar : Char;
+                                          fRow, fCol : Word;
+                                          fWidth : Byte;
+                                          HelpIndex : Word;
+                                          ExtLo, ExtHi : Extended;
+                                          Places : Byte;
+                                          var EditExt : Extended);
+    {-Add a field of type extended (simple)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(ExtendedFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                    fWidth, HelpIndex, ExtLo, ExtHi, Places, EditExt,
+                    esPadChar, asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddDblField(Prompt : string;
+                                    pRow, pCol : Word;
+                                    Picture : string;
+                                    fRow, fCol : Word;
+                                    HelpIndex : Word;
+                                    DblLo, DblHi : Double;
+                                    Places : Byte;
+                                    var EditDbl : Double);
+    {-Add a field of type double}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(DoubleFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 DblLo, DblHi, Places, EditDbl, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddNumericDblField(Prompt : string;
+                                           pRow, pCol : Word;
+                                           Picture : string;
+                                           fRow, fCol : Word;
+                                           HelpIndex : Word;
+                                           DblLo, DblHi : Double;
+                                           Places : Byte;
+                                           var EditDbl : Double);
+    {-Add a field of type double (numeric)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(DoubleFieldPtr,
+            InitNum(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                    DblLo, DblHi, Places, EditDbl, esPadChar, asFieldOptions,
+                    esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleDblField(Prompt : string;
+                                          pRow, pCol : Word;
+                                          PicChar : Char;
+                                          fRow, fCol : Word;
+                                          fWidth : Byte;
+                                          HelpIndex : Word;
+                                          DblLo, DblHi : Double;
+                                          Places : Byte;
+                                          var EditDbl : Double);
+    {-Add a field of type double (simple)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(DoubleFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                    fWidth, HelpIndex, DblLo, DblHi, Places, EditDbl,
+                    esPadChar, asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSglField(Prompt : string;
+                                    pRow, pCol : Word;
+                                    Picture : string;
+                                    fRow, fCol : Word;
+                                    HelpIndex : Word;
+                                    SglLo, SglHi : Single;
+                                    Places : Byte;
+                                    var EditSgl : Single);
+    {-Add a field of type single}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(SingleFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 SglLo, SglHi, Places, EditSgl, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddNumericSglField(Prompt : string;
+                                           pRow, pCol : Word;
+                                           Picture : string;
+                                           fRow, fCol : Word;
+                                           HelpIndex : Word;
+                                           SglLo, SglHi : Single;
+                                           Places : Byte;
+                                           var EditSgl : Single);
+    {-Add a field of type single (numeric)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(SingleFieldPtr,
+            InitNum(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                    SglLo, SglHi, Places, EditSgl, esPadChar, asFieldOptions,
+                    esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleSglField(Prompt : string;
+                                          pRow, pCol : Word;
+                                          PicChar : Char;
+                                          fRow, fCol : Word;
+                                          fWidth : Byte;
+                                          HelpIndex : Word;
+                                          SglLo, SglHi : Single;
+                                          Places : Byte;
+                                          var EditSgl : Single);
+    {-Add a field of type single (simple)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(SingleFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                    fWidth, HelpIndex, SglLo, SglHi, Places, EditSgl,
+                    esPadChar, asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddCompField(Prompt : string;
+                                     pRow, pCol : Word;
+                                     Picture : string;
+                                     fRow, fCol : Word;
+                                     HelpIndex : Word;
+                                     CompLo, CompHi : Comp;
+                                     var EditComp : Comp);
+    {-Add a field of type comp}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(CompFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 CompLo, CompHi, EditComp, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddNumericCompField(Prompt : string;
+                                            pRow, pCol : Word;
+                                            Picture : string;
+                                            fRow, fCol : Word;
+                                            HelpIndex : Word;
+                                            CompLo, CompHi : Comp;
+                                            var EditComp : Comp);
+    {-Add a field of type comp (numeric)}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(CompFieldPtr,
+            InitNum(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                    CompLo, CompHi, EditComp, esPadChar, asFieldOptions,
+                    esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddSimpleCompField(Prompt : string;
+                                           pRow, pCol : Word;
+                                           PicChar : Char;
+                                           fRow, fCol : Word;
+                                           fWidth : Byte;
+                                           HelpIndex : Word;
+                                           CompLo, CompHi : Comp;
+                                           var EditComp : Comp);
+    {-Add a field of type comp (simple)}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(CompFieldPtr,
+            InitSim(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                    fWidth, HelpIndex, CompLo, CompHi, EditComp, esPadChar,
+                    asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+{$ENDIF}
+
+{$IFDEF UseDates}
+
+  procedure EntryScreen.AddDateField(Prompt : string;
+                                     pRow, pCol : Word;
+                                     Picture : DateString;
+                                     fRow, fCol : Word;
+                                     HelpIndex : Word;
+                                     DateLo, DateHi : Date;
+                                     var EditDate : Date);
+    {-Add a field of type date}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    if Length(Picture) = 0 then
+      Picture := 'mm/dd/yy';
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(DateFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 DateLo, DateHi, EditDate, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddDateStField(Prompt : string;
+                                       pRow, pCol : Word;
+                                       Picture : DateString;
+                                       fRow, fCol : Word;
+                                       HelpIndex : Word;
+                                       var EditDate : DateString);
+    {-Add a field of type date string}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    if Length(Picture) = 0 then
+      Picture := 'mm/dd/yy';
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(DateStFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 EditDate, esPadChar, asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddTimeField(Prompt : string;
+                                     pRow, pCol : Word;
+                                     Picture : DateString;
+                                     fRow, fCol : Word;
+                                     HelpIndex : Word;
+                                     TimeLo, TimeHi : Time;
+                                     var EditTime : Time);
+    {-Add a field of type time record}
+  var
+    fWidth : Byte;
+  begin
+    {check parameters before adding the field}
+    if Length(Picture) = 0 then
+      Picture := 'hh:mm:ss';
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(TimeFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 TimeLo, TimeHi, EditTime, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+{$ENDIF}
+
+  procedure EntryScreen.AddNestedField(Prompt : string;
+                                       pRow, pCol : Word;
+                                       Picture : string;
+                                       fRow, fCol : Word;
+                                       fWidth : Byte;
+                                       HelpIndex : Word);
+    {-Add a field that is associated with a nested form}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(NestedFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth,
+                 HelpIndex, esPadChar, asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddNestedStringField(Prompt : string;
+                                             pRow, pCol : Word;
+                                             Picture : string;
+                                             fRow, fCol : Word;
+                                             fWidth : Byte;
+                                             HelpIndex : Word;
+                                             var EditSt : string);
+    {-Add a string field that is associated with a nested form}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(StringFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth,
+                 HelpIndex, EditSt, esPadChar, asFieldOptions,
+                 esFieldFlags or ifNested, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddChoiceField(Prompt : string;
+                                       pRow, pCol : Word;
+                                       Picture : string;
+                                       fRow, fCol : Word;
+                                       HelpIndex : Word;
+                                       DataSize : Byte;
+                                       Increment : IncChoiceProc;
+                                       var EditVar);
+    {-Add a multiple choice field}
+  var
+    fWidth : Byte;
+  begin
+    if DataSize > SizeOf(RangeType) then begin
+      GotError(epFatal+ecBadParam, emNullError);
+      Exit;
+    end;
+
+    {check parameters before adding the field}
+    fWidth := Length(Picture);
+    if esParamsOK(Prompt, pRow, pCol, Picture, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(ChoiceFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, Picture, fRow, fCol, HelpIndex,
+                 DataSize, Increment, EditVar, esPadChar, asFieldOptions,
+                 esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddMultiLineField(Prompt : string;
+                                          pRow, pCol : Word;
+                                          PicChar : Char;
+                                          fRow, fCol : Word;
+                                          fWidth, fHeight : Byte;
+                                          HelpIndex : Word;
+                                          var EditVar);
+    {-Add a multi-line field}
+  begin
+    {check coordinates before adding the field}
+    if esCheckCoords(Prompt, pRow, pCol, fRow, fCol, fWidth, fHeight) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(MultiLineFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, PicChar, fRow, fCol,
+                 fWidth, fHeight, HelpIndex, EditVar, esPadChar,
+                 asFieldOptions, esFieldFlags, asColors) ) );
+  end;
+
+  procedure EntryScreen.AddWindowField(Prompt : string;  pRow, pCol : Word; {!!.01}
+                                       fRow, fCol: Word; HelpIndex : Word;
+                                       var CW : CommandWindow);
+    {-Add a child window to be treated as a "field"}
+  var
+    Row, Col, W, H : Integer;
+    X1, Y1, X2, Y2 : Byte;
+  begin
+    {make sure our window is not resizeable}
+    if wOptionsAreOn(wResizeable) then begin
+      GotError(epFatal+ecWinFieldError, emNullError);
+      Exit;
+    end;
+
+    {make sure CW isn't a child window and isn't active}
+    if (CW.ParentPtr <> nil) or (CW.IsActive) then begin
+      GotError(epFatal+ecBadChildError, emNullError);
+      Exit;
+    end;
+
+    {calculate desired absolute coordinates}
+    Row := wYL+Pred(fRow);
+    Col := wXL+Pred(fCol);
+
+    {get the current dimensions of the window}
+    CW.Extent(X1, Y1, X2, Y2, True);
+
+    {is the window at the right location?}
+    if (Row <> Y1) or (Col <> X1) then begin
+      {$IFDEF UseAdjustableWindows}
+        {move it to the proper position}
+        CW.MoveWindow(Col-X1, Row-Y1);
+        CW.Extent(X1, Y1, X2, Y2, True);
+      {$ELSE}
+        {we can't move it, so it's a fatal error}
+        GotError(epFatal+ecBadCoordinates, emNullError);
+        Exit;
+      {$ENDIF}
+    end;
+
+    {make sure the window fits within the parent}
+    if (X1 < wXL) or (Y1 < wYL) or (X2 > wXH) or (Y2 > wYH) or
+       (CW.RawError <> 0) then begin
+         GotError(epFatal+ecBadCoordinates, emNullError);
+         Exit;
+       end;
+
+    {calculate width and height of the child window}
+    W := Succ(X2-X1);
+    H := Succ(Y2-Y1);
+
+    {check coordinates before adding the field}
+    if esCheckCoords(Prompt, pRow, pCol, fRow, fCol, W, H) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(WindowFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, fRow, fCol, W, H, HelpIndex,
+                 asFieldOptions, esFieldFlags, asColors, CW) ) );
+
+    {add the child window if appropriate}
+    if cwGetLastError = 0 then
+      AddChild(@CW);
+  end;
+
+  function EntryScreen.EvaluateCommand(var Cmd : Word) : Word;
+    {-Given a command, return the ID for the field the cursor will move to
+    next}
+  var
+    esCurrent : EntryFieldPtr absolute asCurrent;
+    P : Pointer;
+    SaveCmd : Word;
+    Dummy : Boolean;
+  begin
+    EvaluateCommand := esCurrent^.sfID;
+
+    {special case if only one field}
+    if asCount > 1 then begin
+      {save asNext and reset}
+      P := asNext;
+      asNext := nil;
+      SaveCmd := cwCmd;
+
+      {move from field to field if appropriate}
+      case Cmd of
+        ccUp :
+          asUpField;
+
+        ccDown :
+          asDownField;
+
+        ccLeft,
+        ccWordLeft :
+          asGotoPrevField;
+
+        ccBackTab,
+        ccPrevField :
+          if not asIDisValid(esCurrent^.sfPrevID) then
+            asGotoPrevField;
+
+        ccRight,
+        ccWordRight :
+          asGotoNextField;
+
+        ccSelect,
+        ccTab,
+        ccNextField,
+        ccAutoAdvance :
+          if not asIDisValid(esCurrent^.sfNextID) then
+            asGotoNextField;
+
+        ccFirstFld :
+          asSeekToFirst;
+
+        ccLastFld :
+          asSeekToLast;
+
+        ccPageUp :
+          asPageUpOrDown(-1);
+
+        ccPageDn :
+          asPageUpOrDown(+1);
+
+        {$IFDEF UseMouse}
+        ccMouseDown,                                              {!!.12}
+        ccMouseSel :          {user clicked left mouse button}
+          if cwCmdPtr^.MouseEnabled then
+            Dummy := esEvaluateMouseCommand(cwCmd, Dummy, False); {!!.12}
+        {$ENDIF}                           {^^}
+      end;
+
+      if asNext <> nil then
+        EvaluateCommand := asNext^.sfID;
+      asNext := P;
+      Cmd := cwCmd;                                               {!!.12}
+      cwCmd := SaveCmd;
+    end;
+  end;
+

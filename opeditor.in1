@@ -1,0 +1,1606 @@
+{*********************************************************}
+{*                  OPEDITOR.IN1 1.30                    *}
+{*     Copyright (c) TurboPower Software 1988, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  procedure TextEditor.teMarkerOffsetsToLines(StartOfs : Word; Delta : LongInt;
+                                              DoBlocks : Boolean);
+    {-Convert offsets back into line numbers}
+  var
+    I : Word;
+
+    procedure FixMarker(var MR : MarkerRec);
+      {-Fix one marker}
+    var
+      O : Word;
+      EndOfs : Word;
+    begin
+      with MR do
+        if Line <> 0 then
+          if Delta >= 0 then begin
+            {fix the offset}
+            O := Word(Line);
+            if O > StartOfs then  {!!.13} {was >=}
+              Inc(O, Delta);
+
+            {convert to a line and column}
+            Line := meCalcLineNumber(meBufPtr^, O);
+            Inc(Col, O-meFindLineIndex(Line)+1);
+          end
+          else begin
+            O := Word(Line);
+            EndOfs := StartOfs-Delta;
+
+            {is marker in a deleted block?}
+            if (O >= StartOfs) and (O < EndOfs) then
+              Line := 0
+            else begin
+              {fix the offset}
+              if O >= EndOfs then
+                Inc(O, Delta);
+
+              {convert to a line and column}
+              Line := meCalcLineNumber(meBufPtr^, O);
+              Inc(Col, O-meFindLineIndex(Line)+1);
+            end;
+          end;
+    end;
+
+  begin
+    {fix markers}
+    FixMarker(teLastPosition);
+    if DoBlocks then begin
+      FixMarker(teBlkBegin);
+      FixMarker(teBlkEnd);
+    end;
+
+    {do nothing else if no markers set}
+    if teMarkerFlags = 0 then
+      Exit;
+
+    {convert line numbers to offsets}
+    for I := 0 to MaxMarker do
+      FixMarker(teMarkers[I]);
+  end;
+
+  procedure TextEditor.teAdjustMarkerOffsets(Start, Stop, Dest, Total : Word;
+                                             DoBlocks : Boolean);
+    {-Convert offsets back into line numbers}
+  var
+    I, O : Word;
+    EndOfs : Word;
+    Delta : LongInt;
+    SO, EO : Word;
+
+    procedure FixMarker(var MR : MarkerRec);
+      {-Fix one marker}
+    begin
+      with MR do
+        if Line <> 0 then begin
+          O := Word(Line);
+
+          {is the marker inside the block being moved?}
+          if (O >= Start) and (O <= Stop) then
+            Inc(O, Delta)
+          else if Delta > 0 then begin
+            {SO..EO is the companion block being moved down}
+            SO := Stop+1;
+            EO := SO+Delta-1;
+            if (O >= SO) and (O <= EO) then
+              Dec(O, Total);
+          end
+          else begin
+            {SO..EO is the companion block being moved up}
+            SO := Dest;
+            EO := SO+Abs(Delta)-1;
+            if (O >= SO) and (O <= EO) then
+              Inc(O, Total);
+          end;
+
+          Word(Line) := O;
+        end;
+    end;
+
+  begin
+    {fix markers}
+    FixMarker(teLastPosition);
+    if DoBlocks then begin
+      FixMarker(teBlkBegin);
+      FixMarker(teBlkEnd);
+    end;
+
+    {do nothing else if no markers set}
+    if teMarkerFlags = 0 then
+      Exit;
+
+    {adjust offsets}
+    Delta := LongInt(Dest)-LongInt(Start);
+    for I := 0 to MaxMarker do
+      FixMarker(teMarkers[I]);
+  end;
+
+  procedure TextEditor.teDeleteBlock;
+    {-Delete a marked block}
+  var
+    StLen : Byte absolute meSt;
+    I, Total : Word;
+    Start, Stop : Word;
+    CurPos : Word;
+(*  TmpSt : string;  *)                       {!!.03}
+    TmpCol : Byte;
+    TmpBegin : MarkerRec;
+    TmpEnd : MarkerRec;
+  begin
+    {don't do it if block isn't highlighted}
+    if not teBlockCheck(False) then
+      Exit;
+
+    {find the end points of the block}
+    teBlockBounds(Start, Stop, Total, True);
+
+    {get ready to fix text markers}           {!!.13}
+    {teMarkerLinesToOffsets(False);}          {!!.13}
+
+    {does current line have whole block?}
+    if (teBlkBegin.Line = teBlkEnd.Line) and (meCurLine = teBlkBegin.Line) then begin
+      {save current state}
+(*    TmpSt := meSt; *)                       {!!.03}
+      TmpCol := meCurCol;
+      TmpBegin := teBlkBegin;
+      TmpEnd := teBlkEnd;
+
+      {save the current version of the line}  {!!.03}
+      meSaveCurrentLine(True);                {!!.03}
+
+      {adjust cursor}
+      if meCurCol > teBlkBegin.Col then
+        if meCurCol <= teBlkEnd.Col then      {!!.13}
+          meCurCol := teBlkBegin.Col          {!!.13}
+        else                                  {!!.13}
+          Dec(meCurCol, Total);
+
+      {delete the characters in the block}
+      Delete(meSt, teBlkBegin.Col, Total);
+      meIsModified(True);                     {!!.03}
+
+(*    {save the modified line}  *)            {!!.03}
+(*    meSaveCurrentLine(True);  *)            {!!.03}
+
+      {adjust text markers}                   {!!.13}
+      for I := 0 to MaxMarker do                                {!!.13}
+        with teMarkers[I] do                                    {!!.13}
+          if (Line = meCurLine) and (Col >= TmpBegin.Col) then  {!!.13}
+            if Col <= TmpEnd.Col then                           {!!.13}
+              Line := 0                                         {!!.13}
+            else                                                {!!.13}
+              Dec(Col, Total);                                  {!!.13}
+
+      {keep record of previous state}
+(*    meOldSt := TmpSt; *)                    {!!.03}
+      meOldCol := TmpCol;
+      teBlkBegin := TmpBegin;
+      teBlkEnd := TmpEnd;
+    end
+    else begin
+      {get ready to fix text markers}           {!!.13}
+      teMarkerLinesToOffsets(False);            {!!.13}
+
+      if teCursorInBlock(False) then
+        {move cursor to end of block before doing the deletion}
+        CurPos := Stop+1
+      else
+        CurPos := meBufPos+Pred(meCurCol);
+
+      CurPos := MinWord(CurPos, meTotalBytes);  {!!.22}
+
+      {adjust top line if it's in the block}
+      if (meBufPosTop >= Start) and (meBufPosTop <= Stop) then
+        meBufPosTop := Stop+1;
+
+      {delete the block}
+      meMakeHole(Start, -Total);
+
+      {re-count the number of lines, bytes, etc.}
+      meRecount(meBufPtr^);
+
+      if CurPos > Start then begin
+        Dec(CurPos, Total);
+        meCurLine := meCalcLineNumber(meBufPtr^, CurPos);
+        meBufPos := meFindLineIndex(meCurLine);
+        meCurCol := Succ(CurPos-meBufPos);
+      end;
+      if meBufPosTop > Start then begin
+        Dec(meBufPosTop, Total);
+        meLineAtTop := meCalcLineNumber(meBufPtr^, meBufPosTop);
+        meBufPosTop := meFindLineIndex(meLineAtTop);
+      end;
+
+      {redraw whole screen}
+      meForceRedraw := True;
+
+      {mark file as modified}
+      meOldModified := True;
+      meIsModified(True);
+
+      {reload current line}
+      meLoadLine(meCurLine, True);
+
+      {fix text markers}                             {!!.13}
+      teMarkerOffsetsToLines(Start, -Total, False);  {!!.13}
+    end;
+
+    {fix text markers}                               {!!.13}
+    {teMarkerOffsetsToLines(Start, -Total, False);}  {!!.13}
+
+    {clear block markers}
+    teBlkBegin.Line := 0;
+    teBlkEnd.Line := 0;
+    teToggleBlock;
+  end;
+
+  procedure TextEditor.teCopyBlock;
+    {-Copy marked block to position of cursor}
+  var
+    StLen : Byte absolute meSt;
+    I, Total : Word;
+    Start, Stop : Word;
+    CurPos : Word;
+  begin
+    {don't do it if the block is hidden}
+    if not teBlockCheck(False) then
+      Exit;
+
+    {don't do it if cursor is in the block unless it is at the very beginning}
+    if teCursorInBlock(False) then
+      with teBlkBegin do
+        if (meCurLine <> Line) or (meCurCol <> Col) then
+          Exit;
+
+    {is cursor beyond end of line?}
+    if meCurCol <= StLen then
+      meSaveCurrentLine(True)
+    else if not mePadLineToCursor then
+      Exit;
+
+    {find the end points of the block}
+    teBlockBounds(Start, Stop, Total, False);
+
+    {can we make room for the copy?}
+    if not meInsertOK(Total) then
+      Exit;
+
+    {target is current location of the cursor}
+    CurPos := meBufPos+Pred(meCurCol);
+
+    {get ready to fix text markers}
+    teMarkerLinesToOffsets(False);
+
+    {make a hole for the new text}
+    meMakeHole(CurPos, Total);
+
+    {adjust our offsets if we're copying from below}
+    if Start > CurPos then begin
+      Inc(Start, Total);
+      Inc(Stop, Total);
+    end;
+
+    {copy the block into place}
+    MoveFast(meBufPtr^[Start], meBufPtr^[CurPos], Total);  {!!.01}
+
+    {fix the begin block marker}
+    with teBlkBegin do begin
+      Line := meCurLine;
+      Col := meCurCol;
+    end;
+
+    {re-count the number of lines, bytes, etc.}
+    meRecount(meBufPtr^);
+
+    {fix text markers}
+    teMarkerOffsetsToLines(CurPos, Total, False);
+
+    {fix the end block marker}
+    Stop := CurPos+Total;
+    with teBlkEnd do
+      meCalcLineAndCol(Stop, Line, Col);
+
+    {force the screen to be redrawn}
+    meForceRedraw := True;
+
+    {mark file as modified}
+    meOldModified := True;
+    meIsModified(True);
+
+    {reload current line}
+    meLoadLine(meCurLine, True);
+  end;
+
+  procedure TextEditor.teMoveBlock;
+    {-Move marked block to position of cursor}
+  var
+    StLen : Byte absolute meSt;
+    Temp : String;
+    TLen : Byte absolute Temp;
+    I, Total : Word;
+    Start, Stop : Word;
+    CurPos : Word;
+    OneLine : Boolean;
+    TempI : Word;
+    UseHeap : Boolean;
+    P : Pointer;
+
+    function BufAvail(var BufIndex : Word) : Word;
+      {-Calculate available buffer space}
+    var
+      I : Word;
+    begin
+      I := meBufSize-meTotalBytes;
+      if I > SafetyMargin then
+        Dec(I, SafetyMargin)
+      else
+        I := 0;
+      BufIndex := Succ(meBufSize-I);
+      BufAvail := I;
+    end;
+
+  begin
+    {don't do it if the block is hidden or the cursor is in the block}
+    if (not teBlockCheck(False)) or teCursorInBlock(True) then
+      Exit;
+
+    {is cursor beyond end of line?}
+    if meCurCol <= StLen then
+      meSaveCurrentLine(True)
+    else if not mePadLineToCursor then
+      Exit;
+
+    {find the end points of the block}
+    teBlockBounds(Start, Stop, Total, False);
+
+    {does current line have whole block?}
+    OneLine := (teBlkBegin.Line = teBlkEnd.Line) and (meCurLine = teBlkBegin.Line);
+    if OneLine then begin
+      {adjust meCurCol if necessary}
+      if meCurCol > teBlkBegin.Col then
+        Dec(meCurCol, Total);
+
+      {target is current location of the cursor}
+      CurPos := meBufPos+Pred(meCurCol);
+
+      {get ready to fix text markers}
+      teMarkerLinesToOffsets(False);
+
+      {move the block into temporary storage}
+      TLen := Total;
+      MoveFast(meSt[teBlkBegin.Col], Temp[1], Total);  {!!.01}
+      Delete(meSt, teBlkBegin.Col, Total);
+
+      {and now into place}
+      Insert(Temp, meSt, meCurCol);
+
+      {fix the block markers}
+      teBlkBegin.Col := meCurCol;
+      teBlkEnd.Col := meCurCol+Total;
+
+      {save the modified line}
+      meSaveCurrentLine(True);
+    end
+    else begin
+      {can we allocate a temporary buffer on the heap?}
+      if GetMemCheck(P, Total) then
+        UseHeap := True
+      {is there room at the end of the buffer to store the block?}
+      else if BufAvail(TempI) >= Total then begin
+        UseHeap := False;
+        P := @meBufPtr^[TempI];
+      end
+      else begin
+        meCallErrorRoutine(epWarning+ecBufferFull);
+        Exit;
+      end;
+
+      {get ready to fix text markers}
+      teMarkerLinesToOffsets(False);
+
+      {adjust top line if it's in the block}
+      if (meBufPosTop >= Start) and (meBufPosTop <= Stop) then
+        meBufPosTop := Stop+1;
+
+      {target is current location of the cursor}
+      CurPos := meBufPos+Pred(meCurCol);
+
+      {adjust the position of the cursor}
+      if CurPos > Start then
+        Dec(CurPos, Total);
+
+      {move the block into temporary storage}
+      MoveFast(meBufPtr^[Start], P^, Total);  {!!.01}
+
+      {delete the block}
+      meMakeHole(Start, -Total);
+
+      {make room at the new location}
+      meMakeHole(CurPos, Total);
+
+      {move the block back into place}
+      MoveFast(P^, meBufPtr^[CurPos], Total);  {!!.01}
+
+      {deallocate heap space}
+      if UseHeap then
+        FreeMemCheck(P, Total);
+
+      {re-count the number of lines, bytes, etc.}
+      meRecount(meBufPtr^);
+
+      if meBufPosTop > Start then begin
+        Dec(meBufPosTop, Total);
+        meLineAtTop := meCalcLineNumber(meBufPtr^, meBufPosTop);
+        meBufPosTop := meFindLineIndex(meLineAtTop);
+      end;
+
+      {fix the cursor}
+      meCurLine := meCalcLineNumber(meBufPtr^, CurPos);
+      meBufPos := meFindLineIndex(meCurLine);
+      meCurCol := Succ(CurPos-meBufPos);
+
+      {fix the begin block marker}
+      with teBlkBegin do begin
+        Line := meCurLine;
+        Col := meCurCol;
+      end;
+
+      {fix the end block marker}
+      I := CurPos+Total;
+      with teBlkEnd do
+        meCalcLineAndCol(I, Line, Col);
+
+      {force the screen to be redrawn}
+      meForceRedraw := True;
+    end;
+
+    {fix text markers}
+    teAdjustMarkerOffsets(Start, Stop, CurPos, Total, False);
+    teMarkerOffsetsToLines(1, 0, False);
+
+    {mark file as modified}
+    meOldModified := True;
+    meIsModified(True);
+
+    {reload current line}
+    meLoadLine(meCurLine, True);
+  end;
+
+  procedure TextEditor.teBlockWrite(ToPrinter, AppendIt : Boolean); {!!.30}
+    {-Write a marked block to disk}
+  var
+    FName        : PathStr;
+    F            : File;
+    FHandle      : Word absolute F;
+    Start, Stop  : Word;
+    I, J, Total  : Word;
+    FSize        : LongInt;
+    TempBuf      : array[0..255] of Char;   {!!.30}
+    NumChars     : Word;                    {!!.30}
+    OnChar       : Word;                    {!!.30}
+    WasCtrlZ     : Boolean;                 {!!.30}
+
+  label                                     {!!.30}
+    ExitPoint;                              {!!.30}
+
+  begin
+    if not teBlockCheck(False) then
+      Exit;
+
+    if ToPrinter then       {!!.30}
+      AppendIt := False;    {!!.30}
+    if AppendIt then        {!!.30}
+      ToPrinter := False;   {!!.30}
+    WasCtrlZ := False;      {!!.30}
+
+    if ToPrinter then begin
+      FName := 'LPT1';
+      Inc(FName[4], Pred(teLPT));
+    end
+    else begin
+      FName := '';
+      if not teGetFileName(epMessage+mcBlockWrite, emBlockWrite,
+                           FName, not AppendIt, False) then
+        Exit;
+    end;
+
+    {find the end points of the block}
+    teBlockBounds(Start, Stop, Total, True);
+
+    if AppendIt then                            {!!.30}
+      AppendIt := ExistFile(FName);             {!!.30}
+
+    {open the file}
+    Assign(F, FName);
+    if AppendIt then   {!!.30}
+      Reset(F, 1)      {!!.30}
+    else               {!!.30}
+      Rewrite(F, 1);   {!!.30}
+    I := IoResult;
+    if I <> 0 then begin
+      GotError(epNonFatal+I, emOpenError);
+      Close(F);
+      I := IoResult;
+      Exit;
+    end
+    else if HandleIsConsole(FHandle) then begin
+      GotError(epNonFatal+ecNotToScreen, emNotToScreen);
+      Exit;
+    end;
+
+    {write the block to disk}
+
+    {!!.30 - Added this block }
+    if AppendIt then begin
+      FSize := FileSize(F);
+      if (FSize <> 0) then begin
+        { check the last 256 characters of the destination for ^Zs }
+        NumChars := MinWord(FSize, 256);
+        Seek(F, FSize - NumChars);
+        I := IoResult;
+        if (I <> 0) then begin
+          GotError(epNonFatal+I, emWriteError);
+          goto ExitPoint;
+        end;
+
+        BlockRead(F, TempBuf, NumChars);
+        if (I <> 0) then begin
+          GotError(epNonFatal+I, emWriteError);
+          goto ExitPoint;
+        end;
+
+        OnChar := 0;
+        while (OnChar < NumChars) and (TempBuf[OnChar] <> CtrlZ) do
+          Inc(OnChar);
+
+        WasCtrlZ := (OnChar < NumChars);
+        if WasCtrlZ then begin
+          { there are some ^Zs to kill }
+          Seek(F, FSize - (NumChars - OnChar));
+          Truncate(F);
+          if (I <> 0) then begin
+            GotError(epNonFatal+I, emWriteError);
+            goto ExitPoint;
+          end;
+        end;
+      end;
+    end;
+
+    BlockWrite(F, meBufPtr^[Start], Total);
+    I := IoResult;
+    if (I = 0) then
+
+      {!!.30}
+      if WasCtrlZ or not (ToPrinter or LongFlagIsSet(meOptions, teNoCtrlZ)) then begin
+
+        {append a ^Z}
+        BlockWrite(F, CtrlZ, 1);
+        I := IoResult;
+      end;
+    if (I <> 0) then
+      GotError(epNonFatal+I, emWriteError);
+
+ExitPoint: {!!.30}
+    {close the file}
+    Close(F);
+    J := IoResult;
+    if (J <> 0) and (I <> 0) and not ToPrinter then
+      GotError(epNonFatal+J, emCloseError);
+  end;
+
+  procedure TextEditor.teBlockRead;
+    {-Read a block from disk and mark it}
+  label
+    ExitPoint;
+  var
+    StLen        : Byte absolute meSt;
+    FName        : PathStr;
+    F            : File;
+    FSize        : LongInt;
+    I, J, K      : Word;
+    CurPos       : Word;
+  begin
+    FName := '';
+    if not teGetFileName(epMessage+mcBlockRead, emBlockRead,
+                         FName, False, True) then
+      Exit;
+
+    {is cursor beyond end of line?}
+    if meCurCol <= StLen then
+      meSaveCurrentLine(True)
+    else if not mePadLineToCursor then
+      Exit;
+
+    {open the file}
+    Assign(F, FName);
+    Reset(F, 1);
+    I := IoResult;
+    if I <> 0 then begin
+      GotError(epNonFatal+I, emOpenError);
+      Exit;
+    end;
+
+    {do we have enough room?}
+    FSize := FileSize(F);
+    if (FSize = 0) then begin
+      GotError(epNonFatal+ecFileIsEmpty, emFileIsEmpty);
+      goto ExitPoint;
+    end
+    else if not meInsertOK(FSize) then
+      goto ExitPoint;
+
+    {target is current location of the cursor}
+    CurPos := meBufPos+Pred(meCurCol);
+
+    {get ready to fix text markers}
+    teMarkerLinesToOffsets(False);
+
+    {open up a hole for the block}
+    meMakeHole(CurPos, FSize);
+
+    {read the block}
+    BlockRead(F, meBufPtr^[CurPos], FSize);
+    I := IoResult;
+    if (I <> 0) then begin
+      {call error handler}
+      GotError(epNonFatal+I, emCloseError);
+
+      {close the hole and exit}
+      meMakeHole(CurPos, -FSize);
+      teMarkerOffsetsToLines(1, 0, False);
+      goto ExitPoint;
+    end;
+
+    {scan for ^Z}
+    I := Search(meBufPtr^[CurPos], FSize, CtrlZ, 1);
+    if (I <> SearchFailed) then begin
+      {get rid of everything from ^Z on}
+      J := CurPos+I;
+      K := FSize-I;
+      meMakeHole(J, -K);
+
+      {adjust file size}
+      Dec(FSize, K);
+    end;
+
+    {re-count the number of lines, bytes, etc.}
+    meRecount(meBufPtr^);
+
+    {fix text markers}
+    teMarkerOffsetsToLines(CurPos, FSize, False);
+
+    {fix the begin block marker}
+    with teBlkBegin do begin
+      Line := meCurLine;
+      Col := meCurCol;
+    end;
+
+    {fix the end block marker}
+    I := CurPos+FSize;
+    with teBlkEnd do
+      meCalcLineAndCol(I, Line, Col);
+
+    {activate block marker display}
+    meSetOption(teBlockOn, True);
+
+    {force entire screen to be redrawn}
+    meForceRedraw := True;
+
+    {mark file as modified}
+    meOldModified := True;
+    meIsModified(True);
+
+    {reload current line}
+    meLoadLine(meCurLine, True);
+
+ExitPoint:
+    {close the file}
+    Close(F);
+    I := IoResult;
+    if (I <> 0) then
+      GotError(epNonFatal+I, emCloseError);
+  end;
+
+  procedure TextEditor.GotoLineCol(LineNum : Integer; Col : Byte);
+    {-Move cursor to LineNum, Col}
+  var
+    Marker : MarkerRec;
+  begin
+    if (LineNum > 0) and IsActive and IsCurrent then begin
+      Marker.Line := LineNum;
+      Marker.Col := Col;
+      teGotoBlockMarker(Marker);
+    end;
+  end;
+
+  procedure TextEditor.GotoOffset(Offset : Word);
+    {-Move cursor to specified offset in the text buffer}
+  var
+    Line, Col : Integer;
+  begin
+    {force valid Offset}
+    if Offset = 0 then
+      Offset := 1
+    else if Offset > meTotalBytes then
+      Offset := meTotalBytes;
+
+    {convert to line, col}
+    meCalcLineAndCol(Offset, Line, Col);
+
+    {jump to it}
+    GotoLineCol(Line, Col);
+  end;
+
+  procedure TextEditor.teInsertTextAtCursor(var Data; Bytes : Word;
+                                            Mark : Boolean);
+    {-Insert specified number of Bytes of Data into the text buffer at the
+      cursor}    {!!.01} {new routine}
+  var
+    StLen        : Byte absolute meSt;
+    I, J, K      : Word;
+    CurPos       : Word;
+    Line, Col    : Integer;
+    SaveBlock    : MarkerRec;
+  begin
+    {check for a ^Z}
+    I := Search(Data, Bytes, CtrlZ, 1);
+    if I <> SearchFailed then
+      Bytes := I;
+
+    if (Bytes > 0) and IsActive and IsCurrent then begin
+      {is cursor beyond end of line?}
+      if meCurCol <= StLen then
+        meSaveCurrentLine(True)
+      else if not mePadLineToCursor then
+        Exit;
+
+      {OK to insert this much text?}
+      if not meInsertOK(Bytes) then
+        Exit;
+
+      {mark it as a block?}
+      if Mark then begin
+        teMarkBlockBegin;
+        SaveBlock := teBlkBegin;
+      end;
+
+      {target is current location of the cursor}
+      CurPos := meBufPos+Pred(meCurCol);
+
+      {get ready to fix text markers}
+      teMarkerLinesToOffsets(True);
+
+      {open up a hole for the block}
+      meMakeHole(CurPos, Bytes);
+
+      {move the text into place}
+      MoveFast(Data, meBufPtr^[CurPos], Bytes);
+
+      {re-count the number of lines, bytes, etc.}
+      meRecount(meBufPtr^);
+
+      {fix text markers}
+      teMarkerOffsetsToLines(CurPos, Bytes, True);
+
+      {force entire screen to be redrawn}
+      meForceRedraw := True;
+
+      {mark file as modified}
+      meOldModified := True;
+      meIsModified(True);
+
+      {make sure GotoLineCol won't save meSt} {!!.02}
+      while meSt[StLen] = ' ' do              {!!.02}
+        Dec(StLen);                           {!!.02}
+      meOldSt := meSt;                        {!!.02}
+
+      {move cursor to just beyond end of inserted text}
+      I := CurPos+Bytes;
+      repeat
+        J := meTotalBytes;
+        meCalcLineAndCol(I, Line, Col);
+
+        {go  to new line}
+        SetLongFlag(meOptions, meReformatting);
+        GotoLineCol(Line, Col);
+        meLoadLine(meCurLine, True);
+        ClearLongFlag(meOptions, meReformatting);
+
+        {deal with forced line breaks}
+        Inc(I, meTotalBytes-J);
+      until (J = meTotalBytes);
+
+      {mark it as a block?}
+      if Mark then begin
+        teBlkBegin := SaveBlock;
+        teMarkBlockEnd;
+      end;
+    end;
+  end;
+
+  procedure TextEditor.InsertTextAtCursor(var Data; Bytes : Word);
+    {-Insert specified number of Bytes of Data into the text buffer at the
+      cursor}
+  begin
+    teInsertTextAtCursor(Data, Bytes, False); {!!.01}
+  end;
+
+  procedure TextEditor.InsertBlockAtCursor(var Data; Bytes : Word); {!!.01}
+    {-Insert specified number of Bytes of Data into the text buffer at the
+      cursor, and mark the inserted text as a block}
+  begin
+    teInsertTextAtCursor(Data, Bytes, True);
+  end;
+
+  procedure TextEditor.InsertStringAtCursor(S : String);
+    {-Insert string S into the text buffer at the cursor}
+  begin
+    teInsertTextAtCursor(S[1], Length(S), False); {!!.01}
+  end;
+
+  procedure TextEditor.InsertBlockedStringAtCursor(S : String);  {!!.01}
+    {-Insert string S into the text buffer at the cursor, and mark the
+      inserted text as a block}
+  begin
+    teInsertTextAtCursor(S[1], Length(S), True);
+  end;
+
+  procedure TextEditor.teFindString(Prompt : Boolean; teST : teSearchType);
+    {-Find/replace a string}
+  label
+    ExitPoint,
+    BwdTryAgain,     {!!.30}
+    FwdTryAgain;     {!!.30}
+
+  type
+    SearchFunc = function (var Buffer; BufLength : Word;
+                           var Match; MatLength : Word) : Word;
+  var
+    HighlightLen  : Byte;          {!!.13}
+    SaveHighLen   : Byte;          {!!.13}
+    I             : Word;
+    SearchSt      : String[MaxSearchLen+1];
+    SearchLen     : Byte absolute SearchSt;
+    StLen         : Byte absolute meSt;
+    NoCase        : Boolean;
+    Backward      : Boolean;
+    Global        : Boolean;
+    NoConfirm     : Boolean;
+    BlockOnly     : Boolean;
+    WordOnly      : Boolean;
+    SaveCurLine   : Integer;
+    SaveCurCol    : Byte;
+    SaveBufPos    : Word;
+    SaveLineAtTop : Integer;
+    SaveBufPosTop : Word;
+    Found, OK     : Boolean;
+    NeedToSave    : Boolean;
+    SFunc         : SearchFunc;
+
+    procedure HighlightingOn;
+      {-Turn highlighting on}
+    begin
+      meSetOption(teHighlightOn, True);
+      meSetOption(teHighlightBack, Backward);
+    end;
+
+    procedure HighlightingOff;
+      {-Turn highlighting off}
+    begin
+      meSetOption(teHighlightOn+teHighlightBack, False);
+    end;
+
+    procedure ShowString(Wait : Boolean);
+      {-Display the string we found}
+    var
+      MinC, MaxC : Word;
+      LowC, HighC : Word;
+      {SearchLen : Byte absolute teSearchSt;} {!!.13}
+      WRows, WDelta : Word;
+      LowL, HighL : Word;
+      SLAT : Integer;
+    begin
+      if Wait then
+        HighlightingOn;
+
+      {try to get the entire search string into view}
+      if Backward then begin
+        MinC := meCurCol;
+        MaxC := MinC+Pred(HighlightLen); {!!.13}
+      end
+      else begin
+        MaxC := meCurCol;
+        MinC := MaxC-Pred(HighlightLen); {!!.13}
+      end;
+      LowC := Succ(meColDelta);
+      HighC := LowC+Pred(meWinWidth);
+      if MinC < LowC then begin
+        meColDelta := Pred(MinC);
+        meForceRedraw := True;
+      end
+      else if MaxC > HighC then begin
+        Inc(meColDelta, MaxC-HighC);
+        meForceRedraw := True;
+      end;
+
+      {scroll vertically to get text somewhat centered in window}
+      WRows := wYH-wYL;
+      if (WRows > 1) and (meTotalLines > WRows+1) then begin
+        WDelta := Succ(WRows div 4);
+        LowL := meLineAtTop+WDelta;
+        HighL := meLineAtTop+WRows-WDelta;
+        SLAT := meLineAtTop;
+        if meCurLine > HighL then
+          Inc(meLineAtTop, meCurLine-HighL)
+        else if meCurLine < LowL then begin
+          Dec(meLineAtTop, LowL-meCurLine);
+          if meLineAtTop < 1 then
+            meLineAtTop := 1;
+        end;
+        if meLineAtTop <> SLAT then begin
+          meBufPosTop := meFindLineIndex(meLineAtTop);
+          meForceRedraw := True;
+        end;
+      end;
+
+      {update the screen and cursor}
+      meUpdateScreenAndCursor;
+
+      if Wait then begin
+        {wait for a key or button press}
+        while not cwCmdPtr^.cpKeyPressed do
+          {$IFDEF VIRTUALPASCAL}
+          SysCtrlSleep(1);
+          {$ELSE}
+          inline($CD/$28);
+          {$ENDIF}
+
+        {unhighlight the string}
+        HighlightingOff;
+      end;
+    end;
+
+    procedure SaveIfNecessary;
+      {-Save the current line if necessary}
+    begin
+      if NeedToSave then begin
+        meSaveCurrentLine(True);
+        NeedToSave := False;
+      end;
+    end;
+
+    function NextLine : Boolean;
+      {-Move cursor to beginning of next line}
+    begin
+      {save current line if necessary}
+      SaveIfNecessary;
+
+      if meCurLine = meTotalLines then
+        NextLine := False
+      else begin
+        meLoadLine(meCurLine+1, True);
+        meCurCol := 1;
+        {meColDelta := 0;} {!!.12}
+        NextLine := True;
+        if meCurLine and $1F = 0 then
+          meShowStatus;
+      end;
+    end;
+
+    function PrevLine : Boolean;
+      {-Move cursor to end of previous line}
+    begin
+      {save current line if necessary}
+      SaveIfNecessary;
+
+      if meCurLine = 1 then
+        PrevLine := False
+      else begin
+        meLoadLine(meCurLine-1, True);
+        meCurCol := StLen;
+        PrevLine := True;
+        if meCurLine and $1F = 0 then
+          meShowStatus;
+      end;
+    end;
+
+    function DoReplacement : Byte;
+      {-Ask user if he wants to replace the current instance of the string}
+    var
+      YN : Byte;
+      SaveSearch : Boolean;
+    begin
+      if NoConfirm then
+        DoReplacement := teYes
+      else begin
+        {activate highlighting}
+        HighlightingOn;
+
+        {clear searching flag}
+        SaveSearch := LongFlagIsSet(meOptions, teSearching);
+        meSetOption(teSearching, False);
+
+        {display current line}
+        ShowString(False);
+
+        {ask user if he wants to replace this instance of the string}
+        YN := teYesNo(epMessage+mcReplaceYesNo, emReplaceYesNo, teNo, True);
+        if YN = teAll then begin
+          DoReplacement := teYes;
+          NoConfirm := True;
+          meForceRedraw := True;
+        end
+        else
+          DoReplacement := YN;
+
+        {turn highlighting off}
+        HighlightingOff;
+
+        {redraw the current line}
+        meDrawCurrentLine;
+
+        {reset searching flag}
+        meSetOption(teSearching, SaveSearch);
+      end;
+    end;
+
+    function ReplaceIt : Boolean; {!!.02} {completely rewritten}
+      {-Make a replacement}
+    label
+      LongWay;
+    var
+      ReplaceLen : Byte absolute teReplaceSt;
+      SaveTotal : Word;
+      Delta, Line, Col : Integer;
+      NL, NC : Integer;                     {!!.13}
+      Start : Byte;
+      StartPos, I : Word;
+      HaveCrLf : Boolean;
+    begin
+      Delta := Integer(ReplaceLen)-SearchLen;
+      if not meInsertOK(Delta) then begin
+        ReplaceIt := False;
+        Exit;
+      end;
+
+      if Backward then
+        Start := meCurCol
+      else
+        Start := meCurCol-Pred(SearchLen);
+
+      {does replacement string add a line?}
+      HaveCrLf := Pos(^M^J, teReplaceSt) <> 0;
+      if HaveCrLf then
+        goto LongWay;
+
+      NeedToSave := True;
+      if (Delta = 0) then
+        {length is same, just plug it in}
+        MoveFast(teReplaceSt[1], meSt[Start], ReplaceLen)  {!!.01}
+      else if (Delta < 0) or (Delta+StLen <= meMaxLength) then begin
+        Delete(meSt, Start, SearchLen);
+        Insert(teReplaceSt, meSt, Start);
+        meCharsInserted(meCurLine, Start, Delta);
+        if not Backward then
+          Inc(meCurCol, Delta+1); {!!.12}
+      end
+      else begin
+LongWay:
+        {save the current line}
+        SaveIfNecessary;
+
+        {starting position}
+        StartPos := meBufPos+Pred(Start);
+
+        if HaveCrLf then
+          {get ready to fix text markers}
+          teMarkerLinesToOffsets(True);
+
+        {open up a hole for the block}
+        meMakeHole(StartPos, Delta);
+
+        {move the text into place}
+        MoveFast(teReplaceSt[1], meBufPtr^[StartPos], ReplaceLen);
+
+        if HaveCrLf then begin
+          {re-count the number of lines, bytes, etc.}
+          meRecount(meBufPtr^);
+
+          {fix text markers}
+          teMarkerOffsetsToLines(StartPos, Delta, True);
+
+          {force screen to be redrawn}
+          meForceRedraw := True;
+        end
+        else
+          {fix block/text markers}
+          meCharsInserted(meCurLine, Start, Delta);
+
+        I := StartPos;                      {!!.13}
+        if not Backward then                {!!.13}
+          Inc(I, ReplaceLen);               {!!.13}
+        repeat
+          SaveTotal := meTotalBytes;
+          meCalcLineAndCol(I, Line, Col);
+
+          {go to new line}
+          SetLongFlag(meOptions, meReformatting);
+          GotoLineCol(Line, Col);
+          meLoadLine(meCurLine, True);
+          ClearLongFlag(meOptions, meReformatting);
+
+          {see if a line break was inserted in front of us}   {!!.13}
+          meCalcLineAndCol(I, NL, NC);                        {!!.13}
+          if NL = Line then                                   {!!.13}
+            SaveTotal := meTotalBytes                         {!!.13}
+          else                                                {!!.13}
+            Inc(I, meTotalBytes-SaveTotal);                   {!!.13}
+        until (SaveTotal = meTotalBytes);
+      end;
+
+      {redraw the current line if user is being prompted}
+      if not NoConfirm then
+        meUpdateScreenAndCursor;
+
+      {increment replacements counter}
+      Inc(teReplacements);
+
+      {mark file as modified}    {!!.02}
+      meOldModified := True;     {!!.02}
+      meIsModified(True);        {!!.02}
+
+      ReplaceIt := True;
+    end;
+
+    function FindLastInstance(First, Last : Byte) : Byte;
+      {-Find the last instance of the search string between columns First
+        and Last in the current line}
+    var
+      SaveFirst : Byte;
+      I, J : Word;
+    begin
+      SaveFirst := First;
+      Inc(First);
+      while Succ(Last-First) >= SearchLen do begin
+        J := Succ(Last-First);
+        I := SFunc(meSt[First], J, SearchSt[1], SearchLen);
+        if I = SearchFailed then begin
+          FindLastInstance := SaveFirst;
+          Exit;
+        end
+        else begin
+          SaveFirst := First+I;
+          Inc(First, I+1);
+        end;
+      end;
+      FindLastInstance := SaveFirst;
+   end;
+
+   function StringInBlock(Col : Byte) : Boolean;
+     {-Return True if string at meCurLine,Col is inside the marked block}
+   begin
+     StringInBlock := teCharInBlock(meCurLine, Col) and
+                      teCharInBlock(meCurLine, Col+Pred(SearchLen));
+   end;
+
+   {!!.30 - New}
+   function FoundIsWord(Col : Byte) : Boolean;
+     {-Return True if string at meCurLine,Col is a whole word}
+   var
+     StrEnd : Byte;
+
+   begin
+     StrEnd     := meCurCol + SearchLen;
+     FoundIsWord :=
+      ((meCurCol = 1)   or (meSt[meCurCol-1] in meWordDelims)) and
+      ((StrEnd > StLen) or (meSt[StrEnd]   in meWordDelims));
+   end;
+
+  begin
+    {do nothing if no search operation specified}
+    if teST = tescNone then
+      Exit;
+
+    {get string to search for}
+    if Prompt then
+      if not teGetString(epMessage+mcSearchFor, emSearchFor, False, False, MaxSearchLen, teSearchSt) then
+        Exit;
+    if Length(teSearchSt) = 0 then
+      Exit;
+
+    {get string to replace it with}
+    if (teST = tescReplace) and Prompt then
+      if not teGetString(epMessage+mcReplaceWith, emReplaceWith, False, False, MaxSearchLen, teReplaceSt) then
+        Exit;
+
+    {get search options}
+    if Prompt then
+      if not teGetString(epMessage+mcOptionString, emOptionString, False, False, MaxSearchOptions, teOptionSt) then
+        Exit;
+
+    {save search type for next time}
+    teLastSearch := teST;
+
+    {extract search options}
+    NoCase := False;
+    Backward := False;
+    Global := False;
+    NoConfirm := False;
+    BlockOnly := False;
+    WordOnly := False;
+    for I := 1 to Length(teOptionSt) do
+      case Upcase(teOptionSt[I]) of
+        teBackward  : Backward := True;
+        teNoCase    : NoCase := True;
+        teGlobal    : Global := Prompt or not teOptionsAreOn(teNoRepeatGlobal); {!!.03}
+        teNoConfirm : NoConfirm := True;
+        teBlockOnly : BlockOnly := True;
+        teWordOnly  : WordOnly := True;
+        else
+      end;
+    if Global then
+      BlockOnly := False;
+
+    {if searching in block, make sure there's a block}
+    if BlockOnly and not teBlockCheck(False) then
+      Exit;
+
+    {get local copy of search string}
+    SearchSt := teSearchSt;
+    if NoCase then
+      SearchSt := StUpcase(SearchSt);
+
+    {save the current line}
+    meSaveCurrentLine(True);
+
+    {save current state}
+    SaveCurLine  := meCurLine;
+    SaveCurCol := meCurCol;
+    SaveBufPos := meBufPos;
+    SaveLineAtTop := meLineAtTop;
+    SaveBufPosTop := meBufPosTop;
+
+    {prepare to search}
+    Found := False;
+    NeedToSave := False;
+    teReplacements := 0;
+    meSetOption(teSearching+teSearchStart, True);
+
+    {position cursor}
+    if Global then
+      if Backward then begin
+        meCurLine := meTotalLines;
+        meLoadLine(meCurLine, True);
+        meCurCol := StLen;
+      end
+      else begin
+        meCurLine := 1;
+        meLoadLine(meCurLine, True);
+        meCurCol := 1;
+      end
+    else if BlockOnly then begin
+      if (GetLastCommand <> ccReSearch) then        {!!.30}
+        if Backward then begin
+          meCurLine := teBlkEnd.Line;
+          meCurCol  := teBlkEnd.Col-1;
+        end
+        else begin
+          meCurLine := teBlkBegin.Line;
+          meCurCol  := teBlkBegin.Col;
+        end;
+      meLoadLine(meCurLine, True);
+    end
+    else if Backward then
+      {put cursor on previous character}
+      Dec(meCurCol)
+    else if GetLastCommand = ccReSearch then        {!!.12}
+      {put cursor on next character}
+      Inc(meCurCol);
+
+    HighlightLen := SearchLen;                      {!!.13}
+    SaveHighLen := SearchLen;                       {!!.13}
+
+    if NoCase then
+      SFunc := SearchUC
+    else
+      SFunc := Search;
+
+    if Backward then
+      repeat
+    BwdTryAgain:  {!!.30}
+        {are we outside the marked block?}
+        if BlockOnly and not teCharInBlock(meCurLine, meCurCol) then
+          goto ExitPoint;
+
+        {do we need to go to the previous line?}
+        if (meCurCol = 0) and not PrevLine then
+          goto ExitPoint;
+
+        if (StLen = 0) then
+          meCurCol := 0
+        else begin
+          if meCurCol < SearchLen then
+            meCurCol := 0
+          else begin
+            {look for a match on this line starting at column 1}
+            I := SFunc(meSt[1], meCurCol, SearchSt[1], SearchLen);
+
+            if I = SearchFailed then
+              meCurCol := 0
+            else begin
+              Found := True;
+
+              {find the last instance of the string prior to the cursor}
+              meCurCol := FindLastInstance(I+1, meCurCol);
+
+              {is string a whole word?}                              {!!.30}
+              if WordOnly and not FoundIsWord(meCurCol) then begin   {!!.30}
+                Found := False;                                      {!!.30}
+                goto BwdTryAgain;                                    {!!.30}
+              end;                                                   {!!.30}
+
+              {is string outside the marked block?}
+              if BlockOnly and not StringInBlock(meCurCol) then
+                goto ExitPoint;
+
+              if teST = tescSearch then
+                {just searching--stop}
+                goto ExitPoint
+              else begin
+                {do the replacement?}
+                case DoReplacement of
+                  teYes :
+                    begin
+                      OK := ReplaceIt;
+                      if OK then                            {!!.13}
+                        SaveHighLen := Length(teReplaceSt); {!!.13}
+                      SaveCurLine := meCurLine;
+                      SaveCurCol := meCurCol;
+                      if not OK then
+                        goto ExitPoint;
+                    end;
+                  teQuit :
+                    goto ExitPoint;
+                end;
+
+                if Global or BlockOnly then
+                  Dec(meCurCol)
+                else
+                  goto ExitPoint;
+              end;
+            end;
+          end;
+        end;
+      until False
+    else
+      repeat
+    FwdTryAgain:  {!!.30}
+        {are we outside the marked block?}
+        if BlockOnly and not teCharInBlock(meCurLine, meCurCol) then
+          goto ExitPoint;
+
+        {do we need to go to the next line?}
+        if (meCurCol > StLen) and not NextLine then
+          goto ExitPoint;
+
+        if (StLen = 0) then
+          meCurCol := 1
+        else begin
+          I := Succ(StLen-meCurCol);
+          if I < SearchLen then
+            meCurCol := Succ(StLen)
+          else begin
+            {look for a match on this line starting at meCurCol}
+            I := SFunc(meSt[meCurCol], I, SearchSt[1], SearchLen);
+            if I = SearchFailed then
+              meCurCol := Succ(StLen)
+            else begin
+              (*{move cursor to end of search string}  {!!.30}
+              Inc(meCurCol, I+SearchLen-1);*)          {!!.30}
+
+              {move cursor to start of search string}  {!!.30}
+              Inc(meCurCol, I);                        {!!.30}
+
+              {is string a whole word?}                            {!!.30}
+              if WordOnly and not FoundIsWord(meCurCol) then begin {!!.30}
+                Inc(meCurCol, SearchLen);                          {!!.30}
+                Found := False;                                    {!!.30}
+                goto FwdTryAgain;                                  {!!.30}
+              end;                                                 {!!.30}
+
+              {is string outside the marked block?}
+              {!!.30--modified parm}
+              if BlockOnly and not StringInBlock(meCurCol) then
+                goto ExitPoint;
+
+              {move cursor to end of search string}    {!!.30}
+              Inc(meCurCol, SearchLen - 1);            {!!.30}
+
+              Found := True;
+              if teST = tescSearch then
+                {just searching--stop}
+                goto ExitPoint
+              else begin
+                {do the replacement?}
+                case DoReplacement of
+                  teYes :
+                    begin
+                      OK := ReplaceIt;
+                      if OK then                            {!!.13}
+                        SaveHighLen := Length(teReplaceSt); {!!.13}
+                      SaveCurLine := meCurLine;
+                      SaveCurCol := meCurCol;
+                      if not OK then
+                        goto ExitPoint;
+                    end;
+                  teQuit :
+                    begin
+                      SaveCurLine := meCurLine;
+                      SaveCurCol := meCurCol;
+                      goto ExitPoint;
+                    end;
+                  teNo :                          {!!.12}
+                    Inc(meCurCol);                {!!.12}
+                end;
+
+                if not (Global or BlockOnly) then {!!.12}
+                  {Inc(meCurCol)}                 {!!.12}
+                {else}                            {!!.12}
+                  goto ExitPoint;
+              end;
+            end;
+          end;
+        end;
+      until (meCurLine > meTotalLines);
+
+ExitPoint:
+    {save current line if necessary}
+    SaveIfNecessary;
+
+    {indicate that the search is over}
+    meSetOption(teSearching+teSearchStart, False);
+    meSetOption(teSearchEnd, True);
+
+    if not Found then begin
+      {restore previous state}
+      meCurLine   := SaveCurLine;
+      meCurCol    := SaveCurCol;
+      meBufPos    := SaveBufPos;
+      meLineAtTop := SaveLineAtTop;
+      meBufPosTop := SaveBufPosTop;
+      meKnownLine := SaveCurLine;
+      meKnownOfs  := SaveBufPos;
+
+      {display error message}
+      GotError(epWarning+ecStringNotFound, emStringNotFound);
+    end
+    else begin
+      {if doing a global replace, put cursor at position of last replacement}
+      if (teST = tescReplace) and (Global or BlockOnly) then begin
+        meCurLine := SaveCurLine;
+        meCurCol := SaveCurCol;
+        meBufPos := meFindLineIndex(SaveCurLine);
+        if NoConfirm then begin
+          {make sure entire screen is redrawn}
+          meForceRedraw := True;
+
+          {recalculate index for line initially at top of screen}
+          meBufPosTop := meFindLineIndex(meLineAtTop);
+        end;
+      end;
+
+      {display the found string}
+      HighlightLen := SaveHighLen;    {!!.13}
+      ShowString(teST = tescSearch);
+    end;
+
+    {load or reload the current line}
+    meLoadLine(meCurLine, True);
+  end;
+
+  procedure TextEditor.teRestoreLine;
+    {-Restore current line}
+  var
+    I : Word;
+  begin
+    {restore the line}
+    meSt := meOldSt;
+    meCurCol := meOldCol;
+
+    {fix block markers}
+{$IFDEF VIRTUALPASCAL}
+    if (teBlkBegin.Col <> teOldBegin.Col) or
+       (teBlkBegin.Line <> teOldBegin.Line) or
+       (teBlkEnd.Col <> teOldEnd.Col) or
+       (teBlkEnd.Line <> teOldEnd.Line) then begin
+{$ELSE}
+    if (LongInt(teBlkBegin) <> LongInt(teOldBegin)) or (LongInt(teBlkEnd) <> LongInt(teOldEnd)) then begin
+{$ENDIF}
+      teBlkBegin := teOldBegin;
+      teBlkEnd := teOldEnd;
+      if teBlockDiscontinuous then
+        meSetOption(teBlockOn, False);
+      meForceRedraw := True;
+    end;
+
+    {fix text markers}
+    if teMarkerFlags <> teOldMarkerFlags then begin
+      for I := 0 to MaxMarker do
+        if FlagIsSet(teMarkerFlags, 1 shl I) <> ByteFlagIsSet(teOldMarkerFlags, 1 shl I) then begin
+          {clear the marker}
+          teMarkers[I].Line := 0;
+          ClearFlag(teMarkerFlags, 1 shl I);
+        end;
+
+      teOldMarkerFlags := teMarkerFlags;
+      meForceRedraw := True;
+    end;
+  end;
+
+  procedure TextEditor.teCenterLine;
+    {-Center the text in the current line}
+  var
+    StLen : Byte absolute meSt;
+    I, J, Delta, Len : Integer;
+  begin
+    {trim trailing blanks}
+    meTrimSpaces;
+    if StLen = 0 then
+      Exit;
+
+    {find the first non-blank}
+    I := 1;
+    while meSt[I] = ' ' do
+      Inc(I);
+
+    {length of actual text in string}
+    Len := Succ(StLen-I);
+
+    {can it be centered?}
+    if Len >= meMargin then begin
+      if I > 1 then begin
+        {can't center it, but we can move it to the left margin}
+        Delete(meSt, 1, Pred(I));
+        meCharsInserted(meCurLine, 1, -Pred(I));
+
+        {adjust cursor}
+        if meCurCol >= I then
+          Dec(meCurCol)
+        else
+          meCurCol := 1;
+      end;
+    end
+    else begin
+      {calculate new starting column}
+      J := Succ((meMargin-Len) shr 1);
+      Delta := J-I;
+
+      if Delta > 0 then begin
+        {insert extra spaces at beginning of line}
+        if meInsertOK(Delta) then begin
+          Insert(CharStr(' ', Delta), meSt, 1);
+          meCharsInserted(meCurLine, 1, Delta);
+
+          {adjust cursor}
+          Inc(meCurCol, Delta);
+        end;
+      end
+      else if Delta < 0 then begin
+        {delete extra spaces at beginning of line}
+        Delete(meSt, 1, -Delta);
+        meCharsInserted(meCurLine, 1, Delta);
+
+        {adjust cursor}
+        if meCurCol > Abs(Delta) then
+          Inc(meCurCol, Delta)
+        else
+          meCurCol := 1;
+      end;
+    end;
+  end;
+

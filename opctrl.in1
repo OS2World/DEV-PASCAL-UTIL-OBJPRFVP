@@ -1,0 +1,82 @@
+  {*********************************************************}
+  {*                   OPCTRL.IN1 1.30                     *}
+  {*      Copyright (c) TurboPower Software 1990, 1992.    *}
+  {*                 All rights reserved.                  *}
+  {*********************************************************}
+
+  procedure DialogColorSet.SetHighlightPromptAttr(Color, Mono : Byte);
+    {-Set attributes for highlight chars in prompts}
+  begin
+    HiPromptColor := Color;
+    HiPromptMono  := MapMono(Color, Mono);
+  end;
+
+  procedure DialogColorSet.SetButtonAttr(Color, Mono : Byte);
+    {-Set attributes for unselected buttons}
+  begin
+    ButtonColor := Color;
+    ButtonMono  := MapMono(Color, Mono);
+  end;
+
+  procedure DialogColorSet.SetDefaultButtonAttr(Color, Mono : Byte);
+    {-Set attributes for default button when unselected}
+  begin
+    DefButtonColor := Color;
+    DefButtonMono  := MapMono(Color, Mono);
+  end;
+
+  procedure DialogColorSet.SetHighlightButtonAttr(Color, Mono : Byte);
+    {-Set attributes for highlighted chars in buttons}
+  begin
+    HiButtonColor := Color;
+    HiButtonMono  := MapMono(Color, Mono);
+  end;
+
+  procedure DialogColorSet.SetSelectedButtonAttr(Color, Mono : Byte);
+    {-Set attributes for selected buttons}
+  begin
+    SelButtonColor := Color;
+    SelButtonMono  := MapMono(Color, Mono);
+  end;
+
+  procedure DialogColorSet.SetProtectedButtonAttr(Color, Mono : Byte);
+    {-Set attributes for protected buttons}
+  begin
+    ProButtonColor := Color;
+    ProButtonMono  := MapMono(Color, Mono);
+  end;
+
+  procedure DialogColorSet.SetButtonShadowAttr(Color, Mono : Byte);
+    {-Set attributes for button shadows}
+  begin
+    BtnShadowColor := Color;
+    BtnShadowMono  := MapMono(Color, Mono);
+  end;
+
+  procedure DialogColorSet.SetClusterAttr(Color, Mono : Byte);
+    {-Set attributes for cluster items}
+  begin
+    ClusterColor := Color;
+    ClusterMono  := MapMono(Color, Mono);
+  end;
+
+  procedure DialogColorSet.SetProtectedClusterAttr(Color, Mono : Byte);
+    {-Set attributes for protected cluster items}
+  begin
+    ProClusterColor := Color;
+    ProClusterMono  := MapMono(Color, Mono);
+  end;
+
+  procedure DialogColorSet.SetHighlightClusterAttr(Color, Mono : Byte);
+    {-Set attributes for highlighted chars in cluster items}
+  begin
+    HiClusterColor := Color;
+    HiClusterMono  := MapMono(Color, Mono);
+  end;
+
+  procedure DialogColorSet.SetSelectedClusterAttr(Color, Mono : Byte);
+    {-Set attributes for selected cluster items}
+  begin
+    SelClusterColor := Color;
+    SelClusterMono  := MapMono(Color, Mono);
+  end;

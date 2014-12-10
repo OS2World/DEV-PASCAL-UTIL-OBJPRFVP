@@ -1,0 +1,46 @@
+{*********************************************************}
+{*                   OPMENU.ICD 1.30                     *}
+{*    Copyright (c) TurboPower Software 1989, 1992.      *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+const
+  {Keystroke to command mapping}
+  MenuKeyMax = 110;
+  MenuKeyID : string[16] = 'opmenu key array';
+  MenuKeySet : array[0..MenuKeyMax] of Byte =
+  (
+  3, $00, $48, ccUp,              {Up}
+  3, $00, $50, ccDown,            {Down}
+  3, $00, $4B, ccLeft,            {Left}
+  3, $00, $4D, ccRight,           {Right}
+  3, $00, $3B, ccHelp,            {F1}
+  3, $00, $47, ccHome,            {Home}
+  3, $00, $4F, ccEnd,             {End}
+  2, $05,      ccUp,              {^E}
+  2, $17,      ccUp,              {^W}
+  2, $18,      ccDown,            {^X}
+  2, $1A,      ccDown,            {^Z}
+  2, $13,      ccLeft,            {^S}
+  2, $04,      ccRight,           {^D}
+  2, $1B,      ccQuit,            {Esc}
+  2, $0D,      ccSelect,          {Enter}
+  3, $11, $12, ccHome,            {^QR}
+  3, $11, $03, ccEnd,             {^QC}
+  {$IFDEF UseMouse}
+  3, $00, $EF, ccMouseSel,        {Click left}
+  3, $00, $EE, ccQuit,            {Click right}
+  3, $00, $ED, ccHelp,            {Click both}
+  {$ELSE}
+                             0,   {60}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,   {70}
+  0,                              {80}
+  {$ENDIF}
+     0, 0, 0, 0, 0, 0, 0, 0, 0,   {80}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,   {90}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,   {100}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0    {110}
+);
+
+const
+  MenuCfgEnd : Byte = 0;

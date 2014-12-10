@@ -1,0 +1,1266 @@
+{*********************************************************}
+{*                   MMMAIN.IN4 1.30                     *}
+{*     Copyright (c) TurboPower Software 1989, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  procedure KillInactiveSubMenu(SPtr : SubMenuPtr);
+    {-Dispose of submenu and all items and submenus}
+  begin
+    {Assumes the submenu is not visible}
+    UserMenu.mnDisposeSubMenus(SPtr^.smItems);
+    SPtr^.Done;
+  end;
+
+  function FirstNonBlank(S : String) : Byte;
+    {-Return offset of first non-blank character in S}
+  var
+    SOfs : Byte;
+  begin
+    for SOfs := 1 to Length(S) do
+      if S[SOfs] <> ' ' then begin
+        FirstNonBlank := SOfs;
+        Exit;
+      end;
+    FirstNonBlank := 0;
+  end;
+
+  procedure MarkKeyUsed(IPtr : MenuItemNodePtr; var D; MPtr : MenuPtr);
+    {-Set bits in the bitset to indicate each key used}
+  begin
+    with BitSet(D) do
+      SetBit(IPtr^.ItemKey);
+  end;
+
+  function FirstUniqueKey(var UserMenu : Menu) : LongInt;
+    {-Return the first unused key value in the menu system}
+  var
+    UsedKeys : BitSet;
+  begin
+    if not UsedKeys.Init(MaxKeysInMenu) then
+      FirstUniqueKey := 1
+    else begin
+      UserMenu.VisitAllItems(MarkKeyUsed, UsedKeys);
+      FirstUniqueKey := UsedKeys.FirstClear;
+      UsedKeys.Done;
+    end;
+  end;
+
+  procedure AddMenuItem;
+    {-Add a new menu item}
+  const
+    HeaderMsg = 'New Item';
+    PromptMsg = 'Name: ';
+  var
+    ListPtr : MenuItemListPtr;
+    CurPtr : MenuItemNodePtr;
+    DisplayPos : Byte;
+    MinPos : Byte;
+    S : string;
+  begin
+    {get the string}
+    S := '';
+    if not PopupGetString(HeaderMsg, PromptMsg, False, False,
+                          ScreenWidth-2, S) then
+      Exit;
+    if S = '' then
+      Exit;
+
+    with UserMenu do begin
+      ListPtr := ActiveListPtr;
+      with ListPtr^ do begin
+        {Assign display offset}
+        if Size = 0 then begin
+          {First item}
+          DisplayPos := MinDisplayPos(ListPtr);
+        end else begin
+          {Additional item}
+          CurPtr := CurrentItemPtr;
+          DisplayPos := NextPos(ListPtr, CurPtr);
+          if Orientation = Horizontal then
+            MinPos := DisplayPos+Length(S)+2
+          else
+            MinPos := DisplayPos+1;
+          {Shift any other items as needed}
+          if CurPtr <> MenuItemNodePtr(Tail) then
+            ExpandItems(ListPtr, MenuItemNodePtr(Next(CurPtr)), MinPos);
+        end;
+
+        {Add the item}
+        if not ilAddItem(S, DisplayPos, FirstNonBlank(S),
+                         FirstUniqueKey(UserMenu), '') then
+          InsufficientMemory
+        else begin
+          {Resize and redraw submenu}
+          AdjustSubmenu(False);
+          Modified := True;
+        end;
+      end;
+    end;
+  end;
+
+  procedure RemoveMenuItem;
+    {-Remove the current item from a submenu}
+  const
+    ErrorMsg = 'No items to delete';
+    ConfirmMsg = 'Delete Item';
+    SubMenuMsg = 'Item has submenus. Delete them?';
+  var
+    ListPtr : MenuItemListPtr;
+    CurPtr : MenuItemNodePtr;
+    Esc : Boolean;
+  begin
+    with UserMenu do begin
+      ListPtr := ActiveListPtr;
+      with ListPtr^ do
+        if Size = 0 then
+          {No item to delete}
+          PopupErrorMessage(ErrorMsg)
+
+        else begin
+          CurPtr := CurrentItemPtr;
+
+          if CurPtr^.SubPtr <> nil then begin
+            {Has a submenu, must delete it to proceed}
+            if not PopupYesNo('', SubMenuMsg, NoChar, Esc) then
+              Exit;
+            if Esc then
+              Exit;
+            KillInactiveSubMenu(CurPtr^.SubPtr);
+          end else if not ConfirmAction(ConfirmMsg) then
+            Exit;
+
+          {Decide which item will be current next}
+          if Size = 1 then
+            ilCurrent := nil
+          else if CurPtr = MenuItemNodePtr(Tail) then
+            ilCurrent := MenuItemNodePtr(Prev(CurPtr))
+          else begin
+            ilCurrent := MenuItemNodePtr(Next(CurPtr));
+            ShiftItems(ListPtr, ilCurrent,
+                       Integer(CurPtr^.GetDisplayPos)-ilCurrent^.GetDisplayPos);
+          end;
+
+          {Dispose of the item}
+          Delete(CurPtr);
+
+          {Resize and redraw submenu}
+          AdjustSubmenu(True);
+          Modified := True;
+        end;
+    end;
+  end;
+
+  procedure EditMenuItem;
+    {-Modify the text of an existing menu item}
+  const
+    HeaderMsg = 'Edit Item';
+    PromptMsg = 'Name: ';
+  var
+    ListPtr : MenuItemListPtr;
+    CurPtr : MenuItemNodePtr;
+    DisplayPos : Byte;
+    SelectPos : Byte;
+    OldLen : Byte;
+    S : string;
+  begin
+    with UserMenu do begin
+      ListPtr := ActiveListPtr;
+      with ListPtr^ do begin
+        CurPtr := CurrentItemPtr;
+        {Make sure there is an item to edit}
+        if CurPtr = nil then
+          Exit;
+        CurPtr^.DisplayInfo(DisplayPos, SelectPos, S);
+        OldLen := Length(S);
+        {edit the string}
+        if not PopupGetString(HeaderMsg, PromptMsg, False, False,
+                              ScreenWidth-2, S) then
+          Exit;
+        if S = '' then begin
+          {Remove item altogether}
+          RemoveMenuItem;
+          Exit;
+        end;
+
+        {Change to the new string and selectpos}
+        if not CurPtr^.ChangeName(S) then begin
+          InsufficientMemory;
+          Exit;
+        end;
+        CurPtr^.ChangeSelectPos(FirstNonBlank(S));
+
+        if Orientation = Horizontal then
+          if Length(S) <> OldLen then
+            if CurPtr <> MenuItemNodePtr(Tail) then
+              ShiftItems(ListPtr, MenuItemNodePtr(Next(CurPtr)),
+                         Integer(Length(S))-OldLen);
+
+        {Resize and redraw submenu}
+        AdjustSubmenu(False);
+        Modified := True;
+      end;
+    end;
+  end;
+
+  function ValidSymName(var Name : string) : Boolean;
+    {-Return True if Name is a valid Pascal identifier}
+  var
+    I : Word;
+  begin
+    ValidSymName := False;
+    for I := 1 to Length(Name) do
+      case UpCase(Name[I]) of
+        'A'..'Z', '_' :
+          {Alphabetic and underscore always OK};
+        '0'..'9' :
+          if I = 1 then
+            {Digit not allowed for first character}
+            Exit;
+      else
+        Exit;
+      end;
+    ValidSymName := True;
+  end;
+
+  procedure NameMenuItem;
+    {-Edit symbolic name of an existing menu item}
+  const
+    HeaderMsg = 'Name Item';
+    PromptMsg = 'Pascal constant name: ';
+    BadName = 'Not a valid Pascal identifier';
+  var
+    ListPtr : MenuItemListPtr;
+    CurPtr : MenuItemNodePtr;
+    OK : Boolean;
+    NewS : string;
+    OldS : string;
+  begin
+    with UserMenu do begin
+      ListPtr := ActiveListPtr;
+      with ListPtr^ do begin
+        CurPtr := CurrentItemPtr;
+        {Make sure there is an item to edit}
+        if CurPtr = nil then
+          Exit;
+        OldS := SymName(CurPtr);
+        NewS := OldS;
+        repeat
+          {edit the string}
+          if not PopupGetString(HeaderMsg, PromptMsg, False, False,
+                                ScreenWidth-2, NewS) then
+            Exit;
+          OK := ValidSymName(NewS);
+          if not OK then
+            PopupErrorMessage(BadName);
+        until OK;
+        if NewS = OldS then
+          Exit;
+        Modified := True;
+        if NewS = DefaultSymName(CurPtr) then
+          NewS := '';
+        if not CurPtr^.inSetConsName(NewS) then begin
+          InsufficientMemory;
+          Exit;
+        end;
+      end;
+    end;
+  end;
+
+  procedure EditHelpText;
+    {-Add or edit help text for an item}
+  const
+    HeaderMsg = 'Edit Help';
+    PromptMsg = 'Text: ';
+  var
+    ListPtr : MenuItemListPtr;
+    CurPtr : MenuItemNodePtr;
+    S : string;
+  begin
+    with UserMenu do begin
+      ListPtr := ActiveListPtr;
+      with ListPtr^ do begin
+        CurPtr := CurrentItemPtr;
+        {Make sure there is an item to edit}
+        if CurPtr = nil then
+          Exit;
+        S := CurPtr^.HelpString;
+
+        {Edit the string}
+        if not PopupGetString(HeaderMsg, PromptMsg, False, False,
+                              ScreenWidth-2, S) then
+          Exit;
+
+        {See if it changed}
+        if S = CurPtr^.HelpString then
+          Exit;
+
+        {Change to the new string}
+        if not CurPtr^.ChangeHelp(S) then begin
+          InsufficientMemory;
+          Exit;
+        end;
+
+        if DefHelpActive then
+          {Update the help window}
+          RedrawUserObj(False);
+
+        Modified := True;
+      end;
+    end;
+  end;
+
+  procedure AddASubMenu;
+    {-Add a submenu to the current item}
+  const
+    HasSubMenuMsg = 'Already has a submenu';
+    AddingSubMenu = ' adding submenu';
+  var
+    WinPtr : RawWindowPtr;
+    CurPtr : MenuItemNodePtr;
+    Status : Word;
+    XL : Byte;
+    XH : Byte;
+    YL : Byte;
+    YH : Byte;
+    DisplayPos : Byte;
+    SelectPos : Byte;
+    S : string;
+  begin
+    with UserMenu do begin
+      CurPtr := ActiveItemPtr;
+      if CurPtr = nil then
+        Exit;
+
+      if CurPtr^.SubPtr <> nil then begin
+        {Already has a submenu}
+        PopupErrorMessage(HasSubMenuMsg);
+        Exit;
+      end;
+
+      {Compute where the submenu should go}
+      with ActiveWinPtr^ do
+        if DefFrame = NoWindowFrame then begin
+          {Assume submenus overwrite one another}
+          XL := wXL;
+          YL := wYL;
+          XH := wXH;
+          YH := wYH;
+        end else begin
+          if ActiveListPtr^.Orientation = Horizontal then begin
+            {Attach below current menu item}
+            XL := wXL+CurPtr^.GetDisplayPos;
+            YL := wYH+2;
+          end else begin
+            {Position below current menu item}
+            XL := (wXL+wXH) shr 1;
+            YL := wYL+CurPtr^.GetDisplayPos+1;
+          end;
+          XH := XL+(DefXH-DefXL);
+          YH := YL+(DefYH-DefYL);
+          {Adjust to fit on screen}
+          if XH >= ScreenWidth then begin
+            dec(XL, XH-ScreenWidth+1);
+            XH := ScreenWidth-1;
+          end;
+          if YH >= ScreenHeight then begin
+            dec(YL, YH-ScreenHeight+1);
+            YH := ScreenHeight-1;
+          end;
+        end;
+
+      {Add it to the menu system}
+      AddSubMenuCustom(XL, YL, XH, YH,
+                       DefColors, DefOptions, DefOrient, DefFrame);
+      Status := RawError; {!!.01}
+      if Status <> 0 then begin
+        ClearErrors; {!!.01}
+        PopupErrorMessage(ErrorLeadIn+Long2Str(Status)+AddingSubMenu);
+        Exit;
+      end;
+
+      {Set select markers}
+      ActiveListPtr^.SetSelectMarker(DefLeftMark, DefRightMark);
+
+      {Temporarily remove new window from menu stack}
+      WinPtr := RawWindowPtr(mnStack.Pop);
+      with WinPtr^ do begin
+        if DefExplosions then
+          EnableExplosions(DefDelay);
+        if DefShadow <> shNone then
+          wFrame.AddShadow(shBR, DefShadow);
+
+        {show the initial window}
+        wStack.OptimizeTiled(False); {!!.11}
+        UserMenu.ActivateWrite;
+        mnStack.Push(WinPtr);
+        WinPtr^.Draw;
+        UserMenu.DeactivateWrite;
+        wStack.OptimizeTiled(True);  {!!.11}
+        Modified := True;
+      end;
+    end;
+  end;
+
+  function LongestItem(ListPtr : MenuItemListPtr) : Byte;
+    {-Return the length of the longest menu item, including padding}
+  var
+    ItemPtr : MenuItemNodePtr;
+    DisplayPos : Byte;
+    SelectPos : Byte;
+    Len : Byte;
+    TLen : Byte;
+    S : String;
+  begin
+    with ListPtr^ do begin
+      ItemPtr := MenuItemNodePtr(Head);
+      Len := 0;
+      if ItemPtr <> nil then
+        repeat
+          ItemPtr^.DisplayInfo(DisplayPos, SelectPos, S);
+          TLen := Length(S)+ilPad+Length(ilLeftSel)+Length(ilRightSel);
+          if TLen > Len then
+            Len := TLen;
+          ItemPtr := MenuItemNodePtr(Next(ItemPtr));
+        until ItemPtr = MenuItemNodePtr(Head);
+      LongestItem := Len;
+    end;
+  end;
+
+  function FarthestItem(ListPtr : MenuItemListPtr) : Byte;
+    {-Return the largest display offset, including item length if horizontal}
+  var
+    ItemPtr : MenuItemNodePtr;
+    DisplayPos : Byte;
+    SelectPos : Byte;
+    TestDist : Byte;
+    Distance : Byte;
+    Orient : mnOrientation;
+    S : String;
+  begin
+    with ListPtr^ do begin
+      ItemPtr := MenuItemNodePtr(Head);
+      Distance := 0;
+      Orient := Orientation;
+      if ItemPtr <> nil then
+        repeat
+          ItemPtr^.DisplayInfo(DisplayPos, SelectPos, S);
+          TestDist := DisplayPos;
+          if Orient = Horizontal then
+            inc(TestDist, ilPad+Length(S)+Length(ilLeftSel)+Length(ilRightSel));
+          if TestDist > Distance then
+            Distance := TestDist;
+          ItemPtr := MenuItemNodePtr(Next(ItemPtr));
+        until ItemPtr = MenuItemNodePtr(Head);
+      FarthestItem := Distance;
+    end;
+  end;
+
+type
+  MoveRec =
+    record
+      DX : Integer;
+      DY : Integer;
+    end;
+
+  procedure ShiftSubMenu(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+    {-Shift an inactive submenu}
+  var
+    FX1 : Byte;
+    FY1 : Byte;
+    FX2 : Byte;
+    FY2 : Byte;
+    DXT : Integer;
+    DYT : Integer;
+  begin
+    with MoveRec(D), WPtr^ do begin
+      {Adjust move delta to do the best job we can}
+      DXT := DX;
+      DYT := DY;
+      with wFrame do begin
+        if Integer(frXL)+DXT < wMinXL then
+          DXT := Integer(wMinXL)-frXL;
+        if Integer(frXH)+DXT > wMaxXH then
+          DXT := Integer(wMaxXH)-frXH;
+        if Integer(frYL)+DYT < wMinYL then
+          DYT := Integer(wMinYL)-frYL;
+        if Integer(frYH)+DYT > wMaxYH then
+          DYT := Integer(wMaxYH)-frYH;
+      end;
+      rwResizeInactive(wXL+DXT, wYL+DYT, wXH+DXT, wYH+DYT);
+    end;
+  end;
+
+  procedure MoveSubMenuPrim(Drag, Resize : Boolean);
+    {-Move the current submenu interactively}
+  const
+    PromptMsgMove = 'move';
+    PromptMsgSize = 'resize';
+    PromptHeadOut = ', <Enter> to accept, <Esc> to restore ';
+    ErrorMsg = 'Error adjusting window';
+  var
+    WinPtr : RawWindowPtr;
+    ListPtr : MenuItemListPtr;
+    CurX : Integer;               {current position of window corner}
+    CurY : Integer;
+    PrvX : Byte;                  {used to minimize redraw}
+    PrvY : Byte;
+    MinX : Integer;               {region cursor will be allowed to move in}
+    MinY : Integer;
+    MaxX : Integer;
+    MaxY : Integer;
+    OldXL : Byte;                 {original coordinates in case of restore}
+    OldXH : Byte;
+    OldYL : Byte;
+    OldYH : Byte;
+    Status : Word;
+    CursorState : CursorStateRec;
+    Finished : Boolean;
+    FrameWidth : Byte;
+    MRec : MoveRec;
+
+    procedure IncXY(DX, DY : Integer);
+      {-Change current position by specified amount}
+    begin
+      inc(CurX, DX);
+      if CurX > MaxX then
+        CurX := MaxX
+      else if CurX < MinX then
+        CurX := MinX;
+      inc(CurY, DY);
+      if CurY > MaxY then
+        CurY := MaxY
+      else if CurY < MinY then
+        CurY := MinY;
+    end;
+
+  begin
+    with UserMenu do begin
+      WinPtr := ActiveWinPtr;
+      with WinPtr^ do begin
+        {Erase the MAKEMENU menu}
+        MainMenu.Erase;
+
+        {Display a prompt line tucked under the user menu}
+        if Resize then begin
+          if not DrawPromptLine(MoveLeadIn+PromptMsgSize+PromptHeadOut) then
+            Exit;
+        end else begin
+          if not DrawPromptLine(MoveLeadIn+PromptMsgMove+PromptHeadOut) then
+            Exit;
+        end;
+
+        ListPtr := ActiveListPtr;
+
+        {Save the current window coordinates to detect modification}
+        Coordinates(OldXL, OldYL, OldXH, OldYH);
+
+        FrameWidth := Byte(wFrame.IsFramed);
+        if Resize then begin
+          {Limits on resizing}
+          if ListPtr^.Orientation = Vertical then begin
+            MinX := wXL+LongestItem(ListPtr)-1;
+            MinY := wYL+FarthestItem(ListPtr)-1;
+          end else begin
+            MinX := wXL+FarthestItem(ListPtr)-1;
+            MinY := wYL;
+          end;
+          if MinX < wXL then {!!.02}
+            MinX := wXL;     {!!.02}
+          if MinY < wYL then {!!.02}
+            MinY := wYL;     {!!.02}
+          MaxX := ScreenWidth-FrameWidth;
+          MaxY := ScreenHeight-FrameWidth;
+          CurX := wXH;
+          CurY := wYH;
+        end else begin
+          {Limits on moving}
+          MinX := 1+FrameWidth;
+          MinY := 1+FrameWidth;
+          MaxX := ScreenWidth-FrameWidth-(wXH-wXL);
+          MaxY := ScreenHeight-FrameWidth-(wYH-wYL);
+          CurX := wXL;
+          CurY := wYL;
+        end;
+
+        {Save hardware and mouse cursor state, and hide both cursors}
+        SaveAllCursors(CursorState);
+
+        {$IFDEF UseMouse}
+        if MouseInstalled then begin
+          {slow down mouse}
+          SlowMouse;
+          {adjust mouse window coordinates}
+          MouseWindow(MinX, MinY, MaxX, MaxY);
+        end;
+        {$ENDIF}
+
+        PrvX := CurX;
+        PrvY := CurY;
+
+        GotoXYabs(CurX, CurY);
+        NormalCursor;
+
+        Finished := False;
+        repeat
+          {Update the display}
+          if (CurX <> PrvX) or (CurY <> PrvY) then begin
+            if Resize then
+              AdjustMenuWindow(WinPtr, wXL, wYL, CurX, CurY)
+            else begin
+              AdjustMenuWindow(WinPtr, CurX, CurY,
+                               Integer(wXH)+(CurX-PrvX),
+                               Integer(wYH)+(CurY-PrvY));
+              if Drag then begin
+                MRec.DX := CurX-PrvX;
+                MRec.DY := CurY-PrvY;
+                UserMenu.mnVisitAWindow(ListPtr^, ShiftSubMenu, MRec);
+              end;
+            end;
+            Status := RawError; {!!.01}
+            if Status <> 0 then begin
+              ClearErrors; {!!.01}
+              PopupErrorMessage(ErrorMsg);
+              Finished := True;
+              CurX := PrvX;
+              CurY := PrvY;
+            end;
+            {position the hardware cursor}
+            GotoXYabs(CurX, CurY);
+            {$IFDEF UseMouse}
+            {position mouse cursor}
+            if MouseInstalled then
+              MouseGotoXY(WhereXabs-MouseXLo, WhereYabs-MouseYLo);
+            {$ENDIF}
+            NormalCursor;
+            PrvX := CurX;
+            PrvY := CurY;
+          end;
+
+          if not Finished then
+            case GetDirectionCmd of
+              ccCenter :
+                if not Resize then begin
+                  CurX := ((ScreenWidth-Width) div 2)+1;
+                  CurY := ((ScreenHeight-Height) div 2)+1;
+                end;
+              ccHoriz :
+                if not Resize then
+                  CurX := ((ScreenWidth-Width) div 2)+1;
+              ccVert :
+                if not Resize then
+                  CurY := ((ScreenHeight-Height) div 2)+1;
+              ccHome :
+                CurX := MinX;
+              ccUp :
+                IncXY(0, -1);
+              ccPageUp :
+                IncXY(0, -VertTabSize);
+              ccLeft :
+                IncXY(-1, 0);
+              ccRight :
+                IncXY(+1, 0);
+              ccEnd :
+                CurX := MaxX;
+              ccDown :
+                IncXY(0, +1);
+              ccPageDn :
+                IncXY(0, +VertTabSize);
+              ccUpLeft  :
+                IncXY(-1, -1);
+              ccDownLeft  :
+                IncXY(-1, +1);
+              ccUpRight :
+                IncXY(+1, -1);
+              ccDownRight :
+                IncXY(+1, +1);
+              ccScreenBot, ccEndOfFile :
+                CurY := MaxY;
+              ccScreenTop, ccTopOfFile :
+                CurY := MinY;
+              ccBackTab, ccWordLeft :
+                IncXY(-HorizTabSize, 0);
+              ccTab, ccWordRight :
+                IncXY(+HorizTabSize, 0);
+              ccQuit :
+                if not Drag then begin
+                  {Dangerous when dragging because submenus aren't restored}
+                  AdjustMenuWindow(WinPtr, OldXL, OldYL, OldXH, OldYH);
+                  Finished := True;
+                end;
+              ccMouseSel, ccSelect :
+                Finished := True;
+            end;
+
+        until Finished;
+
+        if (wXL <> OldXL) or (wYL <> OldYL) or
+           (wXH <> OldXH) or (wYH <> OldYH) then
+          Modified := True;
+
+        {Restore hardware and mouse cursor state}
+        RestoreAllCursors(CursorState);
+
+        {Erase the prompt line}
+        RemovePromptLine;
+      end;
+    end;
+  end;
+
+  procedure MoveSubMenu;
+    {-Move the current submenu interactively}
+  begin
+    MoveSubMenuPrim(False, False);
+  end;
+
+  procedure ResizeSubMenu;
+    {-Resize the current submenu interactively}
+  begin
+    MoveSubMenuPrim(False, True);
+  end;
+
+  procedure DragSubMenu;
+    {-Move the current submenu, dragging its children along with it}
+  begin
+    MoveSubMenuPrim(True, False);
+  end;
+
+  procedure KillSubMenu;
+    {-Remove the current submenu}
+  const
+    ErrorMsg = 'Cannot remove main menu';
+    ConfirmMsg = 'Remove Submenu';
+  var
+    SubPtr : SubMenuPtr;
+    Popped : Boolean;
+  begin
+    with UserMenu do begin
+      SubPtr := ActiveSubPtr;
+      if SubPtr = nil then begin
+        PopupErrorMessage(ErrorMsg);
+        Exit;
+      end;
+      if not ConfirmAction(ConfirmMsg) then
+        Exit;
+
+      {Erase the submenu}
+      wStack.OptimizeTiled(False); {!!.12}
+      UserMenu.ActivateWrite;
+      Popped := mnPopSubMenu;
+      UserMenu.DeactivateWrite;
+      wStack.OptimizeTiled(True);  {!!.12}
+      Modified := True;
+
+      {Deallocate the submenu}
+      KillInactiveSubMenu(SubPtr);
+
+      {The current item has no submenu now}
+      ActiveItemPtr^.ChangeSubPtr(nil);
+
+      {Mark current item for help row}
+      mnMarkCurrentItem; {!!.01}
+    end;
+  end;
+
+  procedure MoveMenuItemPrim(Drag : Boolean);
+    {-Adjust the position of a menu item or the whole list}
+  const
+    PromptMsg = 'move, <Enter> to accept ';
+  var
+    ListPtr : MenuItemListPtr;
+    CurPtr : MenuItemNodePtr;
+    WinPtr : RawWindowPtr;
+    DisplayPos : Byte;            {display position of current item}
+    DisplayNew : Byte;
+    DisplayPrv : Byte;
+    DisplayEnd : Byte;
+    SelectPos : Byte;
+    MinX : Integer;               {region cursor will be allowed to move in}
+    MinY : Integer;
+    MaxX : Integer;
+    MaxY : Integer;
+    OldXL : Byte;                 {original coordinates in case of restore}
+    OldXH : Byte;
+    OldYL : Byte;
+    OldYH : Byte;
+    CursorState : CursorStateRec;
+    Finished : Boolean;
+    FrameWidth : Byte;
+    Orient : mnOrientation;
+    S : string;
+  begin
+    with UserMenu do begin
+      ListPtr := ActiveListPtr;
+      with ListPtr^ do begin
+        CurPtr := CurrentItemPtr;
+
+        {Make sure there is an item to edit}
+        if CurPtr = nil then
+          Exit;
+
+        {Erase the MAKEMENU menu}
+        MainMenu.Erase;
+
+        {Display a prompt line tucked under the user menu}
+        if not DrawPromptLine(MoveLeadIn+PromptMsg) then
+          Exit;
+
+        WinPtr := ActiveWinPtr;
+        with WinPtr^ do begin
+          {Save the current window coordinates to detect modification}
+          Coordinates(OldXL, OldYL, OldXH, OldYH);
+
+          {Get the current select pos and length of the item string}
+          if Drag then
+            MenuItemNodePtr(Head)^.DisplayInfo(DisplayPos, SelectPos, S)
+          else
+            CurPtr^.DisplayInfo(DisplayPos, SelectPos, S);
+
+          {Compute window-relative coordinates of item}
+          Orient := Orientation;
+          FrameWidth := Byte(wFrame.IsFramed);
+          if Orient = Vertical then begin
+            MinX := OldXL;
+            MaxX := MinX;
+            MinY := 1+FrameWidth;
+            MaxY := ScreenHeight-FrameWidth;
+          end else begin
+            MinX := 1+FrameWidth;
+            MaxX := ScreenWidth-FrameWidth;
+            MinY := OldYL;
+            MaxY := MinY;
+          end;
+
+          {Save hardware and mouse cursor state, and hide both cursors}
+          SaveAllCursors(CursorState);
+
+          {$IFDEF UseMouse}
+          if MouseInstalled then begin
+            {slow down mouse}
+            SlowMouse;
+            {adjust mouse window coordinates}
+            MouseWindow(MinX, MinY, MaxX, MaxY);
+          end;
+          {$ENDIF}
+
+          Finished := False;
+          DisplayNew := DisplayPos;
+          DisplayPrv := 255;
+
+          repeat
+            {Update the display}
+            if DisplayNew <> DisplayPrv then begin
+              if not Drag then
+                CurPtr^.ChangeDisplayPos(DisplayNew);
+              UserMenu.ActivateWrite;
+              Clear;
+              ListPtr^.Draw(WinPtr, True, True);
+              wFrame.DrawHeaders;
+              UserMenu.DeactivateWrite;
+              {$IFDEF UseMouse}
+              {position mouse cursor}
+              if MouseInstalled then
+                MouseGotoXY(WhereXabs-MouseXLo, WhereYabs-MouseYLo);
+              {$ENDIF}
+              DisplayPrv := DisplayNew;
+              {Make hardware cursor visible}
+              NormalCursor;
+            end;
+
+            case GetDirectionCmd of
+              ccLeft :
+                if Orient = Horizontal then
+                  if DisplayNew > 1 then begin
+                    dec(DisplayNew);
+                    if Drag then
+                      ShiftItems(ListPtr, MenuItemNodePtr(Head), -1);
+                  end else if wXL > MinX then begin
+                    if not Drag then
+                      ShiftItems(ListPtr, MenuItemNodePtr(Head), 1);
+                    AdjustMenuWindow(WinPtr, wXL-1, wYL, wXH, wYH);
+                    DisplayPrv := 255;
+                  end;
+
+              ccRight :
+                if Orient = Horizontal then begin
+                  if Drag then
+                    MenuItemNodePtr(Tail)^.DisplayInfo(DisplayEnd, SelectPos, S)
+                  else
+                    DisplayEnd := DisplayNew;
+                  inc(DisplayEnd,
+                      Length(S)+Length(ilLeftSel)+Length(ilRightSel)-1);
+                  if DisplayEnd < Width then begin
+                    inc(DisplayNew);
+                    if Drag then
+                      ShiftItems(ListPtr, MenuItemNodePtr(Head), +1);
+                  end else if wXH < MaxX then begin
+                    AdjustMenuWindow(WinPtr, wXL, wYL, wXH+1, wYH);
+                    inc(DisplayNew);
+                    if Drag then
+                      ShiftItems(ListPtr, MenuItemNodePtr(Head), +1);
+                  end;
+                end;
+
+              ccUp :
+                if Orient = Vertical then
+                  if DisplayNew > 1 then begin
+                    dec(DisplayNew);
+                    if Drag then
+                      ShiftItems(ListPtr, MenuItemNodePtr(Head), -1);
+                  end else if wYL > MinY then begin
+                    if not Drag then
+                      ShiftItems(ListPtr, MenuItemNodePtr(Head), 1);
+                    AdjustMenuWindow(WinPtr, wXL, wYL-1, wXH, wYH);
+                    DisplayPrv := 255;
+                  end;
+
+              ccDown :
+                if Orient = Vertical then begin
+                  if Drag then
+                    MenuItemNodePtr(Tail)^.DisplayInfo(DisplayEnd, SelectPos, S)
+                  else
+                    DisplayEnd := DisplayNew;
+                  if DisplayEnd < Height then begin
+                    inc(DisplayNew);
+                    if Drag then
+                      ShiftItems(ListPtr, MenuItemNodePtr(Head), +1);
+                  end else if wYH < MaxY then begin
+                    AdjustMenuWindow(WinPtr, wXL, wYL, wXH, wYH+1);
+                    inc(DisplayNew);
+                    if Drag then
+                      ShiftItems(ListPtr, MenuItemNodePtr(Head), +1);
+                  end;
+                end;
+
+              ccMouseSel, ccSelect :
+                Finished := True;
+            end;
+
+          until Finished;
+
+          if (DisplayPos <> DisplayNew) or
+             (wXL <> OldXL) or (wXH <> OldXH) or
+             (wYL <> OldYL) or (wYH <> OldYH) then
+            Modified := True;
+
+          {Restore hardware and mouse cursor state}
+          RestoreAllCursors(CursorState);
+
+          {Erase the prompt line}
+          RemovePromptLine;
+        end;
+      end;
+    end;
+  end;
+
+  procedure MoveMenuItem;
+    {-Adjust the position of a menu item}
+  begin
+    MoveMenuItemPrim(False);
+  end;
+
+  procedure DragMenuItem;
+    {-Move an item and drag all the others with it}
+  begin
+    MoveMenuItemPrim(True);
+  end;
+
+  procedure SwapItems(ListPtr : MenuItemListPtr;
+                      Prv, Nxt : MenuItemNodePtr);
+    {-Swap two menu items and update positions as required}
+  var
+    TmpPos : Byte;
+  begin
+    TmpPos := Prv^.GetDisplayPos;
+    Prv^.ChangeDisplayPos(Nxt^.GetDisplayPos);
+    Nxt^.ChangeDisplayPos(TmpPos);
+    ListPtr^.Remove(Prv);
+    ListPtr^.Place(Prv, Nxt);
+    ExpandItems(ListPtr, Nxt, Nxt^.GetDisplayPos);
+  end;
+
+  procedure ReorderMenuItem;
+    {-Reorder menu items}
+  const
+    PromptMsg = 'move, <Enter> to accept ';
+  var
+    ListPtr : MenuItemListPtr;
+    CurPtr : MenuItemNodePtr;
+    WinPtr : RawWindowPtr;
+    OldNext : MenuItemNodePtr;
+    MinX : Integer;               {region cursor will be allowed to move in}
+    MinY : Integer;
+    MaxX : Integer;
+    MaxY : Integer;
+    Cmd : Word;
+    CursorState : CursorStateRec;
+    Orient : mnOrientation;
+    Update : Boolean;
+    Finished : Boolean;
+    DisplayPos : Byte;
+    SelectPos : Byte;
+    S : string;
+  begin
+    with UserMenu do begin
+      ListPtr := ActiveListPtr;
+      with ListPtr^ do begin
+        CurPtr := CurrentItemPtr;
+
+        {Make sure there is an item to edit}
+        if CurPtr = nil then
+          Exit;
+
+        {Erase the MAKEMENU menu}
+        MainMenu.Erase;
+
+        {Display a prompt line tucked under the user menu}
+        if not DrawPromptLine(MoveLeadIn+PromptMsg) then
+          Exit;
+
+        WinPtr := ActiveWinPtr;
+
+        with WinPtr^ do begin
+          Orient := Orientation;
+          MinX := wXL;
+          MinY := wYL;
+          if Orient = Vertical then begin
+            MaxX := MinX;
+            MaxY := wYH;
+          end else begin
+            MaxX := wXH;
+            MaxY := MinY;
+          end;
+
+          {Save hardware and mouse cursor state, and hide both cursors}
+          SaveAllCursors(CursorState);
+
+          {$IFDEF UseMouse}
+          if MouseInstalled then begin
+            {slow down mouse}
+            SlowMouse;
+            {adjust mouse window coordinates}
+            MouseWindow(MinX, MinY, MaxX, MaxY);
+          end;
+          {$ENDIF}
+
+          Finished := False;
+          Update := True;
+          OldNext := MenuItemNodePtr(Next(CurPtr));
+
+          repeat
+            {Update the display}
+            if Update then begin
+              wStack.OptimizeTiled(False); {!!.11}
+              UserMenu.ActivateWrite;
+              if Orient = Horizontal then
+                with MenuItemNodePtr(Tail)^ do begin
+                  DisplayInfo(DisplayPos, SelectPos, S);
+                  if DisplayPos+Length(S)+
+                     2*ilPad+Length(ilLeftSel)+Length(ilRightSel) > wXH then
+                    AdjustMenuWindow(WinPtr, wXL, wYL,
+                                     DisplayPos+Length(S)+
+                                     2*ilPad+Length(ilLeftSel)+Length(ilRightSel),
+                                     wYH);
+                end;
+              Clear;
+              ListPtr^.Draw(WinPtr, True, True);
+              wFrame.DrawHeaders;
+              UserMenu.DeactivateWrite;
+              wStack.OptimizeTiled(True);  {!!.11}
+              {$IFDEF UseMouse}
+              {position mouse cursor}
+              if MouseInstalled then
+                MouseGotoXY(WhereXabs-MouseXLo, WhereYabs-MouseYLo);
+              {$ENDIF}
+              {Make hardware cursor visible}
+              NormalCursor;
+              Update := False;
+            end;
+
+            Cmd := GetDirectionCmd;
+            case Cmd of
+              ccLeft, ccUp :
+                if ((Cmd = ccLeft) and (Orient = Horizontal)) or
+                   ((Cmd = ccUp) and (Orient = Vertical)) then
+                  if CurPtr <> MenuItemNodePtr(Head) then begin
+                    SwapItems(ListPtr, MenuItemNodePtr(Prev(CurPtr)), CurPtr);
+                    Update := True;
+                  end;
+              ccRight, ccDown :
+                if ((Cmd = ccRight) and (Orient = Horizontal)) or
+                   ((Cmd = ccDown) and (Orient = Vertical)) then
+                  if CurPtr <> MenuItemNodePtr(Tail) then begin
+                    SwapItems(ListPtr, CurPtr, MenuItemNodePtr(Next(CurPtr)));
+                    Update := True;
+                  end;
+              ccMouseSel, ccSelect :
+                Finished := True;
+            end;
+
+          until Finished;
+
+          if MenuItemNodePtr(Next(CurPtr)) <> OldNext then
+            Modified := True;
+
+          {Restore hardware and mouse cursor state}
+          RestoreAllCursors(CursorState);
+
+          {Erase the prompt line}
+          RemovePromptLine;
+        end;
+      end;
+    end;
+  end;
+
+  procedure SetKeyMenuItem;
+    {-Modify the key returned by the menu item}
+  const
+    HeaderMsg = 'Edit Key';
+    PromptMsg = 'Key: ';
+  var
+    ListPtr : MenuItemListPtr;
+    CurPtr : MenuItemNodePtr;
+    Key : LongInt;
+  begin
+    with UserMenu do begin
+      ListPtr := ActiveListPtr;
+      with ListPtr^ do begin
+        CurPtr := CurrentItemPtr;
+        {Make sure there is an item to edit}
+        if CurPtr = nil then
+          Exit;
+        Key := CurPtr^.ItemKey;
+        {edit the value}
+        if not PopupGetLong(HeaderMsg, PromptMsg, Key, 1, MaxLongInt) then
+          Exit;
+        CurPtr^.ChangeKey(Key);
+        Modified := True;
+      end;
+    end;
+  end;
+
+  procedure SetSelectChar;
+    {-Change the select character position of the current menu item}
+  const
+    PromptMsg = #27#26' to move, <Enter> to accept, <Esc> to restore ';
+  var
+    ListPtr : MenuItemListPtr;
+    CurPtr : MenuItemNodePtr;
+    WinPtr : RawWindowPtr;
+    DisplayPos : Byte;
+    SelectPos : Byte;             {select position within current item}
+    NewSelect : Byte;
+    PrvSelect : Byte;
+    Row : Byte;                   {window-relative position of item}
+    Col : Byte;
+    MinX : Integer;               {region cursor will be allowed to move in}
+    MinY : Integer;
+    MaxX : Integer;
+    MaxY : Integer;
+    CursorState : CursorStateRec;
+    Finished : Boolean;
+    S : string;
+  begin
+    with UserMenu do begin
+      ListPtr := ActiveListPtr;
+      with ListPtr^ do begin
+        CurPtr := CurrentItemPtr;
+        {Make sure there is an item to edit}
+        if CurPtr = nil then
+          Exit;
+
+        {Erase the MAKEMENU menu}
+        MainMenu.Erase;
+
+        {Display a prompt line tucked under the user menu}
+        if not DrawPromptLine(PromptMsg) then
+          Exit;
+
+        {Get the current select pos and length of the item string}
+        CurPtr^.DisplayInfo(DisplayPos, SelectPos, S);
+
+        {Compute window-relative coordinates of item}
+        if ListPtr^.Orientation = Vertical then begin
+          Row := DisplayPos;
+          Col := 1;
+        end else begin
+          Row := 1;
+          Col := DisplayPos;
+        end;
+
+        {Compute the region in which the cursor can move}
+        WinPtr := ActiveWinPtr;
+        MinX := WinPtr^.wXL+Col-1+ListPtr^.ilPad+Length(ListPtr^.ilLeftSel)-1;
+        MinY := WinPtr^.wYL+Row-1;
+        MaxX := MinX+Length(S);
+        MaxY := MinY;
+
+        {Save hardware and mouse cursor state, and hide both cursors}
+        SaveAllCursors(CursorState);
+
+        {$IFDEF UseMouse}
+        if MouseInstalled then begin
+          {slow down mouse}
+          SlowMouse;
+          {adjust mouse window coordinates}
+          MouseWindow(MinX, MinY, MaxX, MaxY);
+        end;
+        {$ENDIF}
+
+        {Make hardware cursor visible}
+        NormalCursor;
+
+        Finished := False;
+        NewSelect := SelectPos;
+        PrvSelect := 255;
+        repeat
+          if NewSelect <> PrvSelect then begin
+            CurPtr^.ChangeSelectPos(NewSelect);
+            ListPtr^.DrawItem(CurPtr, False, True, WinPtr);
+            {position the hardware cursor}
+            GotoXYabs(MinX+NewSelect, MinY);
+            {$IFDEF UseMouse}
+            {position mouse cursor}
+            if MouseInstalled then
+              MouseGotoXY(WhereXabs-MouseXLo, WhereYabs-MouseYLo);
+            {$ENDIF}
+            PrvSelect := NewSelect;
+          end;
+
+          case GetDirectionCmd of
+            ccHome :
+              NewSelect := 0;
+            ccLeft :
+              if NewSelect > 0 then
+                dec(NewSelect);
+            ccRight :
+              if NewSelect < Length(S) then
+                inc(NewSelect);
+            ccEnd :
+              NewSelect := Length(S);
+            ccQuit :
+              begin
+                Finished := True;
+                NewSelect := SelectPos;
+                CurPtr^.ChangeSelectPos(NewSelect);
+              end;
+            ccMouseSel,
+            ccSelect :
+              Finished := True;
+          end;
+
+        until Finished;
+
+        {Redraw the selected item}
+        ListPtr^.DrawItem(CurPtr, True, True, WinPtr);
+        if NewSelect <> SelectPos then
+          Modified := True;
+
+        {Restore hardware and mouse cursor state}
+        RestoreAllCursors(CursorState);
+
+        {Erase the prompt line}
+        RemovePromptLine;
+      end;
+    end;
+  end;

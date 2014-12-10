@@ -1,0 +1,1622 @@
+{*********************************************************}
+{*                   OPFIELD.IN4 1.30                    *}
+{*      Copyright (c) TurboPower Software 1988,1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  procedure DrawString(var Field;
+                       St : string;
+                       Row, Col : Word;
+                       FA, CA : Byte;
+                       POffset : Byte;
+                       PasswordChar : Char;
+                       Flags : PictureFlags);
+    {-Draw the string}
+  label       {!!.01}
+    IsHidden; {!!.01}
+  var
+    EF : EntryField absolute Field;
+    StLen : Byte absolute St;
+    I : Integer;
+    A : Byte;
+    C : Char;
+    Password : Boolean;
+    MapCtrls : Boolean;
+    UseParens : Boolean;
+    Editing : Boolean;
+    Hidden : Boolean; {!!.01}
+    PadChar : Char;
+    {$IFDEF UseMouse}
+    SaveMouse : Boolean;
+    {$ENDIF}
+  begin
+    with EF do begin
+      {$IFDEF UseMouse}
+      if VirtualSegment = VideoSegment then
+        HideMousePrim(SaveMouse);
+      {$ENDIF}
+
+      {is the field hidden?}                        {!!.01}
+      Hidden := LongFlagIsSet(sfOptions, sfHidden); {!!.01}
+      if Hidden then                                {!!.01}
+        goto IsHidden;                              {!!.01}
+
+      {we may need to fill in spaces set aside for '$' and ',' later}
+      if not afNoLiterals then
+        for I := 1 to StLen do
+          case efPicture^[I] of
+            FloatDollar, Comma : Flags[I] := True;
+          end;
+
+      Password := LongFlagIsSet(sfOptions, efPasswordMode);
+      if not Password then
+        {map '-nnnn' to '(nnnn)'?}                        {vvv---restriction OK?}
+        if LongFlagIsSet(sfOptions, efParensForMinus) and LongFlagIsSet(sfFlags, ifNumeric) then begin
+          I := Pos('-', St);
+          if (I <> 0) and Flags[I] and (St[StLen] = ' ') and not Flags[StLen] then begin
+            St[I] := '(';
+            St[StLen] := ')';
+          end;
+        end;
+
+      Editing := LongFlagIsSet(sfFlags, ifEditing);
+      if Editing or not LongFlagIsSet(sfFlags, sefPadCurrentOnly) then
+        PadChar := efPadChar
+      else
+        PadChar := ' ';
+
+      MapCtrls := LongFlagIsSet(sfOptions, efMapCtrls);
+      if (PadChar <> ' ') or Password then begin
+        if afIsNumber or (afRightJustified and not Editing) then begin
+          {field is right-justified}
+          I := 1;
+          while not Flags[I] do
+            Inc(I);
+          while Flags[I] and (St[I] = ' ') do begin
+            St[I] := PadChar;
+            Inc(I);
+          end;
+          if Password then
+            while I <= StLen do begin
+              if Flags[I] then
+                St[I] := PasswordChar;
+              Inc(I);
+            end;
+        end
+        else begin
+          {field is left-justified}
+          I := StLen;
+          while I > 0 do begin
+            while (I > 0) and not Flags[I] do
+              Dec(I);
+            while (I > 0) and Flags[I] and (St[I] = ' ') do begin
+              St[I] := PadChar;
+              Dec(I);
+            end;
+            while (I > 0) and Flags[I] do begin
+              if Password then
+                St[I] := PasswordChar;
+              Dec(I);
+            end;
+            Dec(I);
+          end;
+        end;
+      end;
+
+      {draw the desired substring}
+      if StLen <> sfFWidth then begin
+        Move(St[Succ(POffset)], St[1], sfFWidth);
+        StLen := sfFWidth;
+      end;
+
+IsHidden:                                        {!!.01}
+      if Hidden then                             {!!.01}
+        FastFill(sfFWidth, ' ', Row, Col, FA)    {!!.01}
+      else if Password or (not MapCtrls) then    {!!.01}
+        FastWrite(St, Row, Col, FA)
+      else
+        {draw the string, converting control characters}
+        FastWriteCtrl(St, Row, Col, FA, CA);
+
+      {$IFDEF UseMouse}
+      if VirtualSegment = VideoSegment then
+        ShowMousePrim(SaveMouse);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure SimpleDrawString(var Field;
+                             St : string;
+                             Row, Col : Word;
+                             FA, CA : Byte;
+                             POffset : Byte;
+                             PasswordChar : Char;
+                             Flags : PictureFlags);
+  var
+    EF : EntryField absolute Field;
+    StLen : Byte absolute St;
+    A, I : Byte;
+    MaxBoxLen : Byte;
+    EditLen : Byte;
+    Ch, PadChar : Char;
+    PWM, EMC : Boolean;
+    Hidden : Boolean;    {!!.01}
+    {$IFDEF UseMouse}
+    SaveMouse : Boolean;
+    {$ENDIF}
+  begin
+    with EF do begin
+      if LongFlagIsSet(sfOptions, efHouseCursorAtEnd) then
+        MaxBoxLen := efMaxLen+1
+      else
+        MaxBoxLen := efMaxLen;
+
+      if (sfFWidth = efMaxLen) or (sfFWidth >= MaxBoxLen) then
+        EditLen := MaxBoxLen
+      else
+        EditLen := sfFWidth;
+
+      PWM := LongFlagIsSet(sfOptions, efPasswordMode);
+      EMC := LongFlagIsSet(sfOptions, efMapCtrls);
+
+      {is the field hidden?}                        {!!.01}
+      Hidden := LongFlagIsSet(sfOptions, sfHidden); {!!.01}
+
+      if LongFlagIsSet(sfFlags, ifEditing) or not LongFlagIsSet(sfFlags, sefPadCurrentOnly) then
+        PadChar := efPadChar
+      else
+        PadChar := ' ';
+
+      {pad the end of the string}
+      FillChar(St[Succ(StLen)], MaxBoxLen-StLen, PadChar);     {!!.22} {!!.30}
+      (*FillChar(St[Succ(StLen)], efMaxLen-StLen, PadChar);*)  {!!.22} {!!.30}
+
+      {$IFDEF UseMouse}
+      HideMousePrim(SaveMouse);
+      {$ENDIF}
+
+      {draw the string}
+      for I := 1 to EditLen do begin
+        if Hidden then begin        {!!.01}
+          Ch := ' ';                {!!.01}
+          A := FA;                  {!!.01}
+        end                         {!!.01}
+        else if PWM then begin      {!!.01}
+          if I <= StLen then
+            Ch := PasswordChar
+          else
+            Ch := PadChar;
+          A := FA;
+        end
+        else begin
+          Ch := St[POffset+I];
+          if (Ch < ' ') and EMC then begin
+            Ch := Chr(Ord(Ch) or $40);
+            A := CA;
+          end
+          else
+            A := FA;
+        end;
+        FastFill(1, Ch, Row, Col+Pred(I), A);
+      end;
+
+      {$IFDEF UseMouse}
+      ShowMousePrim(SaveMouse);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure StringConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for strings}
+  begin
+    with EFP^ do
+      if PostEdit then
+        String(efVarPtr^) := efEditSt^
+      else begin
+        if Byte(efVarPtr^) > efMaxLen then
+          Byte(efVarPtr^) := efMaxLen;
+        efEditSt^ := string(efVarPtr^);
+        if Length(efEditSt^) < efMaxLen then
+          MergePicture(efEditSt^, efEditSt^);
+      end;
+  end;
+
+  procedure CharConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for characters}
+  var
+    S : string[10];
+  begin
+    with EFP^ do
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        Char(efVarPtr^) := S[1];
+      end
+      else begin
+        efEditSt^ := Char(efVarPtr^);
+        if Length(efEditSt^) < Length(efPicture^) then
+          MergePicture(efEditSt^, efEditSt^);
+      end;
+  end;
+
+  procedure BooleanConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for booleans}
+  var
+    Ch : Char;
+    S : string[10];
+  begin
+    with EFP^ do
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        Ch := S[1];
+        Boolean(efVarPtr^) := (Upcase(Ch) = TrueChar);
+      end
+      else begin
+        if Boolean(efVarPtr^) = True then
+          efEditSt^ := TrueChar
+        else
+          efEditSt^ := FalseChar;
+        if Length(efEditSt^) < Length(efPicture^) then
+          MergePicture(efEditSt^, efEditSt^);
+      end;
+  end;
+
+  procedure YesNoConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for yes/no's}
+  var
+    Ch : Char;
+    S : string[10];
+  begin
+    with EFP^ do
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        Ch := S[1];
+        Boolean(efVarPtr^) := (Upcase(Ch) = YesChar);
+      end
+      else begin
+        if Boolean(efVarPtr^) = True then
+          efEditSt^ := YesChar
+        else
+          efEditSt^ := NoChar;
+        if Length(efEditSt^) < Length(efPicture^) then
+          MergePicture(efEditSt^, efEditSt^);
+      end;
+  end;
+
+  procedure LongConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for longints}
+  var
+    S : string[80];
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        if not efStr2Long(S, LongInt(efVarPtr^)) then
+          LongInt(efVarPtr^) := 0;
+      end
+      else begin
+        S := efLong2Str(LongInt(efVarPtr^), 8);
+        MergePicture(S, efEditSt^);
+      end;
+      efSetSemiHidden((LongInt(efVarPtr^) = 0) and
+                      LongFlagIsSet(sfFlags, sefSuppressZero));
+    end;
+  end;
+
+  procedure WordConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for words}
+  var
+    S : string[80];
+    L : LongInt;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        if not efStr2Long(S, L) then
+          Word(efVarPtr^) := 0
+        else
+          Word(efVarPtr^) := Word(L);
+      end
+      else begin
+        S := efLong2Str(Word(efVarPtr^), 4);
+        MergePicture(S, efEditSt^);
+      end;
+      efSetSemiHidden((Word(efVarPtr^) = 0) and
+                      LongFlagIsSet(sfFlags, sefSuppressZero));
+    end;
+  end;
+
+  procedure SmallWordConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for words}
+  var
+    S : string[80];
+    L : LongInt;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        if not efStr2Long(S, L) then
+          SmallWord(efVarPtr^) := 0
+        else
+          SmallWord(efVarPtr^) := SmallWord(L);
+      end
+      else begin
+        S := efLong2Str(SmallWord(efVarPtr^), 4);
+        MergePicture(S, efEditSt^);
+      end;
+      efSetSemiHidden((SmallWord(efVarPtr^) = 0) and
+                      LongFlagIsSet(sfFlags, sefSuppressZero));
+    end;
+  end;
+
+  procedure IntConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for integers}
+  var
+    S : string[80];
+    L : LongInt;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        if not efStr2Long(S, L) then
+          Integer(efVarPtr^) := 0
+        else
+          Integer(efVarPtr^) := Integer(L);
+      end
+      else begin
+        S := efLong2Str(Integer(efVarPtr^), 4);
+        MergePicture(S, efEditSt^);
+      end;
+      efSetSemiHidden((Integer(efVarPtr^) = 0) and
+                      LongFlagIsSet(sfFlags, sefSuppressZero));
+    end;
+  end;
+
+  procedure SmallIntConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for integers}
+  var
+    S : string[80];
+    L : LongInt;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        if not efStr2Long(S, L) then
+          SmallInt(efVarPtr^) := 0
+        else
+          SmallInt(efVarPtr^) := SmallInt(L);
+      end
+      else begin
+        S := efLong2Str(SmallInt(efVarPtr^), 4);
+        MergePicture(S, efEditSt^);
+      end;
+      efSetSemiHidden((SmallInt(efVarPtr^) = 0) and
+                      LongFlagIsSet(sfFlags, sefSuppressZero));
+    end;
+  end;
+
+  procedure ByteConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for bytes}
+  var
+    S : string[80];
+    L : LongInt;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        if not efStr2Long(S, L) then
+          Byte(efVarPtr^) := 0
+        else
+          Byte(efVarPtr^) := Byte(L);
+      end
+      else begin
+        S := efLong2Str(Byte(efVarPtr^), 2);
+        MergePicture(S, efEditSt^);
+      end;
+      efSetSemiHidden((Byte(efVarPtr^) = 0) and
+                      LongFlagIsSet(sfFlags, sefSuppressZero));
+    end;
+  end;
+
+  procedure ShortConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for shortints}
+  var
+    S : string[80];
+    L : LongInt;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        if not efStr2Long(S, L) then
+          ShortInt(efVarPtr^) := 0
+        else
+          ShortInt(efVarPtr^) := ShortInt(L);
+      end
+      else begin
+        S := efLong2Str(ShortInt(efVarPtr^), 2);
+        MergePicture(S, efEditSt^);
+      end;
+      efSetSemiHidden((ShortInt(efVarPtr^) = 0) and
+                      LongFlagIsSet(sfFlags, sefSuppressZero));
+    end;
+  end;
+
+  procedure RealConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for reals}
+  var
+    S : string;
+    R : Real;
+    Code : Word;
+    Width, Places : Word;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        FixRealPrim(S, False);
+        Val(S, R, Code);
+        if Code <> 0 then
+          R := BadReal;
+        Real(efVarPtr^) := R;
+      end
+      else begin
+        CalcWidthAndPlaces(Width, Places);
+        R := Real(efVarPtr^);
+        if R = BadReal then
+          R := 0;
+        Str(R:Width:Places, S);
+        if efDPlaces <> 0 then
+          TrimTrailingZeros(S)
+        else
+          TrimSpacesPrim(S);
+        MergePicture(S, efEditSt^);
+      end;
+      efSetSemiHidden(Real(efVarPtr^) = BadReal);
+    end;
+  end;
+
+{$IFDEF UseBcd}
+
+  procedure BcdConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for BCD reals}
+  var
+    S : string;
+    B : BCD;
+    Code : _Word;
+    Width, Places : Word;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        FixRealPrim(S, False);
+        ValBCD(S, B, Code);
+        if Code <> 0 then
+          B := BadBcd;
+        BCD(efVarPtr^) := B;
+      end
+      else begin
+        CalcWidthAndPlaces(Width, Places);
+        B := BCD(efVarPtr^);
+        if EqualBCD(B, BadBcd) then
+          B := ZeroBcd;
+        S := StrBCD(B, Width, Places);
+        if efDPlaces <> 0 then
+          TrimTrailingZeros(S)
+        else
+          TrimSpacesPrim(S);
+        MergePicture(S, efEditSt^);
+      end;
+      efSetSemiHidden(EqualBCD(BCD(efVarPtr^), BadBcd));
+    end;
+  end;
+
+{$ENDIF}
+
+{$IFOPT N+}
+
+  procedure ExtConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for extendeds}
+  var
+    S : string;
+    E : Extended;
+    Code : Word;
+    Width, Places : Word;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        FixRealPrim(S, False);
+        Val(S, E, Code);
+        if Code <> 0 then
+          E := BadExt;
+        Extended(efVarPtr^) := E;
+      end
+      else begin
+        CalcWidthAndPlaces(Width, Places);
+        E := Extended(efVarPtr^);
+        if E = BadExt then
+          E := 0;
+        Str(E:Width:Places, S);
+        if efDPlaces <> 0 then
+          TrimTrailingZeros(S)
+        else
+          TrimSpacesPrim(S);
+        MergePicture(S, efEditSt^);
+      end;
+      efSetSemiHidden(Extended(efVarPtr^) = BadExt);
+    end;
+  end;
+
+  procedure DblConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for doubles}
+  var
+    S : string;
+    E : Double;
+    Code : Word;
+    Width, Places : Word;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        FixRealPrim(S, False);
+        Val(S, E, Code);
+        if Code <> 0 then
+          E := BadDbl;
+        Double(efVarPtr^) := E;
+      end
+      else begin
+        CalcWidthAndPlaces(Width, Places);
+        E := Double(efVarPtr^);
+        if E = BadDbl then
+          E := 0;
+        Str(E:Width:Places, S);
+        if efDPlaces <> 0 then
+          TrimTrailingZeros(S)
+        else
+          TrimSpacesPrim(S);
+        MergePicture(S, efEditSt^);
+      end;
+      efSetSemiHidden(Double(efVarPtr^) = BadDbl);
+    end;
+  end;
+
+  procedure SglConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for singles}
+  var
+    S : string;
+    E : Single;
+    Code : Word;
+    Width, Places : Word;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        FixRealPrim(S, False);
+        Val(S, E, Code);
+        if Code <> 0 then
+          E := BadSgl;
+        Single(efVarPtr^) := E;
+      end
+      else begin
+        CalcWidthAndPlaces(Width, Places);
+        E := Single(efVarPtr^);
+        if E = BadSgl then
+          E := 0;
+        Str(E:Width:Places, S);
+        if efDPlaces <> 0 then
+          TrimTrailingZeros(S)
+        else
+          TrimSpacesPrim(S);
+        MergePicture(S, efEditSt^);
+      end;
+      efSetSemiHidden(Single(efVarPtr^) = BadSgl);
+    end;
+  end;
+
+  procedure CompConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for comps}
+  var
+    S : string[80];
+    E : Comp;
+    Code : Word;
+    Width, Places : Word;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        StripPicture(efEditSt^, S);
+        FixRealPrim(S, False);
+        Val(S, E, Code);
+        if Code <> 0 then
+          E := BadComp;
+        Comp(efVarPtr^) := E;
+      end
+      else begin
+        CalcWidthAndPlaces(Width, Places);
+        E := Comp(efVarPtr^);
+        if E = BadComp then
+          E := 0;
+        Str(E:Width:Places, S);
+        TrimSpacesPrim(S);
+        MergePicture(S, efEditSt^);
+      end;
+      efSetSemiHidden(Comp(efVarPtr^) = BadComp);
+    end;
+  end;
+
+{$ENDIF}
+
+  function NullValidation(EFP : EntryFieldPtr;
+                          var ErrCode : Word;
+                          var ErrorSt : StringPtr) : Boolean;
+    {-Dummy routine}
+  begin
+    NullValidation := True;
+  end;
+
+  function ValidateChar(EFP : EntryFieldPtr;
+                        var ErrCode : Word;
+                        var ErrorSt : StringPtr) : Boolean;
+    {-Validate a field of type char}
+  var
+    Ch : Char;
+    S : string[10];
+  begin
+    with EFP^ do begin
+      {convert efEditSt^ to a char}
+      StripPicture(efEditSt^, S);
+      Ch := S[1];
+
+      {check the range}
+      if (Ch < efRangeLo.rtChar) or (Ch > efRangeHi.rtChar) then begin
+        ValidateChar := False;
+        ErrCode := ecOutOfRange;
+        ErrorSt := @emOutOfRange;
+      end
+      else
+        ValidateChar := True;
+    end;
+  end;
+
+  function ValidateLong(EFP : EntryFieldPtr;
+                        var ErrCode : Word;
+                        var ErrorSt : StringPtr) : Boolean;
+    {-Validate a field of type longint/word/integer/byte/shortint}
+  var
+    L : LongInt;
+    S : string[80];
+  begin
+    ValidateLong := False;
+    with EFP^ do begin
+      {format OK?}
+      StripPicture(efEditSt^, S);
+      if not efStr2Long(S, L) then begin
+        ErrCode := ecBadFormat;
+        ErrorSt := @emInvalidNumber;
+      end
+      else if (L < efRangeLo.rtLong) or (L > efRangeHi.rtLong) then begin
+        ErrCode := ecOutOfRange;
+        ErrorSt := @emOutOfRange;
+      end
+      else
+        ValidateLong := True;
+    end;
+  end;
+
+  function ValidateReal(EFP : EntryFieldPtr;
+                        var ErrCode : Word;
+                        var ErrorSt : StringPtr) : Boolean;
+    {-Validate a field of type real}
+  var
+    R : Real;
+    S : string[80];
+    Code : Word;
+  begin
+    ValidateReal := False;
+    with EFP^ do begin
+      {convert efEditSt^ to a real}
+      StripPicture(efEditSt^, S);
+      FixRealPrim(S, True);
+      Val(S, R, Code);
+
+      {format OK?}
+      if Code <> 0 then begin
+        ErrCode := ecBadFormat;
+        ErrorSt := @emInvalidNumber;
+      end
+      else if (R < efRangeLo.rtReal) or (R > efRangeHi.rtReal) then begin
+        ErrCode := ecOutOfRange;
+        ErrorSt := @emOutOfRange;
+      end
+      else
+        ValidateReal := True;
+    end;
+  end;
+
+{$IFDEF UseBcd}
+
+  function ValidateBCD(EFP : EntryFieldPtr;
+                       var ErrCode : Word;
+                       var ErrorSt : StringPtr) : Boolean;
+    {-Validate a field of type BCD}
+  var
+    B : BCD;
+    S : string[80];
+    Code : Word;
+  begin
+    ValidateBCD := False;
+    with EFP^ do begin
+      {convert efEditSt^ to a real}
+      StripPicture(efEditSt^, S);
+      FixRealPrim(S, True);
+      ValBCD(S, B, Code);
+
+      {format OK?}
+      if Code <> 0 then begin
+        ErrCode := ecBadFormat;
+        ErrorSt := @emInvalidNumber;
+      end
+      else if LessBCD(B, efRangeLo.rtBCD) or GreaterBCD(B, efRangeHi.rtBCD) then begin
+        ErrCode := ecOutOfRange;
+        ErrorSt := @emOutOfRange;
+      end
+      else
+        ValidateBCD := True;
+    end;
+  end;
+
+{$ENDIF}
+
+{$IFOPT N+}
+
+  function ValidateExt(EFP : EntryFieldPtr;
+                       var ErrCode : Word;
+                       var ErrorSt : StringPtr) : Boolean;
+    {-Validate a field of type extended/double/single/comp}
+  var
+    E : Extended;
+    S : string;
+    Code : Word;
+  begin
+    ValidateExt := False;
+    with EFP^ do begin
+      {convert efEditSt^ to an extended}
+      StripPicture(efEditSt^, S);
+      FixRealPrim(S, True);
+      Val(S, E, Code);
+
+      {format OK?}
+      if Code <> 0 then begin
+        ErrCode := ecBadFormat;
+        ErrorSt := @emInvalidNumber;
+      end
+      else if (E < efRangeLo.rtExt) or (E > efRangeHi.rtExt) then begin
+        ErrCode := ecOutOfRange;
+        ErrorSt := @emOutOfRange;
+      end
+      else
+        ValidateExt := True;
+    end;
+  end;
+
+{$ENDIF}
+
+  {-------"simple" conversion/validation routines------}
+
+  procedure SimpleStringConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for strings}
+  begin
+    with EFP^ do
+      if PostEdit then
+        String(efVarPtr^) := efEditSt^
+      else begin
+        if Byte(efVarPtr^) > efMaxLen then
+          Byte(efVarPtr^) := efMaxLen;
+        efEditSt^ := string(efVarPtr^);
+      end;
+  end;
+
+  procedure SimpleCharConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for characters}
+  begin
+    with EFP^ do
+      if PostEdit then
+        Char(efVarPtr^) := efEditSt^[1]
+      else
+        efEditSt^ := Char(efVarPtr^);
+  end;
+
+  procedure SimpleBooleanConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for booleans}
+  begin
+    with EFP^ do
+      if PostEdit then
+        Boolean(efVarPtr^) := (Upcase(efEditSt^[1]) = TrueChar)
+      else if Boolean(efVarPtr^) = True then
+        efEditSt^ := TrueChar
+      else
+        efEditSt^ := FalseChar;
+  end;
+
+  procedure SimpleYesNoConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for yes-no fields}
+  begin
+    with EFP^ do
+      if PostEdit then
+        Boolean(efVarPtr^) := (Upcase(efEditSt^[1]) = YesChar)
+      else if Boolean(efVarPtr^) = True then
+        efEditSt^ := YesChar
+      else
+        efEditSt^ := NoChar;
+  end;
+
+  procedure SimpleLongConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for longints}
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        if not efStr2Long(efEditSt^, LongInt(efVarPtr^)) then
+          LongInt(efVarPtr^) := 0;
+      end
+      else
+        efEditSt^ := efLong2Str(LongInt(efVarPtr^), 8);
+      efSetSemiHidden((ShortInt(efVarPtr^) = 0) and
+                      LongFlagIsSet(sfFlags, sefSuppressZero));
+    end;
+  end;
+
+  procedure SimpleWordConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for words}
+  var
+    L : LongInt;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        if not efStr2Long(efEditSt^, L) then
+          Word(efVarPtr^) := 0
+        else
+          Word(efVarPtr^) := L;
+      end
+      else
+        efEditSt^ := efLong2Str(Word(efVarPtr^), 4);
+      efSetSemiHidden((Word(efVarPtr^) = 0) and
+                      LongFlagIsSet(sfFlags, sefSuppressZero));
+    end;
+  end;
+
+  procedure SimpleSmallWordConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for words}
+  var
+    L : LongInt;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        if not efStr2Long(efEditSt^, L) then
+          SmallWord(efVarPtr^) := 0
+        else
+          SmallWord(efVarPtr^) := SmallWord(L);
+      end
+      else
+        efEditSt^ := efLong2Str(SmallWord(efVarPtr^), 4);
+      efSetSemiHidden((SmallWord(efVarPtr^) = 0) and
+                      LongFlagIsSet(sfFlags, sefSuppressZero));
+    end;
+  end;
+
+  procedure SimpleIntConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for integers}
+  var
+    L : LongInt;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        if not efStr2Long(efEditSt^, L) then
+          Integer(efVarPtr^) := 0
+        else
+          Integer(efVarPtr^) := L;
+      end
+      else
+        efEditSt^ := efLong2Str(Integer(efVarPtr^), 4);
+      efSetSemiHidden((Integer(efVarPtr^) = 0) and
+                      LongFlagIsSet(sfFlags, sefSuppressZero));
+    end;
+  end;
+
+  procedure SimpleSmallIntConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for integers}
+  var
+    L : LongInt;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        if not efStr2Long(efEditSt^, L) then
+          SmallInt(efVarPtr^) := 0
+        else
+          SmallInt(efVarPtr^) := SmallInt(L);
+      end
+      else
+        efEditSt^ := efLong2Str(SmallInt(efVarPtr^), 4);
+      efSetSemiHidden((SmallInt(efVarPtr^) = 0) and
+                      LongFlagIsSet(sfFlags, sefSuppressZero));
+    end;
+  end;
+
+  procedure SimpleByteConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for bytes}
+  var
+    L : LongInt;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        if not efStr2Long(efEditSt^, L) then
+          Byte(efVarPtr^) := 0
+        else
+          Byte(efVarPtr^) := L;
+      end
+      else
+        efEditSt^ := efLong2Str(Byte(efVarPtr^), 2);
+      efSetSemiHidden((Byte(efVarPtr^) = 0) and
+                      LongFlagIsSet(sfFlags, sefSuppressZero));
+    end;
+  end;
+
+  procedure SimpleShortConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for shortints}
+  var
+    L : LongInt;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        if not efStr2Long(efEditSt^, L) then
+          ShortInt(efVarPtr^) := 0
+        else
+          ShortInt(efVarPtr^) := L;
+      end
+      else
+        efEditSt^ := efLong2Str(ShortInt(efVarPtr^), 2);
+      efSetSemiHidden((ShortInt(efVarPtr^) = 0) and
+                      LongFlagIsSet(sfFlags, sefSuppressZero));
+    end;
+  end;
+
+  procedure FixExponent(var S : string);
+    {-trim non-essential zeros}
+  var
+    I, J : Word;
+  begin
+    {trim non-essential zeros}
+    I := Pos('E', S);
+    J := I;
+    while S[J-1] = '0' do
+      Dec(J);
+    if S[J-1] = '.' then
+      Dec(J);
+    Delete(S, J, I-J);
+  end;
+
+  procedure SimpleRealConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for reals}
+  label       {!!.02}
+    UseExp;   {!!.02}
+  var
+    S : string;
+    SLen : Byte absolute S;
+    R : Real;
+    I, Code : Word;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        S := efEditSt^;
+        FixRealPrim(S, False);
+        Val(S, R, Code);
+        if Code <> 0 then
+          R := BadReal;
+        Real(efVarPtr^) := R;
+      end
+      else begin
+        {try to use regular notation}
+        R := Real(efVarPtr^);
+        if R = BadReal then
+          R := 0;
+        if not LongFlagIsSet(sfFlags, sefSmartExponents) then {!!.02}
+          if Pos(Scientific, efPicture^) <> 0 then            {!!.02}
+            goto UseExp;                                      {!!.02}
+        Str(R:0:efDPlaces, S);
+
+        {trim trailing 0's if appropriate}
+        if Pos(DecimalPt, S) <> 0  then
+          TrimTrailingZeros(S);
+
+        {does it fit?}
+        if SLen > efMaxLen then begin
+UseExp:                                        {!!.02}
+          {won't fit--use scientific notation}
+          Str(R:efMaxLen, S);
+          if LongFlagIsSet(sfFlags, sefSmartExponents) then {!!.02}
+            FixExponent(S);
+          TrimSpacesPrim(S);
+          if SLen > efMaxLen then  {!!.22}
+            SLen := efMaxLen;      {!!.22}
+        end;
+
+        {convert decimal point}
+        I := Pos(DecimalPt, S);
+        if I <> 0 then
+          S[I] := DecimalChar;
+        efEditSt^ := S;
+      end;
+      efSetSemiHidden(Real(efVarPtr^) = BadReal);
+    end;
+  end;
+
+{$IFDEF UseBcd}
+
+  procedure SimpleBcdConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for BCD's}
+  label       {!!.02}
+    UseExp;   {!!.02}
+  var
+    S : string;
+    SLen : Byte absolute S;
+    B : BCD;
+    I, Code : Word;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        S := efEditSt^;
+        FixRealPrim(S, False);
+        ValBCD(S, B, Code);
+        if Code <> 0 then
+          B := BadBcd;
+        BCD(efVarPtr^) := B;
+      end
+      else begin
+        {try to use regular notation}
+        B := BCD(efVarPtr^);
+        if EqualBCD(B, BadBcd) then
+          B := ZeroBcd;
+        if not LongFlagIsSet(sfFlags, sefSmartExponents) then {!!.02}
+          if Pos(Scientific, efPicture^) <> 0 then            {!!.02}
+            goto UseExp;                                      {!!.02}
+        S := StrBCD(B, 0, efDPlaces);
+
+        {trim trailing 0's if appropriate}
+        if Pos(DecimalPt, S) <> 0  then
+          TrimTrailingZeros(S);
+
+        {does it fit?}
+        if SLen > efMaxLen then begin
+UseExp:                                        {!!.02}
+          {won't fit--use scientific notation}
+          S := StrExpBCD(B, efMaxLen);
+          if LongFlagIsSet(sfFlags, sefSmartExponents) then {!!.02}
+            FixExponent(S);
+          TrimSpacesPrim(S);
+          if SLen > efMaxLen then  {!!.22}
+            SLen := efMaxLen;      {!!.22}
+        end;
+
+        {convert decimal point}
+        I := Pos(DecimalPt, S);
+        if I <> 0 then
+          S[I] := DecimalChar;
+        efEditSt^ := S;
+      end;
+      efSetSemiHidden(EqualBCD(BCD(efVarPtr^), BadBcd));
+    end;
+  end;
+
+{$ENDIF}
+
+{$IFOPT N+}
+
+  procedure SimpleExtConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for extendeds}
+  label       {!!.02}
+    UseExp;   {!!.02}
+  var
+    S : string;
+    SLen : Byte absolute S;
+    E : Extended;
+    I, Code : Word;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        S := efEditSt^;
+        FixRealPrim(S, False);
+        Val(S, E, Code);
+        if Code <> 0 then
+          E := BadExt;
+        Extended(efVarPtr^) := E;
+      end
+      else begin
+        {try to use regular notation}
+        E := Extended(efVarPtr^);
+        if E = BadExt then
+          E := 0;
+        if not LongFlagIsSet(sfFlags, sefSmartExponents) then {!!.02}
+          if Pos(Scientific, efPicture^) <> 0 then            {!!.02}
+            goto UseExp;                                      {!!.02}
+        Str(E:0:efDPlaces, S);
+
+        {trim trailing 0's if appropriate}
+        if Pos(DecimalPt, S) <> 0  then
+          TrimTrailingZeros(S);
+
+        {does it fit?}
+        if SLen > efMaxLen then begin
+UseExp:                                        {!!.02}
+          {won't fit--use scientific notation}
+          Str(E:efMaxLen, S);
+          if LongFlagIsSet(sfFlags, sefSmartExponents) then {!!.02}
+            FixExponent(S);
+          TrimSpacesPrim(S);
+          if SLen > efMaxLen then  {!!.22}
+            SLen := efMaxLen;      {!!.22}
+        end;
+
+        {convert decimal point}
+        I := Pos(DecimalPt, S);
+        if I <> 0 then
+          S[I] := DecimalChar;
+        efEditSt^ := S;
+      end;
+      efSetSemiHidden(Extended(efVarPtr^) = BadExt);
+    end;
+  end;
+
+  procedure SimpleDblConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for doubles}
+  label       {!!.02}
+    UseExp;   {!!.02}
+  var
+    S : string;
+    SLen : Byte absolute S;
+    D : Double;
+    I, Code : Word;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        S := efEditSt^;
+        FixRealPrim(S, False);
+        Val(S, D, Code);
+        if Code <> 0 then
+          D := BadDbl;
+        Double(efVarPtr^) := D;
+      end
+      else begin
+        {try to use regular notation}
+        D := Double(efVarPtr^);
+        if D = BadDbl then
+          D := 0;
+        if not LongFlagIsSet(sfFlags, sefSmartExponents) then {!!.02}
+          if Pos(Scientific, efPicture^) <> 0 then            {!!.02}
+            goto UseExp;                                      {!!.02}
+        Str(D:0:efDPlaces, S);
+
+        {trim trailing 0's if appropriate}
+        if Pos(DecimalPt, S) <> 0  then
+          TrimTrailingZeros(S);
+
+        {does it fit?}
+        if SLen > efMaxLen then begin
+UseExp:                                        {!!.02}
+          {won't fit--use scientific notation}
+          Str(D:efMaxLen, S);
+          if LongFlagIsSet(sfFlags, sefSmartExponents) then {!!.02}
+            FixExponent(S);
+          TrimSpacesPrim(S);
+          if SLen > efMaxLen then  {!!.22}
+            SLen := efMaxLen;      {!!.22}
+        end;
+
+        {convert decimal point}
+        I := Pos(DecimalPt, S);
+        if I <> 0 then
+          S[I] := DecimalChar;
+        efEditSt^ := S;
+      end;
+      efSetSemiHidden(Double(efVarPtr^) = BadDbl);
+    end;
+  end;
+
+  procedure SimpleSglConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for singles}
+  label       {!!.02}
+    UseExp;   {!!.02}
+  var
+    S : string;
+    SLen : Byte absolute S;
+    Sg : Single;
+    I, Code : Word;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        S := efEditSt^;
+        FixRealPrim(S, False);
+        Val(S, Sg, Code);
+        if Code <> 0 then
+          Sg := BadSgl;
+        Single(efVarPtr^) := SG;
+      end
+      else begin
+        {try to use regular notation}
+        Sg := Single(efVarPtr^);
+        if Sg = BadSgl then
+          Sg := 0;
+        if not LongFlagIsSet(sfFlags, sefSmartExponents) then {!!.02}
+          if Pos(Scientific, efPicture^) <> 0 then            {!!.02}
+            goto UseExp;                                      {!!.02}
+        Str(Sg:0:efDPlaces, S);
+
+        {trim trailing 0's if appropriate}
+        if Pos(DecimalPt, S) <> 0  then
+          TrimTrailingZeros(S);
+
+        {does it fit?}
+        if SLen > efMaxLen then begin
+UseExp:                                        {!!.02}
+          {won't fit--use scientific notation}
+          Str(Sg:efMaxLen, S);
+          if LongFlagIsSet(sfFlags, sefSmartExponents) then {!!.02}
+            FixExponent(S);
+          TrimSpacesPrim(S);
+          if SLen > efMaxLen then  {!!.22}
+            SLen := efMaxLen;      {!!.22}
+        end;
+
+        {convert decimal point}
+        I := Pos(DecimalPt, S);
+        if I <> 0 then
+          S[I] := DecimalChar;
+        efEditSt^ := S;
+      end;
+      efSetSemiHidden(Single(efVarPtr^) = BadSgl);
+    end;
+  end;
+
+  procedure SimpleCompConversion(EFP : EntryFieldPtr; PostEdit : Boolean);
+    {-Conversion routine for comps}
+  label       {!!.02}
+    UseExp;   {!!.02}
+  var
+    S : string;
+    SLen : Byte absolute S;
+    C : Comp;
+    I, Code : Word;
+  begin
+    with EFP^ do begin
+      if PostEdit then begin
+        S := efEditSt^;
+        FixRealPrim(S, False);
+        Val(S, C, Code);
+        if Code <> 0 then
+          C := BadComp;
+        Comp(efVarPtr^) := C;
+      end
+      else begin
+        {try to use regular notation}
+        C := Comp(efVarPtr^);
+        if C = BadComp then
+          C := 0;
+        if not LongFlagIsSet(sfFlags, sefSmartExponents) then {!!.02}
+          if Pos(Scientific, efPicture^) <> 0 then            {!!.02}
+            goto UseExp;                                      {!!.02}
+        Str(C:0:0, S);
+
+        {does it fit?}
+        if SLen > efMaxLen then begin
+UseExp:                                        {!!.02}
+          {won't fit--use scientific notation}
+          Str(C:efMaxLen, S);
+          if LongFlagIsSet(sfFlags, sefSmartExponents) then {!!.02}
+            FixExponent(S);
+          TrimSpacesPrim(S);
+          if SLen > efMaxLen then  {!!.22}
+            SLen := efMaxLen;      {!!.22}
+        end;
+
+        {convert decimal point}
+        I := Pos(DecimalPt, S);
+        if I <> 0 then
+          S[I] := DecimalChar;
+        efEditSt^ := S;
+      end;
+      efSetSemiHidden(Comp(efVarPtr^) = BadComp);
+    end;
+  end;
+
+{$ENDIF}
+
+  function SimpleValidateChar(EFP : EntryFieldPtr;
+                              var ErrCode : Word;
+                              var ErrorSt : StringPtr) : Boolean;
+    {-Validate a field of type char}
+  var
+    Ch : Char;
+  begin
+    with EFP^ do begin
+      Ch := efEditSt^[1];
+      if (Ch < efRangeLo.rtChar) or (Ch > efRangeHi.rtChar) then begin
+        ErrCode := ecOutOfRange;
+        ErrorSt := @emOutOfRange;
+        SimpleValidateChar := False;
+      end
+      else
+        SimpleValidateChar := True;
+    end;
+  end;
+
+  function SimpleValidateLong(EFP : EntryFieldPtr;
+                              var ErrCode : Word;
+                              var ErrorSt : StringPtr) : Boolean;
+    {-Validate a field of type longint/word/integer/byte/shortint}
+  var
+    L : LongInt;
+  begin
+    SimpleValidateLong := False;
+    with EFP^ do begin
+      {format OK?}
+      if not efStr2Long(efEditSt^, L) then begin
+        ErrCode := ecBadFormat;
+        ErrorSt := @emInvalidNumber;
+      end
+      else if (L < efRangeLo.rtLong) or (L > efRangeHi.rtLong) then begin
+        ErrCode := ecOutOfRange;
+        ErrorSt := @emOutOfRange;
+      end
+      else
+        SimpleValidateLong := True;
+    end;
+  end;
+
+  function SimpleValidateReal(EFP : EntryFieldPtr;
+                              var ErrCode : Word;
+                              var ErrorSt : StringPtr) : Boolean;
+    {-Validate a field of type real}
+  var
+    R : Real;
+    S : string[80];
+    Code : Word;
+  begin
+    SimpleValidateReal := False;
+    with EFP^ do begin
+      {convert efEditSt^ to a real}
+      S := efEditSt^;
+      FixRealPrim(S, True);
+      Val(S, R, Code);
+
+      {format OK?}
+      if Code <> 0 then begin
+        ErrCode := ecBadFormat;
+        ErrorSt := @emInvalidNumber;
+      end
+      else if (R < efRangeLo.rtReal) or (R > efRangeHi.rtReal) then begin
+        ErrCode := ecOutOfRange;
+        ErrorSt := @emOutOfRange;
+      end
+      else
+        SimpleValidateReal := True;
+    end;
+  end;
+
+{$IFDEF UseBcd}
+
+  function SimpleValidateBcd(EFP : EntryFieldPtr;
+                             var ErrCode : Word;
+                             var ErrorSt : StringPtr) : Boolean;
+    {-Validate a field of type BCD}
+  var
+    B : BCD;
+    S : string[80];
+    Code : Word;
+  begin
+    SimpleValidateBcd := False;
+    with EFP^ do begin
+      {convert efEditSt^ to a BCD}
+      S := efEditSt^;
+      FixRealPrim(S, True);
+      ValBcd(S, B, Code);
+
+      {format OK?}
+      if Code <> 0 then begin
+        ErrCode := ecBadFormat;
+        ErrorSt := @emInvalidNumber;
+      end
+      else if LessBCD(B, efRangeLo.rtBCD) or GreaterBCD(B, efRangeHi.rtBCD) then begin
+        ErrCode := ecOutOfRange;
+        ErrorSt := @emOutOfRange;
+      end
+      else
+        SimpleValidateBcd := True;
+    end;
+  end;
+
+{$ENDIF}
+
+{$IFOPT N+}
+
+  function SimpleValidateExt(EFP : EntryFieldPtr;
+                             var ErrCode : Word;
+                             var ErrorSt : StringPtr) : Boolean;
+    {-Validate a field of type extended}
+  var
+    E : Extended;
+    S : string[80];
+    Code : Word;
+  begin
+    SimpleValidateExt := False;
+    with EFP^ do begin
+      {convert efEditSt^ to an extended}
+      S := efEditSt^;
+      FixRealPrim(S, True);
+      Val(S, E, Code);
+
+      {format OK?}
+      if Code <> 0 then begin
+        ErrCode := ecBadFormat;
+        ErrorSt := @emInvalidNumber;
+      end
+      else if (E < efRangeLo.rtExt) or (E > efRangeHi.rtExt) then begin
+        ErrCode := ecOutOfRange;
+        ErrorSt := @emOutOfRange;
+      end
+      else
+        SimpleValidateExt := True;
+    end;
+  end;
+
+{$ENDIF}
+
+  {--------------- validation routines ----------------}
+
+  function ValidateSubfields(SubfieldMask : string;
+                             EFP : EntryFieldPtr;
+                             var ErrCode : Word;
+                             var ErrorSt : StringPtr) : Boolean;
+    {-Validate that subfields in a string meet the requirements of SubfieldMask.
+      Note: This is NOT a regular validation routine. It should be called only
+      by a higher-level validation routine that has a SubfieldMask to give it.}
+  var
+    I : Word;
+    PFlags : PictureFlags;
+    Ch : Char;
+
+    function SubFieldHasBlanks(var S : string; I : Word) : Boolean;
+      {-Return true if the subfield that contains index I has any blanks}
+    var
+      Start, Stop, J : Word;
+    begin
+      Start := I;
+      while (Start > 1) and PFlags[Start-1] do
+        Dec(Start);
+      Stop := I;
+      while PFlags[Stop+1] do
+        Inc(Stop);
+      for J := Start to Stop do
+        if S[J] = ' ' then begin
+          SubFieldHasBlanks := True;
+          Exit;
+        end;
+      SubFieldHasBlanks := False;
+    end;
+
+    function WholeFieldIsBlank(var S : string) : Boolean;
+      {-Return true if an entire field is blank}
+    var
+      Start, Stop, J : Word;
+    begin
+      Start := 1;
+      while not PFlags[Start] do
+        Inc(Start);
+      Stop := Length(SubfieldMask);
+      while not PFlags[Stop] do
+        Dec(Stop);
+      for J := Start to Stop do
+        if PFlags[J] and (S[J] <> ' ') then begin
+          WholeFieldIsBlank := False;
+          Exit;
+        end;
+      WholeFieldIsBlank := True;
+    end;
+
+  begin
+    ValidateSubfields := True;
+    with EFP^ do begin
+      {initialize flags table}
+      InitPictureFlags(PFlags);
+
+      {modify flags table based on SubfieldMask}
+      for I := 1 to Length(SubfieldMask) do
+        case SubfieldMask[I] of
+          ReqdChar, PartialChar, UnlessChar : {no change};
+          else PFlags[I] := False;
+        end;
+
+      {assume failure}
+      ValidateSubfields := False;
+
+      for I := 1 to Length(efPicture^) do
+        if PFlags[I] then begin
+          Ch := efEditSt^[I];
+          case SubfieldMask[I] of
+            ReqdChar :
+              if (Ch = ' ') then begin
+                ErrCode := ecBlanksInField;
+                ErrorSt := @emBlanksInField;
+                Exit;
+              end;
+            PartialChar :
+              if (Ch <> ' ') and SubFieldHasBlanks(efEditSt^, I) then begin
+                ErrCode := ecPartialEntry;
+                ErrorSt := @emPartialEntry;
+                Exit;
+              end;
+            UnlessChar :
+              if (Ch = ' ') and not WholeFieldIsBlank(efEditSt^) then begin
+                ErrCode := ecPartialEntry;
+                ErrorSt := @emPartialEntry;
+                Exit;
+              end;
+          end;
+        end;
+    end;
+
+    {if we get to here we succeeded}
+    ValidateSubfields := True;
+  end;
+
+  function ValidateNoBlanks(EFP : EntryFieldPtr;
+                            var ErrCode : Word;
+                            var ErrorSt : StringPtr) : Boolean;
+    {-Validate that no usable fields in a string contain spaces}
+  var
+    I : Word;
+    PFlags : PictureFlags;
+  begin
+    {assume success}
+    ValidateNoBlanks := True;
+
+    with EFP^ do begin
+      {initialize flags table}
+      InitPictureFlags(PFlags);
+
+      {check for blanks}
+      for I := 1 to Length(efPicture^) do
+        if PFlags[I] and (efEditSt^[I] = ' ') then begin
+          ValidateNoBlanks := False;
+          ErrCode := ecBlanksInField;
+          ErrorSt := @emBlanksInField;
+          Exit;
+        end;
+    end;
+  end;
+
+  function ValidateNotPartial(EFP : EntryFieldPtr;
+                              var ErrCode : Word;
+                              var ErrorSt : StringPtr) : Boolean;
+    {-Validate that no usable fields in a string contain spaces unless all do}
+  var
+    I : Word;
+    PFlags : PictureFlags;
+    BlankIsError : Boolean;
+  begin
+    {assume success}
+    ValidateNotPartial := True;
+
+    with EFP^ do begin
+      {initialize flags table}
+      InitPictureFlags(PFlags);
+
+      {check for blanks}
+      BlankIsError := False;
+      for I := 1 to Length(efPicture^) do
+        if PFlags[I] then
+          if (efEditSt^[I] <> ' ') then
+            BlankIsError := True
+          else if BlankIsError then begin
+            ValidateNotPartial := False;
+            ErrCode := ecPartialEntry;
+            ErrorSt := @emPartialEntry;
+            Exit;
+          end;
+    end;
+  end;
+

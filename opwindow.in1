@@ -1,0 +1,1957 @@
+{*********************************************************}
+{*                  OPWINDOW.IN1 1.30                    *}
+{*     Copyright (c) TurboPower Software 1987, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+{----------------- Miscellaneous utility routines -------------------}
+
+  procedure ClearRect(XL, YL, XH, YH, Attr : Byte; Ch : Char);
+    {-Fill screen rectangle with Ch in attribute Attr}
+    {$IFDEF UseMouse}
+  var
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+    OpCrt.ClearWindow(XL, YL, XH, YH, Ch, Attr);
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+  end;
+
+  function CursorLines(CT : CursorType) : Word;
+    {-Return appropriate scan lines for given cursor type}
+  const                                          {cuNormal, cuFat, cuBlock}
+    TinyLines  : array[cuNormal..cuBlock] of Word = ($0507, $0307, $0007);
+    MonoLines  : array[cuNormal..cuBlock] of Word = ($0B0C, $090C, $000C);
+    ColorLines : array[cuNormal..cuBlock] of Word = ($0607, $0507, $0007);
+  begin
+    case CT of
+      cuHidden, cuUnknown :
+        CursorLines := $2000;
+    else
+      if Hi(LastMode) <> 0 then
+        CursorLines := TinyLines[CT]
+      else if CurrentMode = 7 then
+        CursorLines := MonoLines[CT]
+      else
+        CursorLines := ColorLines[CT];
+    end;
+  end;
+
+  function OnPhysicalScreen : Boolean;
+    {-Return True if video access is currently to physical screen}
+  begin
+    OnPhysicalScreen := (OpCrt.VirtualSegment = OpCrt.VideoSegment);
+  end;
+
+  procedure LimitByte(var Source : Byte; MaxVal : Word); {!!.01}
+    {-Reduce Source to at most MaxVal}
+  begin
+    if Source > MaxVal then
+      Source := MaxVal;
+  end;
+
+{----------------- Most Raw window routines -------------------}
+
+  procedure RawWindow.rwDefaultFrameCoords(var FX1, FY1, FX2, FY2 : Byte);
+    {-Return default frame coordinates}
+  begin
+    if LongFlagIsSet(wFlags, wBordered) then begin
+      {Frame selected}
+      FX1 := wXL-1;
+      FX2 := wXH+1;
+      FY1 := wYL-1;
+      FY2 := wYH+1;
+    end else begin
+      {No frame selected}
+      FX1 := wXL;
+      FX2 := wXH;
+      FY1 := wYL;
+      FY2 := wYH;
+    end;
+  end;
+
+  function RawWindow.rwFrameSetup(FX1, FY1, FX2, FY2 : Byte;
+                                  var wBorder, aBorder : FrameArray;
+                                  var wColors, aColors : ColorSet) : Word;
+    {-Initialize ScreenRect and Frame objects based on frame coords}
+  var
+    X1 : Byte;
+    Y1 : Byte;
+    X2 : Byte;
+    Y2 : Byte;
+  begin
+    {Validate coordinates}
+    if (FX1 < 1) or (FY1 < 1) or
+       (FX2 > ScreenWidth) or (FY2 > ScreenHeight) or {!!.20}
+       (FY1 > FY2) or (FX1 > FX2) then begin          {!!.20}
+      rwFrameSetup := epFatal+ecWinCoordsBad;
+      Exit;
+    end;
+
+    if not LongFlagIsSet(wFlags, wNoCoversBuffer+wCoversOnDemand) then {!!.01}
+      {Allocate covers buffer}
+      if not wCovers.Alloc(FX1, FY1, FX2, FY2) then begin
+        rwFrameSetup := {epFatal+ecOutOfMemory} InitStatus; {!!.13}
+        Exit;
+      end;
+
+    if not wFrame.Init(FX1, FY1, FX2, FY2, wBorder, wColors) then begin
+      rwFrameSetup := InitStatus;
+      Exit;
+    end;
+    if not aFrame.Init(FX1, FY1, FX2, FY2, aBorder, aColors) then begin
+      rwFrameSetup := InitStatus;
+      Exit;
+    end;
+
+    {Get coordinates of region within but not including frame}
+    wFrame.WithinFrameCoords(X1, Y1, X2, Y2);
+
+    {Allocate contents buffer if enabled}
+    if not LongFlagIsSet(wFlags, wSaveContents) then
+      wContents.Init(X1, Y1, X2, Y2, nil)
+    else if not wContents.Alloc(X1, Y1, X2, Y2) then begin
+      wCovers.Done;
+      rwFrameSetup := epFatal+ecOutOfMemory;
+      Exit;
+    end;
+
+    rwFrameSetup := 0;
+  end;
+
+  procedure RawWindow.rwZeroOut;
+    {-Zero out the dynamic data fields of a raw window}
+  begin
+    wCovers.Init(1, 1, 1, 1, nil);
+    wContents.Init(1, 1, 1, 1, nil);
+    wFrame.frZeroOut;
+    aFrame.frZeroOut;
+    wSaveCurrent := nil;
+    wFramePtr := @wFrame; {!!.01}
+    wInitCursor := CursorLines(cuNormal); {!!.01}
+  end;
+
+  constructor RawWindow.Init(X1, Y1, X2, Y2 : Byte);
+    {-Create a window with default options and colors}
+  begin
+    if not RawWindow.InitCustom(X1, Y1, X2, Y2, DefaultColorSet,
+                                DefWindowOptions) then
+      Fail;
+  end;
+
+  constructor RawWindow.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                   var Colors : ColorSet;
+                                   Options : LongInt);
+    {-Create a window with custom options}
+  var
+    FX1 : Byte;
+    FY1 : Byte;
+    FX2 : Byte;
+    FY2 : Byte;
+    Status : Word;
+    Border : FrameArray;
+  begin
+    rwZeroOut;
+    wFlags := 0; {!!.03}
+    if not AbstractWindow.Init(X1, Y1, X2, Y2) then
+      Fail;
+
+    if (X1 < 1) or (Y1 < 1) or (X2 > ScreenWidth) or (Y2 > ScreenHeight)
+    then begin
+      Done;
+      InitStatus := epFatal+ecWinCoordsBad;
+      Fail;
+    end;
+
+    {$IFDEF UseAdjustableWindows}
+    wMaxW := ScreenWidth;
+    wMaxH := ScreenHeight;
+    wMaxXH := ScreenWidth;
+    wMaxYH := ScreenHeight;
+    {$ENDIF}
+    wScrWidth := ScreenWidth;
+    wScrHeight := ScreenHeight;
+
+    wTextColor := Colors.TextColor;
+    wTextMono := Colors.TextMono;
+    wFlags := Options;
+    wBackChar := DefBackChar;
+    wRes := 0;
+    wFramePos := frOutsideFrame;
+    wHotCode := hsNone;
+    wUserVal := 0;
+    wUserData := 0; {!!.03}
+
+    {Compute size of region to save}
+    rwDefaultFrameCoords(FX1, FY1, FX2, FY2);
+
+    {Pick default border}
+    if LongFlagIsSet(wFlags, wBordered) then
+      Border := DefWindowFrame
+    else
+      Border := NoWindowFrame;
+
+    {Initialize ScreenRect and Frame objects based on frame coordinates}
+    Status := rwFrameSetup(FX1, FY1, FX2, FY2,
+                           Border, Border, Colors, Colors);
+    if Status <> 0 then begin
+      Done;
+      InitStatus := epFatal+(Status mod 10000);
+      Fail;
+    end;
+
+    {Initialize cursor}
+    wCursor := DefCursor;
+    wCursorX := wXL;
+    wCursorY := wYL;
+
+    {$IFDEF UseMouse}
+    if MouseInstalled then begin
+      wMouseCurX := 1;
+      wMouseCurY := 1;
+      wMouseCurOn := OpMouse.MouseCursorOn;
+    end;
+    {$ELSE}
+    FillChar(wDummyArray, SizeOf(wDummyArray), 0);
+    {$ENDIF}
+
+    {Initialize open and close routines}
+    EnableNormalOpen;
+  end;
+
+  constructor RawWindow.wCopy(var W : RawWindow);
+    {-Initialize a window from another one, making a unique copy of
+      all dynamic structures}
+  var
+    X1 : Byte;
+    Y1 : Byte;
+    X2 : Byte;
+    Y2 : Byte;
+  begin
+    {Copy static data fields}
+    Self := W;
+    {Zero out dynamic ones}
+    rwZeroOut;
+
+    Coordinates(X1, Y1, X2, Y2);
+    if not AbstractWindow.Init(X1, Y1, X2, Y2) then
+      Fail;
+
+    {Allocate covers buffer}
+    if not LongFlagIsSet(wFlags, wNoCoversBuffer+wCoversOnDemand) then {!!.01}
+      with wFrame do
+        if not wCovers.Alloc(frXL, frYL, frXH, frYH) then begin
+          Done;
+          InitStatus := epFatal+ecOutOfMemory;
+          Fail;
+        end;
+
+    {Get coordinates of region within but not including frame}
+    W.wFrame.WithinFrameCoords(X1, Y1, X2, Y2);
+
+    {Allocate contents buffer if enabled}
+    if not LongFlagIsSet(wFlags, wSaveContents) then
+      wContents.Init(X1, Y1, X2, Y2, nil)
+    else if not wContents.Alloc(X1, Y1, X2, Y2) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end else if W.wContents.HaveContents then
+      {Copy the existing buffer}
+      move(W.wContents.srBufPtr^, wContents.srBufPtr^, wContents.BufSize);
+
+    {Copy frames}
+    if not wFrame.fCopy(W.wFrame) or not aFrame.fCopy(W.aFrame) then begin
+      Done;
+      InitStatus := epFatal+(RawError mod 10000); {!!.01}
+      Fail;
+    end;
+
+    {New window is not active even if the original is}
+    ClearLongFlag(wFlags, wActive);
+    ClearErrors;
+  end;
+
+  procedure RawWindow.rwDone;
+    {-Dispose of a raw window}
+  begin
+    aFrame.Done;
+    wFrame.Done;
+    wContents.Done;
+    wCovers.Done;
+  end;
+
+  destructor RawWindow.Done;
+    {-Destroy a window}
+  begin
+    if IsActive then
+      Erase;
+    rwDone;
+    AbstractWindow.Done;
+  end;
+
+  procedure RawWindow.AdjustFrameCoords(X1, Y1, X2, Y2 : Byte);
+    {-Establish new frame coordinates, only when window is inactive}
+  var
+    wBorder : FrameArray;
+    aBorder : FrameArray;
+    wColors : ColorSet;
+    aColors : ColorSet;
+    Status : Word;
+  begin
+    {Disallow if window currently visible}
+    if isActive then begin
+      Error(epNonFatal+ecWinIsActive);
+      Exit;
+    end;
+
+    {Save fields of existing frames that we must maintain}
+    wBorder := wFrame.frChars;
+    aBorder := aFrame.frChars;
+    wFrame.frGetColors(wColors);
+    aFrame.frGetColors(aColors);
+
+    {Undo existing buffers and frame customization}
+    rwDone;
+
+    {Initialize ScreenRect and Frame objects based on frame coordinates}
+    Status := rwFrameSetup(X1, Y1, X2, Y2,
+                           wBorder, aBorder, wColors, aColors);
+    if Status <> 0 then
+      Error(Status);
+  end;
+
+  procedure RawWindow.DeltaAdjustFrame(dX1, dY1, dX2, dY2 : Integer);
+    {-Change frame coordinates of an inactive window.
+      Reallocates wCovers buffer but changes nothing else}
+  var
+    X1 : Word;
+    Y1 : Word;
+    X2 : Word;
+    Y2 : Word;
+  begin
+    {Disallow if window currently visible}
+    if isActive then begin
+      Error(epNonFatal+ecWinIsActive);
+      Exit;
+    end;
+
+    {Avoid unnecessary work}
+    if (dX1 = 0) and (dY1 = 0) and (dX2 = 0) and (dY2 = 0) then
+      Exit;
+
+    with wFrame do begin
+      X1 := frXL+dX1;
+      Y1 := frYL+dY1;
+      X2 := frXH+dX2;
+      Y2 := frYH+dY2;
+    end;
+
+    {Validate coordinates}
+    if (X1 < 1) or (Y1 < 1) or (X2 > ScreenWidth) or (Y2 > ScreenHeight) or
+      (X1 > X2) or (Y1 > Y2) then begin
+      Error(epNonFatal+ecWinCoordsBad);
+      Exit;
+    end;
+
+    {Undo existing buffer}
+    wCovers.Done;
+
+    if not LongFlagIsSet(wFlags, wNoCoversBuffer+wCoversOnDemand) then {!!.01}
+      {Allocate covers buffer}
+      if not wCovers.Alloc(X1, Y1, X2, Y2) then begin
+        Error(epFatal+ecOutOfMemory);
+        Exit;
+      end;
+
+    with wFrame do begin
+      frXL := X1;
+      frYL := Y1;
+      frXH := X2;
+      frYH := Y2;
+    end;
+    with aFrame do begin
+      frXL := X1;
+      frYL := Y1;
+      frXH := X2;
+      frYH := Y2;
+    end;
+  end;
+
+  {$IFDEF UseAdjustableWindows}
+  procedure RawWindow.SetSizeLimits(MinW, MinH, MaxW, MaxH : Byte);
+    {-Set limits for sizing}
+  begin
+    AbstractWindow.SetSizeLimits(MinW, MinH, MaxW, MaxH);
+  end;
+
+  procedure RawWindow.SetPosLimits(MinX, MinY, MaxX, MaxY : Byte);
+    {-Set limits for moving and drawing}
+  begin
+    AbstractWindow.SetPosLimits(MinX, MinY, MaxX, MaxY);
+    wFrame.SetClipLimits(MinX, MinY, MaxX, MaxY);
+    aFrame.SetClipLimits(MinX, MinY, MaxX, MaxY);
+  end;
+
+  procedure RawWindow.SetFrameLimits(MinW, MinH, MaxW, MaxH : Byte);
+    {-Set limits for sizing of frame}
+  begin
+    wFrame.SetSizeLimits(MinW, MinH, MaxW, MaxH);
+    aFrame.SetSizeLimits(MinW, MinH, MaxW, MaxH);
+  end;
+
+  procedure RawWindow.rwUpdateWindowLimits(DX, DY : Integer); {!!.01}
+    {-Set new sizing limits for a window}
+  begin
+    SetSizeLimits(wMinW, wMinH, wMaxW+DX, wMaxH+DY);
+    SetPosLimits(wMinXL, wMinYL, wMaxXH+DX, wMaxYH+DY);
+    with wFrame do
+      SetSizeLimits(frMinW, frMinH, frMaxW+DX, frMaxH+DY);
+    with aFrame do
+      SetSizeLimits(frMinW, frMinH, frMaxW+DX, frMaxH+DY);
+  end;
+
+  {!!.11} {Modified to account for position limits}
+  function WindowAdjusted(X1, Y1, X2, Y2 : Byte;
+                          var DX1, DY1, DX2, DY2 : Integer;
+                          WPtr : RawWindowPtr) : Boolean;
+    {-Compute needed deltas in coordinates, returning True if adjustment needed}
+  var
+    nX1 : Integer;
+    nX2 : Integer;
+    nY1 : Integer;
+    nY2 : Integer;
+  begin
+    WindowAdjusted := False;
+    nX1 := X1;
+    nX2 := X2;
+    nY1 := Y1;
+    nY2 := Y2;
+    if nX2 > {ScreenWidth} WPtr^.wMaxXH then begin  {!!.11}
+      {Shift window left}
+      nX2 := {ScreenWidth} WPtr^.wMaxXH;            {!!.11}
+      nX1 := nX2-X2+nX1;
+      if nX1 < {1} WPtr^.wMinXL then                {!!.11}
+        {Shrink window}
+        nX1 := {1} WPtr^.wMinXL;                    {!!.11}
+      {Assumes that minimum width is met}
+      WindowAdjusted := True;
+    end;
+    if nY2 > {ScreenHeight} WPtr^.wMaxYH then begin {!!.11}
+      {Shift window up}
+      nY2 := {ScreenHeight} WPtr^.wMaxYH;           {!!.11}
+      nY1 := nY2-Y2+nY1;
+      if nY1 < {1} WPtr^.wMinYL then                {!!.11}
+        {Shrink window}
+        nY1 := {1} WPtr^.wMinYL;                    {!!.11}
+      {Assumes that minimum height is met}
+      WindowAdjusted := True;
+    end;
+    DX1 := nX1-X1;
+    DY1 := nY1-Y1;
+    DX2 := nX2-X2;
+    DY2 := nY2-Y2;
+  end;
+
+  procedure RawWindow.UpdateScreenSize;
+    {-Update window size, position, and limits for current screen size}
+  var
+    DX : Integer;      {Change in screen size}
+    DY : Integer;
+    DX1 : Integer;     {Change in actual window corner positions}
+    DX2 : Integer;
+    DY1 : Integer;
+    DY2 : Integer;
+    X1 : Byte;         {Original window extent}
+    X2 : Byte;
+    Y1 : Byte;
+    Y2 : Byte;
+    Status : Word;     {Status of AdjustWindow call}
+  begin
+    {Did screen size change?}
+    if (ScreenWidth = wScrWidth) and (ScreenHeight = wScrHeight) then
+      Exit;
+
+    if IsActive and not {RawWindow.}IsCurrent then begin {!!.01} {!!.03}
+      {Can't do this for active, non-current windows}
+      Error(epNonFatal+ecWinNotCurrent);
+      Exit;
+    end;
+
+    {Get the extent of the window, including frame but not shadows}
+    Extent(X1, Y1, X2, Y2, False);
+
+    if not wOptionsAreOn(wResizeable) then
+      {Assure window can be resized if needed}
+      if (X2-X1 >= ScreenWidth) or (Y2-Y1 >= ScreenHeight) then begin
+        Error(epNonFatal+ecWinCoordsBad);
+        Exit;
+      end;
+
+    {Update window limits}
+    DX := Integer(ScreenWidth)-wScrWidth;
+    DY := Integer(ScreenHeight)-wScrHeight;
+    rwUpdateWindowLimits(DX, DY); {!!.01}
+
+    {If window is zoomed, take care of prezoom coordinates}
+    if IsZoomed then
+      if WindowAdjusted(wzXL+X1-wXL, wzYL+Y1-wYL, wzXH+X2-wXH, wzYH+Y2-wYH,
+                        DX1, DY1, DX2, DY2, @Self) then begin {!!.11}
+        inc(wzXL, DX1);
+        inc(wzYL, DY1);
+        inc(wzXH, DX2);
+        inc(wzYH, DY2);
+      end;
+
+    {Update actual window position and size if needed}
+    if WindowAdjusted(X1, Y1, X2, Y2, DX1, DY1, DX2, DY2,
+                      @Self) then begin {!!.11}
+      ClearErrors; {!!.01}
+      AdjustWindow(wXL+DX1, wYL+DY1, wXH+DX2, wYH+DY2);
+      Status := RawError; {!!.01}
+      if Status <> 0 then begin
+        {Got an error. It's now fatal since window coords are all messed up}
+        if Status div 10000 <> etFatal then {!!.01}
+          Error(epFatal+(Status mod 10000));
+        Exit;
+      end;
+    end;
+
+    {Store current screen size}
+    wScrWidth := ScreenWidth;
+    wScrHeight := ScreenHeight;
+  end;
+  {$ENDIF}
+
+  procedure RawWindow.EnableExplosions(StageDelay : Word);
+    {-Enable exploding windows}
+  begin
+    wStageDelay := StageDelay;
+    wOpenProc := ExplodeOpenProc;
+    wCloseProc := ExplodeCloseProc;
+  end;
+
+  procedure RawWindow.EnableAlternateOpen(OpenProc, CloseProc : RawWindowProc;
+                                          StageDelay : Word);
+    {-Enable alternate draw and erase routine}
+  begin
+    wStageDelay := StageDelay;
+    wOpenProc := OpenProc;
+    wCloseProc := CloseProc;
+  end;
+
+  procedure RawWindow.EnableNormalOpen;
+    {-Disable exploding windows or alternate draw routines}
+  begin
+    wStageDelay := 0;
+    wOpenProc := EmptyOpenCloseProc;
+    wCloseProc := EmptyOpenCloseProc;
+  end;
+
+  procedure RawWindow.rwSetBordered(IsOn : Boolean);
+    {-Set the bordered flag and the default frame characters}
+  begin
+    if IsOn then begin
+      SetLongFlag(wFlags, wBordered);
+      wFrame.SetFrameType(DefWindowFrame);
+      aFrame.SetFrameType(DefWindowFrame);
+    end else begin
+      ClearLongFlag(wFlags, wBordered);
+      wFrame.SetFrameType(NoWindowFrame);
+      aFrame.SetFrameType(NoWindowFrame);
+    end;
+  end;
+
+  procedure RawWindow.wOptionsOn(OptionCodes : LongInt);
+    {-Turn options on}
+  var
+    X1 : Byte;
+    Y1 : Byte;
+    X2 : Byte;
+    Y2 : Byte;
+  begin
+    {Disallow if window currently visible}
+    if isActive then begin
+      Error(epNonFatal+ecWinIsActive);
+      Exit;
+    end;
+
+    {Frame flag}
+    if LongFlagIsSet(OptionCodes, wBordered) then
+      if not LongFlagIsSet(wFlags, wBordered) then begin
+        ClearErrors; {!!.01}
+        {Turn on frame}
+        with wFrame do begin
+          X1 := frXL;
+          Y1 := frYL;
+          X2 := frXH;
+          Y2 := frYH;
+        end;
+        rwSetBordered(True);
+        AdjustFrameCoords(X1-1, Y1-1, X2+1, Y2+1);
+        if RawError <> 0 then begin {!!.01}
+          {Go back to no frame}
+          rwSetBordered(False);
+          AdjustFrameCoords(X1, Y1, X2, Y2);
+          Exit;
+        end;
+        {Contents buffer is invalid now}
+        wContents.StoreContents(False);
+      end;
+
+    {Clear flag}
+    if LongFlagIsSet(OptionCodes, wClear) then begin
+      SetLongFlag(wFlags, wClear);
+      {Assure clear works the next time window is displayed}
+      wContents.StoreContents(False);
+    end;
+
+    {SaveContents flag}
+    if LongFlagIsSet(OptionCodes, wSaveContents) then
+      if not LongFlagIsSet(wFlags, wSaveContents) then begin
+        wContents.Done;
+        wFrame.WithinFrameCoords(X1, Y1, X2, Y2);
+        if wContents.Alloc(X1, Y1, X2, Y2)  then
+          {Succeeded. Set flag to save contents}
+          SetLongFlag(wFlags, wSaveContents)
+        else begin
+          {Failed. Go back to not saving contents}
+          wContents.Init(X1, Y1, X2, Y2, nil);
+          Error(epFatal+ecOutOfMemory);
+          Exit;
+        end;
+      end;
+
+    {Covers buffer flags} {!!.01}
+    if LongFlagIsSet(OptionCodes, wNoCoversBuffer+wCoversOnDemand) then begin
+      if not LongFlagIsSet(wFlags, wNoCoversBuffer+wCoversOnDemand) then
+        {Dispose of existing covers buffer}
+        wCovers.Done;
+      wFlags := wFlags or (OptionCodes and (wNoCoversBuffer+wCoversOnDemand));
+    end;
+
+    {Set straight flags}
+    wFlags := wFlags or (OptionCodes and TogWindowOptions);
+  end;
+
+  procedure RawWindow.wOptionsOff(OptionCodes : LongInt);
+    {-Turn options off}
+  var
+    X1 : Byte;
+    X2 : Byte;
+    Y1 : Byte;
+    Y2 : Byte;
+    NoCoversOff : Boolean;
+    DemandCoversOff : Boolean;
+  begin
+    {Disallow if window currently visible}
+    if isActive then begin
+      Error(epNonFatal+ecWinIsActive);
+      Exit;
+    end;
+
+    {Frame flag}
+    if LongFlagIsSet(OptionCodes, wBordered) then
+      if LongFlagIsSet(wFlags, wBordered) then begin
+        ClearErrors; {!!.01}
+        {Turn off frame}
+        rwSetBordered(False);
+        with wFrame do
+          AdjustFrameCoords(frXL+1, frYL+1, frXH-1, frYH-1);
+        if RawError <> 0 then {!!.01}
+          {Invalid coordinates without frame?}
+          Exit;
+        {Contents buffer is invalid now}
+        wContents.StoreContents(False);
+      end;
+
+    {Clear flag}
+    if LongFlagIsSet(OptionCodes, wClear) then
+      ClearLongFlag(wFlags, wClear);
+
+    {SaveContents flag}
+    if LongFlagIsSet(OptionCodes, wSaveContents) then
+      if LongFlagIsSet(wFlags, wSaveContents) then begin
+        wContents.Done;
+        wFrame.WithinFrameCoords(X1, Y1, X2, Y2);
+        wContents.Init(X1, Y1, X2, Y2, nil);
+        ClearLongFlag(wFlags, wSaveContents);
+      end;
+
+    {Covers buffer flags} {!!.01}
+    NoCoversOff := LongFlagIsSet(OptionCodes, wNoCoversBuffer);
+    DemandCoversOff := LongFlagIsSet(OptionCodes, wCoversOnDemand);
+    if NoCoversOff or DemandCoversOff then begin
+      {One or the other is set}
+      if NoCoversOff and DemandCoversOff then
+        if LongFlagIsSet(wFlags, wNoCoversBuffer+wCoversOnDemand) then
+          {Need to allocate a covers buffer}
+          with wFrame do
+            if not wCovers.Alloc(frXL, frYL, frXH, frYH) then begin
+              Error(epFatal+ecOutOfMemory);
+              Exit;
+            end;
+      wFlags := wFlags and not (OptionCodes and (wNoCoversBuffer+wCoversOnDemand));
+    end;
+
+    {Clear straight flags}
+    wFlags := wFlags and not (OptionCodes and TogWindowOptions);
+  end;
+
+  procedure RawWindow.SetTextAttr(Color, Mono : Byte);
+    {-Set attributes for normal window text}
+  begin
+    wTextColor := Color;
+    wTextMono := MapMono(Color, Mono);
+  end;
+
+  procedure RawWindow.SetBackChar(BackChar : Char);
+    {-Set background character}
+  begin
+    wBackChar := BackChar;
+  end;
+
+  function RawWindow.wOptionsAreOn(OptionCodes : LongInt) : Boolean;
+    {-Return true if all specified options are on}
+  begin
+    wOptionsAreOn := (wFlags and OptionCodes = OptionCodes);
+  end;
+
+  procedure RawWindow.rwClear;
+    {-Clear active window without positioning cursor}
+  begin
+    ClearRect(wXL, wYL, wXH, wYH,
+              ColorMono(wTextColor, wTextMono), wBackChar);
+  end;
+
+  procedure RawWindow.Clear;
+    {-Clear the window to wTextColor and wBackChar}
+  begin
+    if not {RawWindow.}IsCurrent then begin {!!.01} {!!.03}
+      Error(epNonFatal+ecWinNotCurrent);
+      Exit;
+    end;
+    rwClear;
+    wGotoXY(1, 1);
+  end;
+
+  procedure RawWindow.rwClearContents;
+    {-Clear contents of window without positioning cursor}
+  var
+    X1 : Byte;
+    Y1 : Byte;
+    X2 : Byte;
+    Y2 : Byte;
+  begin
+    {Get coordinates of contents rectangle}
+    wContents.Coordinates(X1, Y1, X2, Y2);
+    ClearRect(X1, Y1, X2, Y2,
+              ColorMono(wTextColor, wTextMono), wBackChar);
+  end;
+
+  procedure RawWindow.ClearContents;
+    {-Clear region within active frame with wTextXXXX and wBackChar}
+  begin
+    if not {RawWindow.}IsCurrent then begin {!!.01} {!!.03}
+      Error(epNonFatal+ecWinNotCurrent);
+      Exit;
+    end;
+    rwClearContents;
+    wGotoXY(1, 1);
+  end;
+
+  procedure RawWindow.rwSaveContents;
+    {-Save current window contents in the contents buffer}
+  begin
+    if LongFlagIsSet(wFlags, wSaveContents) then begin
+      {Save contents of window}
+      wContents.CopyFromScreen;
+      {Indicate that wContents field is initialized}
+      wContents.StoreContents(True);
+    end;
+  end;
+
+  procedure RawWindow.SaveContents;
+    {-Save current window contents in the contents buffer}
+  begin
+    if not IsActive then begin
+      Error(epNonFatal+ecWinNotActive);
+      Exit;
+    end;
+    rwSaveContents;
+  end;
+
+  function RawWindow.rwClassifyCursorType : CursorType;
+    {-Classify cursor type based on scan lines}
+  begin
+    rwClassifyCursorType := OpCrt.ClassifyCursorType;
+  end;
+
+  procedure RawWindow.rwSaveWindowState;
+    {-Save cursor position and contents}
+  var
+    CT : CursorType;
+    {$IFDEF UseMouse}
+    Status : ButtonStatus;
+    {$ENDIF}
+  begin
+    {Save existing cursor position}
+    wCursorX := OpCrt.WhereXAbs;
+    wCursorY := OpCrt.WhereYAbs;
+
+    {Update cursor shape if possible}
+    if OnPhysicalScreen then begin
+      CT := rwClassifyCursorType;
+      if CT <> cuUnknown then
+        wCursor := CT;
+    end;
+
+    {$IFDEF UseMouse}
+    if MouseInstalled then
+      {Save mouse state}
+      if LongFlagIsSet(wFlags, wSetMouse) then begin
+        OpMouse.MouseWhereXY(wMouseCurX, wMouseCurY, Status);
+        wMouseCurOn := OpMouse.MouseCursorOn;
+      end;
+    {$ENDIF}
+
+    {SaveContents;}        {!!.01}
+  end;
+
+  procedure RawWindow.UpdateContents;
+    {-Update currently displayed window}
+  begin
+    {This method must be overridden by descendants that set the
+     wUserContents flag}
+  end;
+
+  procedure RawWindow.rwDraw; {!!.01}
+    {-Static version of raw window draw}
+  var
+    WasCurrent : Boolean;
+    {$IFDEF UseMouse}
+    MStatus : ButtonStatus;
+    {$ENDIF}
+    CursorSL : Word;
+  begin
+    if not IsActive then begin
+      {Save existing OpCrt screen state}
+      OpCrt.GetCursorState(wInitXY, CursorSL);
+      if OnPhysicalScreen then
+        wInitCursor := CursorSL
+      else if CurrentWindow <> nil then
+        wInitCursor := CursorLines(CurrentWindow^.wCursor);
+      {else}                                    {!!.01}
+        {wInitCursor := CursorLines(cuNormal);} {!!.01}
+
+      wWindMin := OpCrt.WindMin;
+      wWindMax := OpCrt.WindMax;
+      wTextAttr := OpCrt.TextAttr;
+
+      {$IFDEF UseMouse}
+      if MouseInstalled then
+        {Save existing mouse state}
+        if LongFlagIsSet(wFlags, wSetMouse+wFullMouseWindow) then begin
+          wMouseXL := OpMouse.MouseXLo+1;
+          wMouseYL := OpMouse.MouseYLo+1;
+          wMouseXH := OpMouse.MouseXHi;
+          wMouseYH := OpMouse.MouseYHi;
+          OpMouse.MouseWhereXY(wMInitX, wMInitY, MStatus);
+          wMCurOn := OpMouse.MouseCursorOn;
+        end;
+      {$ENDIF}
+    end;
+
+    {Deactivate current window if applicable}
+    WasCurrent := False;
+    if CurrentWindow <> nil then
+      if RawWindow.IsCurrent then {!!.01}
+        WasCurrent := True
+      else
+        with CurrentWindow^ do begin
+          rwSaveWindowState;
+          rwSaveContents;          {!!.01}
+          MarkNotCurrent;          {!!.03} {Moved up}
+          if LongFlagIsSet(wFlags, wAltFrame) then begin
+            {$IFDEF UseShadows}
+            wFrame.EraseShadows;
+            {$ENDIF}
+            aFrame.Draw;
+          end;
+        end;
+
+    {if OnPhysicalScreen then} {!!.01}
+      {Turn off cursor while the work goes on}
+      OpCrt.HiddenCursor;
+
+    {Set new OpCrt screen state}
+    OpCrt.Window(wXL, wYL, wXH, wYH);
+    OpCrt.TextAttr := ColorMono(wTextColor, wTextMono);
+    OpCrt.GotoXYAbs(wCursorX, wCursorY); {!!.03} {Moved up}
+
+    if not WasCurrent and not IsActive then
+      {Save window that was current at the time this one was drawn}
+      wSaveCurrent := CurrentWindow;
+
+    {Mark this window as current}
+    MarkCurrent;
+
+    if not IsActive then begin
+      {Save underlying screen if wCovers feature is active}          {!!.01}
+      if not LongFlagIsSet(wFlags, wNoCoversBuffer) then begin       {!!.01}
+        if LongFlagIsSet(wFlags, wCoversOnDemand) then               {!!.01}
+          {Allocate the covers buffer now}                           {!!.01}
+          with wFrame do                                             {!!.01}
+            if not wCovers.Alloc(frXL, frYL, frXH, frYH) then begin  {!!.01}
+              Error(epFatal+ecOutOfMemory);                          {!!.01}
+              Exit;                                                  {!!.01}
+            end;                                                     {!!.01}
+        wCovers.CopyFromScreen;
+      end;                                                           {!!.01}
+
+      {Set flag indicating window is active}
+      SetLongFlag(wFlags, wActive);
+
+      {Call open procedure (for an explosion perhaps)}
+      if OnPhysicalScreen then
+        wOpenProc(@Self);
+
+      if LongFlagIsSet(wFlags, wSaveContents) and wContents.HaveContents then
+        {Restore previous contents if available}
+        wContents.CopyToScreen
+      else if LongFlagIsSet(wFlags, wClear) then
+        {Clear window if desired}
+        rwClearContents;
+
+      {Draw frame}
+      wFrame.Draw;
+
+    {Activate "and not WasCurrent" again} {!!.02} {!!.01}
+    end else if LongFlagIsSet(wFlags, wAltFrame) {} and not WasCurrent {} then begin
+      {Update the frame}
+      {$IFDEF UseShadows}
+      aFrame.EraseShadows;
+      {$ENDIF}
+      wFrame.Draw;
+    end;
+
+    {!!.12} {Moved up}
+    if OnPhysicalScreen then
+      {Set cursor shape}
+      SetCursor(wCursor);
+
+    {if LongFlagIsSet(wFlags, wUserContents) then} {!!.01}
+      {Let a descendant update its own contents}
+      UpdateContents;
+
+    {$IFDEF UseMouse}
+    if MouseInstalled then
+      {Set mouse window}
+      if LongFlagIsSet(wFlags, wFullMouseWindow) then
+        OpMouse.FullMouseWindow
+      else if LongFlagIsSet(wFlags, wSetMouse) then begin
+        with wFrame do
+          OpMouse.MouseWindow(frXL, frYL, frXH, frYH);
+        OpMouse.MouseGotoXY(wMouseCurX, wMouseCurY);
+        if wMouseCurOn then
+          OpMouse.ShowMouse
+        else
+          OpMouse.HideMouse;
+      end;
+    {$ENDIF}
+  end;
+
+  procedure RawWindow.Draw;
+    {-Draw a raw window}
+  begin
+    rwDraw; {!!.01}
+  end;
+
+  procedure RawWindow.rwSetWindowState; {!!.01}
+    {-Set video window and cursor, mouse window and cursor, and textattr}
+  begin
+    {Set new OpCrt screen state}
+    OpCrt.Window(wXL, wYL, wXH, wYH);
+    OpCrt.TextAttr := ColorMono(wTextColor, wTextMono);
+
+    {Set cursor position}
+    OpCrt.GotoXYAbs(wCursorX, wCursorY);
+
+    {if LongFlagIsSet(wFlags, wUserContents) then} {!!.01}
+      {Let a descendant update its own contents}
+      {UpdateContents;}                            {!!.01}
+
+    {$IFDEF UseMouse}
+    if MouseInstalled then
+      {Set mouse window}
+      if LongFlagIsSet(wFlags, wFullMouseWindow) then
+        OpMouse.FullMouseWindow
+      else if LongFlagIsSet(wFlags, wSetMouse) then begin
+        with wFrame do
+          OpMouse.MouseWindow(frXL, frYL, frXH, frYH);
+        OpMouse.MouseGotoXY(wMouseCurX, wMouseCurY);
+        if wMouseCurOn then
+          OpMouse.ShowMouse
+        else
+          OpMouse.HideMouse;
+      end;
+    {$ENDIF}
+
+    if OnPhysicalScreen then
+      {Set cursor shape}
+      SetCursor(wCursor);
+  end;
+
+  procedure RawWindow.rwErase; {!!.01}
+    {-Static version of raw window erase}
+  var
+    CursorSL : Word;
+    WasCurrent : Boolean;
+    WPtr : RawWindowPtr; {!!.02}
+    LPtr : RawWindowPtr; {!!.02}
+  begin
+    if not IsActive then
+      Exit;
+
+    WasCurrent := RawWindow.IsCurrent; {!!.01}
+    if WasCurrent then begin
+      {Save cursor position and contents}
+      rwSaveWindowState;
+      rwSaveContents;            {!!.01}
+      {if OnPhysicalScreen then} {!!.01}
+        {Turn off cursor while all the work goes on}
+        OpCrt.HiddenCursor;
+    end;
+
+    {$IFDEF UseShadows}
+    {Erase shadow, if any}
+    if not WasCurrent and LongFlagIsSet(wFlags, wAltFrame) then
+      aFrame.EraseShadows
+    else
+      wFrame.EraseShadows;
+    {$ENDIF}
+
+    {$IFDEF UseScrollBars}
+    {Mark sliders invisible}
+    wFrame.ClearSliders;
+    if LongFlagIsSet(wFlags, wAltFrame) then
+      aFrame.ClearSliders;
+    {$ENDIF}
+
+    {Call close procedure}
+    if OnPhysicalScreen then
+      wCloseProc(@Self);
+
+    {Restore underlying screen in case CloseProc didn't}
+    if not LongFlagIsSet(wFlags, wNoCoversBuffer) then begin       {!!.01}
+      wCovers.CopyToScreen;
+      if LongFlagIsSet(wFlags, wCoversOnDemand) then               {!!.01}
+        {Deallocate the covers buffer until window is reactivated} {!!.01}
+        wCovers.Done;                                              {!!.01}
+    end;                                                           {!!.01}
+
+    if WasCurrent then begin
+      {CurrentWindow is now the previously activated window}
+      MarkNotCurrent;
+      CurrentWindow := wSaveCurrent;
+    end
+    {Entire block following is new} {!!.02}
+    else begin
+      {Unlink erased window from chain of active windows}
+      WPtr := CurrentWindow;
+      LPtr := WPtr;
+      while WPtr <> nil do
+        if WPtr = @Self then begin
+          {Unlink erased window}
+          LPtr^.wSaveCurrent := WPtr^.wSaveCurrent;
+          {Force exit from loop}
+          WPtr := nil;
+        end else begin
+          {Save previous window address}
+          LPtr := WPtr;
+          {Check next one}
+          WPtr := WPtr^.wSaveCurrent;
+        end;
+    end;
+
+    {Clear window active flag}
+    ClearLongFlag(wFlags, wActive);
+
+    if WasCurrent then begin             {!!.01} {!!.02}
+      {!!.02} {Following block moved up}
+      {$IFDEF UseMouse}
+      if MouseInstalled then
+        {Restore mouse state}
+        if LongFlagIsSet(wFlags, wSetMouse+wFullMouseWindow) then begin
+          MouseWindow(wMouseXL, wMouseYL, wMouseXH, wMouseYH);
+          OpMouse.MouseGotoXY(wMInitX, wMInitY);
+          if wMCurOn then
+            OpMouse.ShowMouse
+          else
+            OpMouse.HideMouse;
+        end;
+      {$ENDIF}
+
+      if CurrentWindow <> nil then       {!!.01}
+        {Restore the state of the newly current window}  {!!.01}
+        with CurrentWindow^ do begin
+          if LongFlagIsSet(wFlags, wAltFrame) then begin
+            {Update the frame from alternate to main}
+            {$IFDEF UseShadows}
+            aFrame.EraseShadows;
+            {$ENDIF}
+            wFrame.Draw;
+          end;
+
+          {Set video window and cursor, mouse window cursor, and textattr}
+          rwSetWindowState;           {!!.01}
+        end
+
+      else begin                     {!!.01}
+        {Restore OpCrt video state}
+        OpCrt.WindMin := wWindMin;
+        OpCrt.WindMax := wWindMax;
+        OpCrt.TextAttr := wTextAttr;
+
+                            {!!.01}
+        if OnPhysicalScreen {or (TypeOf(Self) = TypeOf(RawWindow))} then
+          {Display physical cursor that was active when this window was displayed}
+          CursorSL := wInitCursor
+        else
+          {Leave cursor hidden for now}
+          CursorSL := $2000;
+        OpCrt.RestoreCursorState(wInitXY, CursorSL);
+      end; {!!.01}
+    end; {!!.02}
+  end;
+
+  procedure RawWindow.Erase;
+    {-Erase a window}
+  begin
+    rwErase; {!!.01}
+  end;
+
+  procedure RawWindow.MarkCurrent;
+    {-Called when window is made current}
+  begin
+    CurrentWindow := @Self;
+  end;
+
+  procedure RawWindow.MarkNotCurrent;
+    {-Called when window is deselected}
+  begin
+  end;
+
+  {$IFDEF UseScrollBars}
+  procedure RawWindow.DrawSlider(Posn : FrameEdgeType; UserVal : LongInt);
+    {-Draw or update the slider}
+  begin
+    {!!.03} {Routine rewritten to better deal with child windows}
+    if IsCurrent then begin
+      {This window or a relative is current}
+      if LongFlagIsSet(wFlags, wAltFrame) and not RawWindow.IsCurrent then begin
+        {Has alternate frame and window not truly current}
+        aFrame.DrawSlider(Posn, UserVal);
+        wFrame.SetSliderValue(Posn, UserVal);
+      end else begin
+        {Window is truly current or doesn't have an alternate frame}
+        wFrame.DrawSlider(Posn, UserVal);
+        if LongFlagIsSet(wFlags, wAltFrame) then
+          aFrame.SetSliderValue(Posn, UserVal);
+      end;
+    end else begin
+      {Neither window nor relative is current}
+      wFrame.SetSliderValue(Posn, UserVal);
+      if LongFlagIsSet(wFlags, wAltFrame) then
+        aFrame.SetSliderValue(Posn, UserVal);
+    end;
+  end;
+
+  procedure RawWindow.EraseSlider(Posn : FrameEdgeType);
+    {-Erase the slider}
+  begin
+    {!!.03} {Routine rewritten to better deal with child windows}
+    if IsCurrent then begin
+      {This window or a relative is current}
+      if LongFlagIsSet(wFlags, wAltFrame) and not RawWindow.IsCurrent then begin
+        {Has alternate frame and window not truly current}
+        aFrame.EraseSlider(Posn);
+        wFrame.ClearSlider(Posn);
+      end else begin
+        {Window is truly current or doesn't have an alternate frame}
+        wFrame.EraseSlider(Posn);
+        if LongFlagIsSet(wFlags, wAltFrame) then
+          aFrame.ClearSlider(Posn);
+      end;
+    end else begin
+      {Neither window nor relative is current}
+      wFrame.ClearSlider(Posn);
+      if LongFlagIsSet(wFlags, wAltFrame) then
+        aFrame.ClearSlider(Posn);
+    end;
+  end;
+
+  function RawWindow.TweakSlider(Posn : FrameEdgeType;
+                                 MousePosn : Byte;
+                                 UserVal : LongInt;
+                                 Step : LongInt) : LongInt;
+    {-Adjust user value until slider exactly matches mouse position}
+  begin
+    with wFrame do
+      if frBars[Posn] <> nil then
+        with frBars[Posn]^ do begin
+          if (MousePosn < sbMinPos+1) or (MousePosn > sbMaxPos-1) then begin
+            Error(epNonFatal+ecWinCoordsBad);
+            Exit;
+          end;
+          if sbMaxUser <= sbMinUser then begin
+            TweakSlider := UserVal;
+            Exit;
+          end;
+          {!!.02} {Remainder of procedure changed}
+          while SliderPosition(UserVal) > MousePosn do
+            dec(UserVal, Step);
+          while SliderPosition(UserVal) < MousePosn do
+            inc(UserVal, Step);
+          if SliderPosition(UserVal) > MousePosn then
+            dec(UserVal, Step);
+          TweakSlider := UserVal;
+        end;
+  end;
+
+  procedure RawWindow.DrawAllSliders(HorizVal, VertVal : LongInt);
+    {-Draw or update all sliders}
+  begin
+    DrawSlider(frTT, HorizVal);
+    DrawSlider(frBB, HorizVal);
+    DrawSlider(frLL, VertVal);
+    DrawSlider(frRR, VertVal);
+  end;
+
+  procedure RawWindow.ChangeScrollBar(Posn : FrameEdgeType;
+                                      MinUser, MaxUser : LongInt);
+    {-Change user range of existing scroll bar}
+  begin
+    {!!.03} {Routine rewritten to better deal with child windows}
+    if IsCurrent then begin
+      {This window or a relative is current}
+      if LongFlagIsSet(wFlags, wAltFrame) and not RawWindow.IsCurrent then begin
+        {Has alternate frame and window not truly current}
+        aFrame.ChangeScrollBar(Posn, MinUser, MaxUser, True);
+        wFrame.ChangeScrollBar(Posn, MinUser, MaxUser, False);
+      end else begin
+        {Window is truly current or doesn't have an alternate frame}
+        wFrame.ChangeScrollBar(Posn, MinUser, MaxUser, True);
+        if LongFlagIsSet(wFlags, wAltFrame) then
+          aFrame.ChangeScrollBar(Posn, MinUser, MaxUser, False);
+      end;
+    end else begin
+      {Neither window nor relative is current}
+      wFrame.ChangeScrollBar(Posn, MinUser, MaxUser, False);
+      if LongFlagIsSet(wFlags, wAltFrame) then
+        aFrame.ChangeScrollBar(Posn, MinUser, MaxUser, False);
+    end;
+  end;
+
+  procedure RawWindow.ChangeAllScrollBars(MinHoriz, MaxHoriz : LongInt;
+                                          MinVert, MaxVert : LongInt);
+    {-Change user ranges of existing scroll bars}
+  begin
+    ChangeScrollBar(frTT, MinHoriz, MaxHoriz);
+    ChangeScrollBar(frBB, MinHoriz, MaxHoriz);
+    ChangeScrollBar(frLL, MinVert, MaxVert);
+    ChangeScrollBar(frRR, MinVert, MaxVert);
+  end;
+  {$ENDIF}
+
+  function RawWindow.rwValidMainHeader(Index : Byte) : Boolean; {!!.01}
+    {-Return True if Index is a valid header number and main frame is in place}
+  begin
+    rwValidMainHeader := (Index <> 255) and (wFramePtr = @wFrame);
+  end;
+
+  procedure RawWindow.ChangeHeader(Index : Byte; S : string);
+    {-Change header string, and if window is current, update screen}
+  var
+    SaveRes : Word;
+    Redraw : Boolean;
+  begin
+    wFrame.ChangeHeaderString(Index, S, Redraw);
+    SaveRes := wFrame.GetLastError;
+    if SaveRes = 0 then begin
+      {Update frame if the window is current}
+      if {RawWindow.}IsCurrent then {!!.01} {!!.03}
+        if Redraw then
+          wFrame.UpdateFrame
+        else
+          {Just overwrite existing header}
+          wFrame.DrawHeader(Index);
+    end else
+      Error(SaveRes);
+  end;
+
+  procedure RawWindow.Coordinates(var X1, Y1, X2, Y2 : Byte);
+    {-Return the active coordinates of the window}
+  begin
+    X1 := wXL;
+    X2 := wXH;
+    Y1 := wYL;
+    Y2 := wYH;
+  end;
+
+  procedure ExtentRect(XL, YL, XH, YH : Byte;
+                       var X1, Y1, X2, Y2 : Byte);
+    {-Adjust extent for the effect of a rectangle}
+  begin
+    DoLower(X1, XL);
+    DoLower(Y1, YL);
+    DoRaise(X2, XH);
+    DoRaise(Y2, YH);
+  end;
+
+  procedure ExtentFrame(var Fr : Frame;
+                        var X1, Y1, X2, Y2 : Byte;
+                        IncludeShadows : Boolean);
+    {-Determine the extent of one frame structure}
+  var
+    XL : Byte;
+    YL : Byte;
+    XH : Byte;
+    YH : Byte;
+    He : HeaderPtr;
+    {$IFDEF UseShadows}
+    Sh : ShadowPtr;
+    {$ENDIF}
+  begin
+    with Fr do begin
+      {Account for frame itself}
+      ExtentRect(frXL, frYL, frXH, frYH, X1, Y1, X2, Y2);
+
+      {Account for headers, if any}
+      He := HeaderPtr(frHeaders.Head);
+      while He <> nil do begin
+        He^.Coordinates(frXL, frYL, frXH, frYH, XL, YL, XH, YH);
+        ExtentRect(XL, YL, XH, YH, X1, Y1, X2, Y2);
+        He := HeaderPtr(frHeaders.Next(He));
+      end;
+
+      {$IFDEF UseShadows}
+      if IncludeShadows then begin
+        {Account for shadows, if any}
+        Sh := ShadowPtr(frShadows.Head);
+        while Sh <> nil do begin
+          Sh^.Coordinates(frXL, frYL, frXH, frYH,
+                          {0, 0, 255, 255,}                    {!!.20}
+                          frMinXL, frMinYL, frMaxXH, frMaxYH,  {!!.20}
+                          XL, YL, XH, YH);
+          ExtentRect(XL, YL, XH, YH, X1, Y1, X2, Y2);
+          Sh := ShadowPtr(frShadows.Next(Sh));
+        end;
+      end;
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.Extent(var X1, Y1, X2, Y2 : Byte;
+                             IncludeShadows : Boolean);
+    {-Return the complete extent of the window}
+  begin
+    X1 := wXL;
+    Y1 := wYL;
+    X2 := wXH;
+    Y2 := wYH;
+    ExtentFrame(wFrame, X1, Y1, X2, Y2, IncludeShadows);
+    ExtentFrame(aFrame, X1, Y1, X2, Y2, IncludeShadows);
+  end;
+
+  function RawWindow.Intersects(W : AbstractWindowPtr) : Boolean; {!!.03}
+    {-Return true if Self intersects another window W, including shadows}
+  var
+    sXL : Byte;
+    sYL : Byte;
+    sXH : Byte;
+    sYH : Byte;
+    oXL : Byte;
+    oYL : Byte;
+    oXH : Byte;
+    oYH : Byte;
+  begin
+    Extent(sXL, sYL, sXH, sYH, True);
+    RawWindowPtr(W)^.Extent(oXL, oYL, oXH, oYH, True);
+    Intersects := (sXL <= oXH) and (sXH >= oXL) and
+                  (sYL <= oYH) and (sYH >= oYL);
+  end;
+
+  procedure RawWindow.wGotoXY(X, Y : Integer);
+    {-Move cursor to window-relative coordinates}
+  begin
+    inc(X, wXL-1);
+    inc(Y, wYL-1);
+    wCursorX := X;
+    wCursorY := Y;
+    if {RawWindow.}IsCurrent then {!!.01} {!!.12}
+      OpCrt.GotoXYAbs(wCursorX, wCursorY);
+  end;
+
+  procedure RawWindow.wWhereXYAbs(var X, Y : Byte);
+    {-Return absolute coordinates of cursor}
+  begin
+    if {RawWindow.}IsCurrent then begin {!!.01} {!!.12}
+      X := OpCrt.WhereXAbs;
+      Y := OpCrt.WhereYAbs;
+    end else begin
+      X := wCursorX;
+      Y := wCursorY;
+    end;
+  end;
+
+  procedure RawWindow.wWhereXY(var X, Y : Integer);
+    {-Return window-relative coordinates of cursor}
+  var
+    XA : Byte;
+    YA : Byte;
+  begin
+    wWhereXYAbs(XA, YA);
+    {Convert to window-relative}
+    X := Integer(XA)-wXL+1;
+    Y := Integer(YA)-wYL+1;
+  end;
+
+  procedure RawWindow.SetCursor(CT : CursorType);
+    {-Set cursor shape}
+  begin
+    wCursor := CT;
+    if {RawWindow.}IsCurrent then {!!.01} {!!.12}
+      OpCrt.SetCursorType(CT);
+  end;
+
+  function RawWindow.GetCursor : CursorType;
+    {-Return current cursor shape}
+  begin
+    GetCursor := wCursor;
+  end;
+
+  procedure RawWindow.Error(Code : Word);
+    {-Report that an error occurred}
+  begin
+    wRes := Code;
+  end;
+
+  function RawWindow.GetLastError : Word;
+    {-Return and clear the last error code, 0 if none}
+  var
+    Res : Word;
+  begin
+    {Check window's result first}
+    Res := wRes;
+    wRes := 0;
+    if Res <> 0 then begin
+      GetLastError := Res;
+      Exit;
+    end;
+    {Check active frame's result}
+    Res := wFrame.GetLastError;
+    if Res <> 0 then begin
+      GetLastError := Res;
+      Exit;
+    end;
+    {Check alternate frame's result}
+    Res := aFrame.GetLastError;
+    if Res <> 0 then begin
+      GetLastError := Res;
+      Exit;
+    end;
+    {Check cover rect's result}
+    Res := wCovers.srResult;
+    if Res <> 0 then begin
+      GetLastError := Res;
+      Exit;
+    end;
+    {Check content rect's result}
+    Res := wContents.srResult;
+    if Res <> 0 then begin
+      GetLastError := Res;
+      Exit;
+    end;
+    GetLastError := 0;
+  end;
+
+  function RawWindow.RawError : Word; {!!.01}
+    {-Static method to return last error code without clearing it}
+  var
+    Res : Word;
+  begin
+    {Check window's result first}
+    if wRes <> 0 then begin
+      RawError := wRes;
+      Exit;
+    end;
+    {Check active frame's result}
+    Res := wFrame.PeekLastError;
+    if Res <> 0 then begin
+      RawError := Res;
+      Exit;
+    end;
+    {Check alternate frame's result}
+    Res := aFrame.PeekLastError;
+    if Res <> 0 then begin
+      RawError := Res;
+      Exit;
+    end;
+    {Check cover rect's result}
+    Res := wCovers.srRes;
+    if Res <> 0 then begin
+      RawError := Res;
+      Exit;
+    end;
+    {Check content rect's result}
+    Res := wContents.srRes;
+    if Res <> 0 then begin
+      RawError := Res;
+      Exit;
+    end;
+    RawError := 0;
+  end;
+
+  function RawWindow.PeekLastError : Word;
+    {-Return last error code without resetting internal variable}
+  begin
+    PeekLastError := RawError;
+  end;
+
+  function RawWindow.IsActive : Boolean;
+    {-Return True if window is currently on-screen}
+  begin
+    IsActive := LongFlagIsSet(wFlags, wActive);
+  end;
+
+  function RawWindow.IsCurrent : Boolean;
+    {-Return True if window is the current one}
+  begin
+    IsCurrent := (CurrentWindow = @Self);
+  end;
+
+  {$IFDEF UseAdjustableWindows}
+  function RawWindow.IsZoomed : Boolean;
+    {-Return True if window is currently zoomed}
+  begin
+    IsZoomed := LongFlagIsSet(wFlags, wZoomed);
+  end;
+  {$ENDIF}
+
+  function RawWindow.MainFramePtr : AbstractFramePtr;
+    {-Return a pointer to frame used when window is current}
+  begin
+    MainFramePtr := @wFrame;
+  end;
+
+  function RawWindow.AltFramePtr : AbstractFramePtr;
+    {-Return a pointer to frame used when window is active but not current}
+  begin
+    AltFramePtr := @aFrame;
+  end;
+
+  function RawWindow.ActiveFramePtr : AbstractFramePtr;
+    {-Return the appropriate frame pointer}
+  begin
+    if RawWindow.IsCurrent or not LongFlagIsSet(wFlags, wAltFrame) then {!!.01}
+      ActiveFramePtr := @wFrame
+    else
+      ActiveFramePtr := @aFrame;
+  end;
+
+  function RawWindow.InWindow(AX, AY : Byte) : Boolean;
+    {-Return true if specified absolute position is in window}
+  begin
+    InWindow := AbstractWindow.InWindow(AX, AY);
+  end;
+
+  function RawWindow.InExtent(AX, AY : Byte; IncludeShadows : Boolean) : Boolean; {!!.12}
+    {-Return true if specified absolute position is within extent of window}
+  var
+    X1 : Byte;
+    X2 : Byte;
+    Y1 : Byte;
+    Y2 : Byte;
+  begin
+    Extent(X1, Y1, X2, Y2, IncludeShadows);
+    InExtent := (X1 <= AX) and (AX <= X2) and (Y1 <= AY) and (AY <= Y2);
+  end;
+
+  function RawWindow.InFrame(AX, AY : Byte; IncludeShadows : Boolean) : Boolean; {!!.12}
+    {-Return true if position is within extent of window, but not window active window}
+  begin
+    InFrame := InExtent(AX, AY, IncludeShadows) and not InWindow(AX, AY);
+  end;
+
+  function RawWindow.CursorInWindow : Boolean;
+    {-Return true if cursor is currently within active window boundaries}
+  var
+    X : Byte;
+    Y : Byte;
+  begin
+    wWhereXYAbs(X, Y);
+    CursorInWindow := InWindow(X, Y);
+  end;
+
+  procedure RawWindow.EvaluatePos(X, Y : Byte);
+    {-Evaluate specified absolute position relative to window,
+      hotspots, and scrollbars. Values may be returned using PosResults.}
+  var
+    fXL : Byte;
+    fYL : Byte;
+    fXH : Byte;
+    fYH : Byte;
+    SliPos : Byte;
+    wFr : Boolean;
+    {$IFDEF UseHotSpots}
+    Hs : HotSpotPtr;
+    {$ENDIF}
+  begin
+    {Initialize results}
+    wUserVal := 0;
+    wHotCode := hsNone;
+
+    {Use appropriate frame coordinates}
+    with FramePtr(ActiveFramePtr)^ do begin
+      fXL := frXL;
+      fYL := frYL;
+      fXH := frXH;
+      fYH := frYH;
+      {$IFDEF UseHotSpots}
+      Hs := HotSpotPtr(frHotSpots.Head);
+      {$ENDIF}
+    end;
+
+    {Compute position relative to frame}
+    if (X >= wXL) and (X <= wXH) and (Y >= wYL) and (Y <= wYH) then
+      wFramePos := frInsideActive
+    else if (X > fXL) and (X < fXH) and (Y > fYL) and (Y < fYH) then
+      wFramePos := frInsideFrame
+    else if (X < fXL) or (X > fXH) or (Y < fYL) or (Y > fYH) then
+      wFramePos := frOutsideFrame
+    {Now guaranteed to be on frame someplace}
+    else if X = fXL then begin
+      if Y = fYL then
+        wFramePos := frTL
+      else if Y = fYH then
+        wFramePos := frBL
+      else
+        wFramePos := frLL;
+    end else if X = fXH then begin
+      if Y = fYL then
+        wFramePos := frTR
+      else if Y = fYH then
+        wFramePos := frBR
+      else
+        wFramePos := frRR;
+    end else if Y = fYL then
+      wFramePos := frTT
+    else
+      wFramePos := frBB;
+
+    {$IFDEF UseHotSpots}
+    {Check hot spots}
+    with FramePtr(ActiveFramePtr)^ do
+      while Hs <> nil do begin
+        with Hs^ do
+          if Within(X, Y, fXL, fYL, fXH, fYH, wHotCode) then begin
+            {Position is within a hot spot}
+            {$IFDEF UseScrollBars}
+            if wHotCode = hsBar then begin
+              {Position is on a scroll bar}
+              case wFramePos of
+                frTT, frBB : SliPos := X;
+                frLL, frRR : SliPos := Y;
+              end;
+              wUserVal := frBars[wFramePos]^.UserValue(SliPos);
+            end;
+            {$ENDIF}
+            Exit;
+          end;
+        Hs := HotSpotPtr(frHotSpots.Next(Hs));
+      end;
+    {$ENDIF}
+  end;
+
+  {$IFDEF UseMouse}
+  procedure RawWindow.EvaluateMousePos;
+    {-Evaluate current mouse position as with EvaluatePos}
+  var
+    MouseX : Byte;
+    MouseY : Byte;
+    Status : ButtonStatus;
+  begin
+    if MouseInstalled then begin
+      MouseWhereXYabs(MouseX, MouseY, Status);
+      EvaluatePos(MouseX, MouseY);
+    end;
+  end;
+  {$ENDIF}
+
+  function RawWindow.PosResults(var FramePos : FramePosType;
+                                var HotCode : Byte) : LongInt;
+    {-Return values from most recent call to EvaluatePos or EvaluateMousePos}
+  begin
+    FramePos := wFramePos;
+    HotCode := wHotCode;
+    PosResults := wUserVal;
+  end;
+
+  {$IFDEF UseAdjustableWindows}
+  procedure RawWindow.rwResizeAdjustCursor(oXL, oYL, oXH, oYH : Byte);
+    {-Assure cursor position tracks with a moved or resized window}
+  var
+    CX : Byte;
+    CY : Byte;
+  begin
+    {Get absolute cursor position for this window}
+    wWhereXYAbs(CX, CY);
+    if (CX >= oXL) and (CX <= oXH) and (CY >= oYL) and (CY <= oYH) then begin
+      {Cursor was within window, update it now}
+
+      {Convert to window-relative}
+      Dec(CX, oXL-1);
+      Dec(CY, oYL-1);
+
+      {Limit to current width and height of window}
+      DoLower(CX, Width);
+      DoLower(CY, Height);
+
+      {Reposition cursor}
+      wGoToXY(CX, CY);
+    end;
+  end;
+
+  procedure RawWindow.rwResizeFrames(FX1, FY1, FX2, FY2 : Byte);
+    {-Resize the frames when a window is resized}
+  var
+    Status : Word;
+  begin
+    wFrame.AdjustFrame(FX1, FY1, FX2, FY2);
+    {Transfer error from frame to window}
+    Status := wFrame.GetLastError;
+    if Status <> 0 then begin {!!.01}
+      Error(Status);
+      Exit;                   {!!.01}
+    end;                      {!!.01}
+    aFrame.AdjustFrame(FX1, FY1, FX2, FY2);
+    {Transfer error from frame to window}
+    Status := aFrame.GetLastError;
+    if Status <> 0 then
+      Error(Status);
+  end;
+
+  function RawWindow.rwValidCoords(X1, Y1, X2, Y2 : Byte;
+                                   var FX1, FY1, FX2, FY2 : Byte) : Boolean; {!!.01}
+    {-Return True if requested coordinates are valid}
+  begin
+    rwValidCoords := False;
+
+    {Validate active window size}
+    if (X2 < Word(X1)+wMinW-1) or (Y2 < Word(Y1)+wMinH-1) or
+       (X2 > Word(X1)+wMaxW-1) or (Y2 > Word(Y1)+wMaxH-1) then
+      Exit;
+
+    with wFrame do begin
+      {Compute new frame coordinates}
+      FX1 := Integer(frXL)+X1-wXL;
+      FX2 := Integer(frXH)+X2-wXH;
+      FY1 := Integer(frYL)+Y1-wYL;
+      FY2 := Integer(frYH)+Y2-wYH;
+      if (FX1 < wMinXL) or (FY1 < wMinYL) or
+         (FX2 > wMaxXH) or (FY2 > wMaxYH) or
+         (FX2 < Word(FX1)+frMinW-1) or (FY2 < Word(FY1)+frMinH-1) or
+         (FX2 > Word(FX1)+frMaxW-1) or (FY2 > Word(FY1)+frMaxH-1)
+      then
+        Exit;
+    end;
+
+    rwValidCoords := True;
+  end;
+
+  procedure RawWindow.rwResizePrim(X1, Y1, X2, Y2, FX1, FY1, FX2, FY2 : Byte); {!!.01}
+    {-Perform operations shared by rwResizeInactive and rwResizeCurrent}
+  var
+    oXL : Byte;
+    oYL : Byte;
+    oXH : Byte;
+    oYH : Byte;
+    CX1 : Byte;
+    CY1 : Byte;
+    CX2 : Byte;
+    CY2 : Byte;
+  begin
+    {Change coordinates}
+    if not LongFlagIsSet(wFlags, wNoCoversBuffer+wCoversOnDemand) {!!.01}
+    then begin                                                    {!!.01}
+      wCovers.Adjust(FX1, FY1, FX2, FY2);
+      if wCovers.srRes <> 0 then begin
+        Error(wCovers.srResult); {!!.01}
+        Exit;
+      end;
+    end;                                                          {!!.01}
+
+    {Resize the frames}
+    rwResizeFrames(FX1, FY1, FX2, FY2);
+    if RawError <> 0 then   {!!.01}
+      Exit;                 {!!.01}
+
+    {Update the coordinates in the wContents buffer}
+    wFrame.WithinFrameCoords(CX1, CY1, CX2, CY2);
+    if not LongFlagIsSet(wFlags, wSaveContents) then
+      wContents.Init(CX1, CY1, CX2, CY2, nil)
+    else begin
+      wContents.Transfer(CX1, CY1, CX2, CY2, wBackChar,
+                         ColorMono(wTextColor, wTextMono));
+      if wContents.srRes <> 0 then begin
+        Error(wContents.srResult); {!!.01}
+        Exit;
+      end;
+    end;
+
+    {Save current active window coordinates and assign new}
+    oXL := wXL;
+    oYL := wYL;
+    oXH := wXH;
+    oYH := wYH;
+    wXL := X1;
+    wYL := Y1;
+    wXH := X2;
+    wYH := Y2;
+
+    {Adjust cursor position}
+    rwResizeAdjustCursor(oXL, oYL, oXH, oYH);
+  end;
+
+
+  procedure RawWindow.rwResizeInactive(X1, Y1, X2, Y2 : Byte);
+    {-Change window coordinates for an inactive window}
+  var
+    FX1 : Byte;
+    FY1 : Byte;
+    FX2 : Byte;
+    FY2 : Byte;
+  begin
+    {Only handles inactive windows}
+    if IsActive then begin
+      Error(epNonFatal+ecWinIsActive);
+      Exit;
+    end;
+
+    {Validate the request and compute the frame coordinates}
+    if not rwValidCoords(X1, Y1, X2, Y2, FX1, FY1, FX2, FY2) then
+      Exit;
+
+    {Resize all the structures}
+    rwResizePrim(X1, Y1, X2, Y2, FX1, FY1, FX2, FY2);
+  end;
+
+  procedure RawWindow.rwResizeCurrent(X1, Y1, X2, Y2 : Byte);
+    {-Change window coordinates}
+  var
+    FX1 : Byte;
+    FY1 : Byte;
+    FX2 : Byte;
+    FY2 : Byte;
+    V : VirtScreen;
+  begin
+    {Only handles current window}
+    if not {RawWindow.}IsCurrent then begin {!!.01} {!!.03}
+      Error(epNonFatal+ecWinNotCurrent);
+      Exit;
+    end;
+
+    {Validate the request and compute the frame coordinates}
+    if not rwValidCoords(X1, Y1, X2, Y2, FX1, FY1, FX2, FY2) then begin
+      {Reporting an error here causes trouble in interactive move/resize routines}
+      {Error(epNonFatal+ecWinCoordsBad);}
+      Exit;
+    end;
+
+    {Allocate a virtual screen, initialize, and activate it}
+    if not V.Alloc(OpCrt.VirtualHeight, OpCrt.VirtualWidth) then begin
+      Error(epFatal+ecOutOfMemory);
+      Exit;
+    end;
+    V.CopyFromScreen(1, 1);
+    V.Activate;
+
+    {$IFDEF UseScrollBars}
+    {Assure sliders aren't redrawn until requested}
+    wFrame.ClearSliders;
+    aFrame.ClearSliders;
+    {$ENDIF}
+
+    {Erase window from virtual screen}
+    rwErase;                                    {!!.01}
+
+    {Resize all the structures}
+    rwResizePrim(X1, Y1, X2, Y2, FX1, FY1, FX2, FY2);
+
+    if (RawError = 0) or (RawError div 10000 <> etFatal) then {!!.03}
+      {Redraw}
+      rwDraw;                                                 {!!.01}
+
+    {Set cursor shape -- Draw won't do it on virtual screen}
+    SetCursor(wCursor);
+
+    {Deactivate virtual screen, display, and dispose of it}
+    V.Deactivate;
+    V.CopyToScreen(1, 1);
+    V.Done;
+  end;
+
+  procedure RawWindow.rwMarkUnzoomed; {!!.03}
+    {-Mark window not zoomed}
+  begin
+    ClearLongFlag(wFlags, wZoomed);
+    wzXL := 0;
+    wzYL := 0;
+    wzXH := 0;
+    wzYH := 0;
+  end;
+
+  procedure RawWindow.AdjustWindow(X1, Y1, X2, Y2 : Word);
+    {-Resize either an inactive or a current window}
+  begin
+    if not IsActive then
+      rwResizeInactive(X1, Y1, X2, Y2)
+    else
+      rwResizeCurrent(X1, Y1, X2, Y2);
+  end;
+
+  procedure RawWindow.MoveWindow(DX, DY : Integer);
+    {-Move a window}
+  begin
+    {!!.03} {No longer disallow MoveWindow on zoomed windows}
+    {Don't waste time if nothing to do}
+    if (DX = 0) and (DY = 0) then
+      Exit;
+    AdjustWindow(wXL+DX, wYL+DY, wXH+DX, wYH+DY);
+  end;
+
+  procedure RawWindow.ResizeWindow(DX, DY : Integer);
+    {-Resize a window}
+  begin
+    {!!.03} {No longer disallow ResizeWindow on zoomed windows}
+    if IsZoomed then
+      {Mark window unzoomed now}
+      rwMarkUnzoomed;
+    {Only handles resizeable windows}
+    if not LongFlagIsSet(wFlags, wResizeable) then begin
+      Error(epNonFatal+ecWinNotSizeable);
+      Exit;
+    end;
+    {Don't waste time if nothing to do}
+    if (DX = 0) and (DY = 0) then
+      Exit;
+    AdjustWindow(wXL, wYL, wXH+DX, wYH+DY);
+  end;
+
+  {$ENDIF}

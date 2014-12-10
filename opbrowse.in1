@@ -1,0 +1,737 @@
+{*********************************************************}
+{*                  OPBROWSE.IN1 1.30                    *}
+{*      Copyright (c) TurboPower Software 1985, 1992.    *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  procedure Browser.OpenFile(FName : String);
+    {-Open file for browsing}
+  var
+    I        : Word;
+    SaveMode : Word;
+  begin
+    {close the current file}
+    CloseFile;
+
+    {initialize file-specific fields}
+    FillChar(brLastPos, (Ofs(brFile)-Ofs(brLastPos))+SizeOf(brFile), 0);
+
+    {reset markers}
+    brResetMarkers;
+
+    {Open the file in read-only mode}
+    SaveMode := FileMode;
+    if DosVersion < $0300 then              {!!.13}
+      FileMode := 0                         {!!.13}
+    else                                    {!!.13}
+      FileMode := BrowseFileOpenMode;       {!!.13}
+    Assign(brFile, StUpcase(FName));
+    Reset(brFile, 1);
+    FileMode := SaveMode;
+
+    I := IoResult;
+    if I <> 0 then begin
+      GotError(epFatal+I, emOpenError);
+      Exit;
+    end;
+
+    brLastPos := FileSize(brFile)-1;
+    if brLastPos = -1 then begin
+      GotError(epFatal+ecFileIsEmpty, emFileIsEmpty);
+      Exit;
+    end;
+    brCurLine := 1;
+
+    {Mark page buffers as available}
+    for I := 0 to brPageMax do
+      with brPages^[I] do begin
+        BlkNum := NoBlk;
+        BufCnt := 0;
+        LastUsed := 0;
+      end;
+
+    {$IFDEF UseScrollBars}
+    {set boundaries for scroll bars}
+    brSetupForScrollBars;
+    {$ENDIF}
+
+    {set new file flag}
+    SetFlag(brOptions, brNewFile);
+  end;
+
+  procedure Browser.CloseFile;
+    {-Close up the current browse file}
+  var
+    I : Word;
+  begin
+    {Close the browse file}
+    if FileRec(brFile).Mode <> fmClosed then begin
+      Close(brFile);
+      I := IoResult;
+    end;
+  end;
+
+  function LengthAsciiz(var Asciiz) : Word;
+    {-Return the length of an Asciiz string}
+    {$IFDEF VIRTUALPASCAL}
+    assembler; {$FRAME-} {$USES ebx,ecx,edi}
+    asm
+      mov   edi,Asciiz
+      mov   ebx,edi
+      mov   ecx,-1
+      mov   al,0
+      cld
+      repne scasb
+      sub   edi,ebx
+      mov   eax,edi
+      dec   eax
+    end;
+    {$ELSE}
+    inline(
+      $5F/                     {pop  di       ;get pointer to ASCIIZ}
+      $07/                     {pop  es       ; into es:di}
+      $89/$FB/                 {mov  bx,di    ;store initial offset}
+      $B9/$FF/$FF/             {mov  cx,$FFFF ;check maximum length}
+      $B0/$00/                 {mov  al,0     ;look for null}
+      $FC/                     {cld           ;forward direction}
+      $F2/                     {repne}
+      $AE/                     {scasb         ;scan while equal}
+      $29/$DF/                 {sub  di,bx    ;get the number of bytes scanned}
+      $89/$F8/                 {mov  ax,di    ;return in ax}
+      $48);                    {dec  ax       ;null doesn't count}
+    {$ENDIF}
+
+  function Browser.CurrentFileName : String;
+    {-Return the name of the current browse file}
+  var
+    S : String;
+    SLen : Byte absolute S;
+  begin
+    with FileRec(brFile) do begin
+      SLen := LengthAsciiz(Name);
+      MoveFast(Name[0], S[1], SLen); {!!.01}
+      CurrentFileName := S;
+    end;
+  end;
+
+  function Browser.brGetFileName(MsgCode : Word; Prompt : string;
+                                 ForceUp, TrimBlanks : Boolean;
+                                 Writing, MustExist : Boolean;
+                                 MaxLen : Byte; var S : string) : Boolean;
+    {-Get a filename from the user if possible}
+  begin
+    if cwCmdPtr^.CommandStringPending then begin
+      S := DefaultExtension(cwCmdPtr^.GetCommandString, brDefExt);
+      brGetFileName := True;
+    end
+    else if @brGetFileFunc = nil then
+      brGetFileName := False
+    else if brGetFileFunc(MsgCode, Prompt, ForceUp, TrimBlanks, Writing,
+                          MustExist, MaxLen, brDefExt, S) then begin
+      {S := DefaultExtension(S, brDefExt);} {!!.01}
+      brGetFileName := (S <> '');
+    end
+    else
+      brGetFileName := False;
+  end;
+
+  function Browser.brEdit(MsgCode : Word; Prompt : string;
+                          ForceUp, TrimBlanks : Boolean;
+                          MaxLen : Byte; var S : string) : Boolean;
+    {-Get a string from the user if possible}
+  begin
+    if cwCmdPtr^.CommandStringPending then begin
+      S := cwCmdPtr^.GetCommandString;
+      brEdit := True;
+    end
+    else if @brEditFunc = nil then
+      brEdit := False
+    else
+      brEdit := brEditFunc(MsgCode, Prompt, ForceUp, TrimBlanks, MaxLen, S);
+  end;
+
+  procedure Browser.brShowStatus;
+    {-Display a status line}
+  begin
+    if @brStatusProc <> nil then
+      if IsCurrent and (VirtualSegment = VideoSegment) then
+        brStatusProc(@Self);
+  end;
+
+  procedure Browser.brBufferLoaded(var Buffer; ByteCount : Word);
+    {-Called when ByteCount bytes of data are loaded into Buffer from disk}
+  begin
+    {dummy--a hook}
+  end;
+
+  procedure Browser.brTransferPrim(Start, Stop : LongInt;
+                                   var Buffer; BufSize : Word);
+    {-Internal version of transfer routine}
+  type
+    CharBuf = array[0..65520] of Char;
+  var
+    B : CharBuf absolute Buffer;
+    BPos : Word;
+  begin
+    {Initialize pointers}
+    WorkPos := Start;
+    WorkPtr := nil;
+    WorkEnd := 0;
+
+    BPos := 0;
+    repeat
+      if WorkPos > brLastPos then
+        Exit
+      else begin
+        if (WorkOfs >= WorkEnd) then
+          brGetWorkingChar
+        else
+          Byte(WorkChr) := Byte(WorkPtr^) and brMask;
+        if BPos < BufSize then begin
+          B[BPos] := WorkChr;
+          Inc(BPos);
+          IncWorkingSet;
+          if (WorkPos >= Stop) then
+            Exit;
+        end
+        else
+          Exit;
+      end;
+    until False;
+  end;
+
+  procedure Browser.brGotoLinePrim(Line : LongInt); {!!.03}
+    {-Primitive routine to go to a particular line}
+  var
+    LastPos : LongInt;
+  begin
+    if (brLastLine <> 0) and (Line > brLastLine) then
+      Line := brLastLine;
+
+    LastPos := brLastPos;
+    if FlagIsSet(brOptions, brHexMode) then begin
+      {in hex mode we can calculate the offset given the line number}
+      if brHex8 then
+        WorkPos := 8*Pred(Line)
+      else
+        WorkPos := 16*Pred(Line);
+      if WorkPos > LastPos then
+        WorkPos := LastPos;
+      WorkPos := brHexPos(WorkPos);
+      WorkLine := brHexLineNum(WorkPos);
+    end
+    else begin
+      brWorking(True);
+
+      if (Line < brCurLine) and (brCurLine-Line > Line) then begin
+        {is target line closer to beginning of file or to current line?}
+        if Line < (brCurLine div 2) then begin
+          {start at beginning of file}
+          brCurPos := 0;
+          brCurLine := 1;
+        end;
+      end
+      else if (brLastLine <> 0) and (Line > brCurLine) and (brLastLine-Line < Line) then begin
+        {is target line closer to end of file or to current line?}
+        if Line > (brLastLine div 2) then begin
+          {start at end of file}
+          brCurPos := LastPos;
+          brCurLine := brLastLine;
+        end;
+      end;
+
+      brCurWorkingSet;
+
+      WorkLine := brCurLine;
+      while (WorkLine < Line) and (WorkPos < LastPos) do begin
+        brNextLine;
+        Inc(WorkLine);
+      end;
+      while (WorkLine > Line) and (WorkPos > 0) do begin
+        brPrevLine;
+        Dec(WorkLine);
+      end;
+    end;
+
+    brJumpToFilePos(WorkPos, WorkLine);
+  end;
+
+  procedure Browser.brGotoLine;
+    {-Prompt for and go to a particular line}
+  var
+    LineL : LongInt;
+    OK : Boolean;
+    LineStr : String[10];
+  begin
+    LineStr := Long2Str(brCurLine);
+    repeat
+      if not brEdit(epMessage+mcLineNumber, emLineNumber, False, True, 6, LineStr) then
+        Exit;
+      if LineStr = '' then
+        Exit;
+      OK := Str2Long(LineStr, LineL) and (LineL > 0) {and (LineL < 65536)}; {!!.03}
+      if not OK then
+        GotError(epWarning+ecInvalidNumber, emInvalidNumber);
+    until OK;
+
+    if LineL <> brCurLine then
+      brGotoLinePrim(LineL);
+  end;
+
+  procedure Browser.brFindString(Prompt : Boolean);
+    {-Prompt for and find a string}
+  label
+    Recheck1, Recheck2, ExitPoint;
+  var
+    SPos, I, J : Integer;
+    SaveLine : LongInt; {!!.03}
+    SaveCurPos : LongInt;
+    LinePos : LongInt;
+    EndLine : Boolean;
+    LastPos : LongInt;
+    SearchSt : string[MaxSearchLen+1];
+    SearchLen : Byte absolute SearchSt;
+    NoCase : Boolean;
+    Backward : Boolean;
+    Global : Boolean;
+    HexMode : Boolean;
+    HexModulo : Word;
+    SavePos : LongInt;
+    SaveWorkLine : Word;
+  begin
+    if Prompt then
+      if not brEdit(epMessage+mcSearchFor, emSearchFor, False, False, 30, brSearchSt) then
+        Exit;
+
+    if Length(brSearchSt) = 0 then
+      Exit;
+
+    {get case, backward/forward}
+    if Prompt then
+      if not brEdit(epMessage+mcOptionString, emOptionString, False, False, 5, brOptionSt) then
+        Exit;
+
+    {get search options}
+    NoCase := False;
+    Backward := False;
+    Global := False;
+    for SPos := 1 to Length(brOptionSt) do
+      case Upcase(brOptionSt[SPos]) of
+        brNoCase : NoCase := True;
+        brBackward : Backward := True;
+        brGlobal : Global := Prompt {True} ;
+      end;
+
+    {get local copy of search string}
+    if NoCase then
+      SearchSt := StUpcase(brSearchSt)
+    else
+      SearchSt := brSearchSt;
+
+    brWorking(True);
+
+    {Search for string, starting on next line}
+    brFndPos := $FFFFFFFF;
+    SaveLine := brCurLine;
+    SaveCurPos := brCurPos;
+
+    {if global search, move cursor into place}
+    if Global then
+      if Backward then
+        brBottomOfFile(True)
+      else begin
+        brCurPos := 0;
+        brCurLine := 1;
+      end;
+
+    brCurWorkingSet;
+
+    if Global or Backward then
+      WorkLine := brCurLine
+    else begin
+      brNextLine;
+      WorkLine := brCurLine+1;
+    end;
+
+    if Backward then {begin}  {!!.01}
+      SPos := SearchLen {+1;} {!!.01}
+      {SearchSt[SPos] := #0;} {!!.01}
+    {end}                     {!!.01}
+    else
+      SPos := 1;
+    EndLine := False;
+    LinePos := WorkPos;
+    LastPos := brLastPos;
+
+    {are we in hex mode?}
+    if not FlagIsSet(brOptions, brHexMode) then
+      HexMode := False
+    else begin
+      HexMode := True;
+      if brHex8 then
+        HexModulo := 8
+      else
+        HexModulo := 16;
+    end;
+
+    if Backward then
+      while WorkPos >= 0 do begin     {!!.11}
+        if (WorkOfs < WorkBeg) then
+          brGetWorkingChar
+        else
+          Byte(WorkChr) := Byte(WorkPtr^) and brMask;
+
+        if NoCase then
+          WorkChr := Upcase(WorkChr);
+
+Recheck1:
+        if (WorkChr = SearchSt[SPos]) and (WorkPos <> LinePos) then begin {!!.11}
+          {Matched search character}
+          if SPos = 1 then begin
+            {Matched whole string}
+            if HexMode then begin
+              {if brHex8 then}                {!!.11}
+                WorkPos := brHexPos(WorkPos);
+            end
+            else begin
+              LinePos := WorkPos;
+              {scan for beginning of the current line}
+              WorkChr := #0;                                        {!!.11}
+              while (WorkPos {>=} > 0) and (WorkChr <> ^M) do begin {!!.11}
+                DecWorkingSet;
+                brGetWorkingChar;
+              end;
+              {skip the CRLF}
+              if WorkChr = ^M then begin
+                IncWorkingSet;
+                brGetWorkingChar;
+                if WorkChr = ^J then
+                  IncWorkingSet;
+              end;
+            end;
+            brFndPos := WorkPos;
+            brCurPos := WorkPos;
+            goto ExitPoint;
+          end
+          else
+            Dec(SPos);
+        end
+        else if SPos < SearchLen then begin
+          SPos := SearchLen;
+          goto Recheck1;
+        end;
+
+        {Keep track of lines}
+        if HexMode then begin
+          if Byte(WorkPos) mod HexModulo = 0 then
+            Dec(WorkLine);
+          Dec(WorkPos);
+        end
+        else begin
+          if WorkChr = ^M then
+            Dec(WorkLine);
+          Dec(WorkPos);
+        end;
+
+        Dec(WorkOfs);
+      end
+    else
+      while WorkPos <= LastPos do begin
+        if (WorkOfs >= WorkEnd) then
+          brGetWorkingChar
+        else
+          Byte(WorkChr) := Byte(WorkPtr^) and brMask;
+
+        if NoCase then
+          WorkChr := Upcase(WorkChr);
+
+Recheck2:
+        if WorkChr = SearchSt[SPos] then begin
+          {Matched search character}
+          if SPos = SearchLen then begin
+            if EndLine then begin    {!!.11}
+              Inc(WorkLine);         {!!.11}
+              LinePos := WorkPos;    {!!.11}
+            end;                     {!!.11}
+
+            {Matched whole string}
+            if HexMode then
+              if SearchLen = 1 then
+                LinePos := brHexPos(WorkPos)
+              else begin
+                LinePos := brHexPos(SavePos);
+                WorkLine := SaveWorkLine;
+              end;
+            brFndPos := LinePos;
+            brCurPos := LinePos;
+            goto ExitPoint;
+          end
+          else begin
+            if HexMode and (SPos = 1) then begin
+              SavePos := WorkPos;
+              SaveWorkLine := WorkLine;
+            end;
+            Inc(SPos);
+          end;
+        end
+        else if SPos > 1 then begin
+          SPos := 1;
+          goto Recheck2;
+        end;
+
+        {Keep track of lines}
+        if HexMode then begin
+          Inc(WorkPos);
+          if Byte(WorkPos) mod HexModulo = 0 then
+            Inc(WorkLine);
+        end
+        else begin
+          case WorkChr of
+            ^M :
+              if EndLine then begin
+                Inc(WorkLine);
+                LinePos := WorkPos;
+              end
+              else
+                EndLine := True;
+            ^J : ;
+          else
+            if EndLine then begin
+              Inc(WorkLine);
+              LinePos := WorkPos;
+              EndLine := False;
+            end;
+          end;
+          Inc(WorkPos);
+        end;
+
+        Inc(WorkOfs);
+      end;
+
+ExitPoint:
+    if brFndPos = $FFFFFFFF then begin
+      brCurLine := SaveLine;
+      brCurPos := SaveCurPos;
+      UpdateContents;
+      GotError(epWarning+ecStringNotFound, emStringNotFound);
+    end
+    else begin
+      {Assure string is visible}
+      if HexMode then begin
+        if brHex8 then
+          I := Hex8Width
+        else
+          I := Hex16Width;
+        J := I-Pred(HexModulo);
+        if I > brWinWidth then
+          {display width is greater than window width--scroll right}
+          brColOfs := I-brWinWidth
+        else if (brColOfs+I > brWinWidth) then
+          {we're outside the window--scroll left}
+          if I > brWinWidth then
+            brColOfs := I-brWinWidth
+          else
+            brColOfs := 0;
+      end
+      else begin
+        if Backward then
+          SPos := (LinePos-WorkPos)+SearchLen+1
+        else
+          SPos := (WorkPos-LinePos)+1;
+        SPos := brActualCol(SPos);  {!!.13}
+        if SPos-SearchLen < brColOfs then
+          brColOfs := SPos-SearchLen
+        else if SPos > brColOfs+brWinWidth then
+          brColOfs := SPos-brWinWidth;
+      end;
+      brCurLine := WorkLine;
+      UpdateContents;
+    end;
+  end;
+
+  procedure Browser.brWriteMarkedBlock(ToPrinter : Boolean);
+    {-Prompt for and write a file with the marked block}
+  const
+    WriteBufSize = 1024;
+  var
+    B : LongInt;
+    I, J, Bytes : Word;
+    FName : PathStr;
+    F : file;
+    FHandle : Word absolute F;
+    WriteBuf : array[1..WriteBufSize] of Char;
+  begin
+    if brBlockOn and (brBlkEnd.FilePos > brBlkBegin.FilePos) then begin
+      if ToPrinter then begin
+        FName := 'LPT1';
+        Inc(FName[4], Pred(brLPT));
+      end
+      else begin
+        FName := '';
+        if not brGetFileName(epMessage+mcBlockWrite, emBlockWrite,
+                             True, True, True, False, 79, FName) then
+          Exit;
+      end;
+
+      Assign(F, FName);
+      Rewrite(F, 1);
+      I := IoResult;
+
+      if I <> 0 then
+        GotError(epNonFatal+I, emOpenError)
+      else begin
+        if HandleIsConsole(FHandle) then begin
+          GotError(epNonFatal+ecNotToScreen, emNotToScreen);
+          Exit;
+        end;
+
+        B := brBlkBegin.FilePos;
+        while B < brBlkEnd.FilePos do begin
+          if brBlkEnd.FilePos-B > WriteBufSize then
+            Bytes := WriteBufSize
+          else
+            Bytes := brBlkEnd.FilePos-B;
+          brTransferPrim(B, B+Bytes, WriteBuf, WriteBufSize);
+          BlockWrite(F, WriteBuf, Bytes);
+          I := IoResult;
+          if (I <> 0) then begin
+            GotError(epNonFatal+I, emWriteError);
+            B := brBlkEnd.FilePos;
+          end
+          else
+            Inc(B, Bytes);
+        end;
+      end;
+
+      Close(F);
+      J := IoResult;
+      if (J <> 0) and (I = 0) and not ToPrinter then
+        GotError(epNonFatal+I, emCloseError);
+    end;
+  end;
+
+  procedure Browser.brLoadNewFile;
+    {-Load a new file into the browser}
+  var
+    FName : PathStr;
+    I : Word;
+  begin
+    {get the name of the file to read}
+    FName := CurrentFileName;
+    if not brGetFileName(epMessage+mcNewFile, emNewFile, True, True,
+                         False, True, 79, FName) then
+      Exit;
+
+    {do nothing if string empty or name is the same}
+    if (FName = '') or (FName = CurrentFileName) then
+      Exit;
+
+    {does the file exist?}
+    if not ExistFile(FName) then begin
+      GotError(epNonFatal+ecFileNotFound, emFileNotFound);
+      Exit;
+    end;
+
+    {try to open the file}
+    OpenFile(FName);
+    if cwGetLastError <> 0 then
+      LongJump(brErrorDest, 1);
+
+    {call status routine, in case user is displaying filename as a frame header}
+    brShowStatus;
+
+    {update the screen}
+    UpdateContents;
+  end;
+
+  procedure Browser.GotoOffset(Offset : LongInt);
+    {-Scroll display to the line nearest Offset}
+  label
+    ExitPoint;
+  var
+    SaveErrorDest : JumpRecord;
+  begin
+    {set up error handler}
+    SaveErrorDest := brErrorDest;
+    if SetJump(brErrorDest) <> 0 then
+      {control returns here if error occurs}
+      goto ExitPoint;
+
+    brCurWorkingSet;
+    if Offset > brLastPos then
+      Offset := brLastPos
+    else if Offset < 0 then
+      Offset := 0;
+
+    if FlagIsSet(brOptions, brHexMode) then begin
+      brCurPos := brHexPos(Offset);
+      brCurLine := brHexLineNum(brCurPos);
+    end
+    else begin
+      brWorking(True);
+
+      WorkLine := brCurLine;
+      while WorkPos < Offset do begin
+        brNextLine;
+        Inc(WorkLine);
+      end;
+      while WorkPos > Offset do begin
+        brPrevLine;
+        Dec(WorkLine);
+      end;
+      brCurPos := WorkPos;
+      brCurLine := WorkLine;
+    end;
+
+    brCurWorkingSet;
+
+ExitPoint:
+    brErrorDest := SaveErrorDest;
+    brWorkingFlag := 0;
+    brShowStatus;
+  end;
+
+  procedure Browser.GotoLine(LineNum : LongInt); {!!.03}
+    {-Scroll display to the specified line}
+  label
+    ExitPoint;
+  var
+    SaveErrorDest : JumpRecord;
+  begin
+    {set up error handler}
+    SaveErrorDest := brErrorDest;
+    if SetJump(brErrorDest) <> 0 then
+      {control returns here if error occurs}
+      goto ExitPoint;
+
+    brGotoLinePrim(LineNum);
+
+ExitPoint:
+    brErrorDest := SaveErrorDest;
+    brWorkingFlag := 0;
+    brShowStatus;
+  end;
+
+  procedure Browser.Transfer(StartPos, StopPos : LongInt;
+                             var Buffer; BufSize : Word);
+    {-Copy browse characters into Buffer}
+  label
+    ExitPoint;
+  var
+    SaveErrorDest : JumpRecord;
+  begin
+    {Set up error handler}
+    SaveErrorDest := brErrorDest;
+    if SetJump(brErrorDest) <> 0 then
+      {control returns here if error occurs while browsing}
+      goto ExitPoint;
+
+    brWorking(True);
+
+    brTransferPrim(StartPos, StopPos, Buffer, BufSize);
+
+ExitPoint:
+    brWorkingFlag := 0;
+    brShowStatus;
+    brErrorDest := SaveErrorDest;
+  end;

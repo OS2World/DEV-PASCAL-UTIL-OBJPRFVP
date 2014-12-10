@@ -1,0 +1,1809 @@
+{*********************************************************}
+{*                   OPFORM.IN2 1.30                     *}
+{*     Copyright (c) TurboPower Software 1989, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {...Stream support ...}
+
+{$IFDEF UseStreams}
+
+  procedure PrintFieldStream(SPtr : IdStreamPtr);
+    {-Registers types needed for streams containing PrintFields}
+  begin
+    with SPtr^ do begin
+      RegisterType(otPrintField,vePrintField,TypeOf(PrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptDummyPConv,@DummyConversion);
+      RegisterPointer(ptStringPConv,@PrintStringConvert);
+    end;
+  end;
+
+  procedure StringPrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    PrintFieldStream(SPtr);
+    with SPtr^ do begin
+      RegisterType(otStringPField,veStringPField,
+                   TypeOf(StringPrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptStringPConv,@PrintStringConvert);
+    end;
+  end;
+
+  procedure CharPrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otCharPField,veCharPField,TypeOf(CharPrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptCharPConv,@PrintCharConvert);
+    end;
+  end;
+
+  procedure WordPrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otWordPField,veWordPField,TypeOf(WordPrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptWordPConv,@PrintWordConvert);
+    end;
+  end;
+
+  procedure BooleanPrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otBooleanPField,veBooleanPField,
+                   TypeOf(BooleanPrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptBoolPConv,@PrintBoolConvert);
+    end;
+  end;
+
+  procedure YesNoPrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otYesNoPField,veYesNoPField,
+                   TypeOf(YesNoPrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptYesNoPConv,@PrintYesNoConvert);
+    end;
+  end;
+
+  procedure LongPrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otLongIntPField,veLongIntPField,
+                   TypeOf(LongPrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptLongPConv,@PrintLongConvert);
+    end;
+  end;
+
+  procedure IntPrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otIntegerPField,veIntegerPField,
+                   TypeOf(IntPrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptIntPConv,@PrintIntConvert);
+    end;
+  end;
+
+  procedure BytePrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otBytePField,veBytePField,
+                   TypeOf(BytePrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptBytePConv,@PrintByteConvert);
+    end;
+  end;
+
+  procedure ShortPrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otShortIntPField,veShortIntPField,
+                   TypeOf(ShortPrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptShortPConv,@PrintShortConvert);
+    end;
+  end;
+
+  procedure RealPrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otRealPField,veRealPField,
+                   TypeOf(RealPrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptRealPConv,@PrintRealConvert);
+    end;
+  end;
+
+  {$IFDEF UseBCD}
+
+  procedure BcdPrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otBCDPField,veBCDPField,
+                   TypeOf(BCDPrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptBCDPConv,@PrintBCDConvert);
+    end;
+  end;
+
+  {$ENDIF}
+
+  {$IFOPT N+}
+
+  procedure ExtPrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otExtendedPField,veExtendedPField,
+                   TypeOf(ExtPrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptExtPConv,@PrintExtConvert);
+    end;
+  end;
+
+  procedure DblPrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otDoublePField,veDoublePField,
+                   TypeOf(DblPrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptDblPConv,@PrintDblConvert);
+    end;
+  end;
+
+  procedure SglPrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otSinglePField,veSinglePField,
+                   TypeOf(SglPrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptSglPConv,@PrintSglConvert);
+    end;
+  end;
+
+  procedure CompPrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otCompPField,veCompPField,
+                   TypeOf(CompPrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptCompPConv,@PrintCompConvert);
+    end;
+  end;
+
+  {$ENDIF}
+
+  {$IFDEF UseDates}
+
+  procedure DatePrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otDatePField,veDatePField,
+                   TypeOf(DatePrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptDatePConv,@PrintDateConvert);
+    end;
+  end;
+
+  procedure TimePrintFieldStream(SPtr : IdStreamPtr);
+  begin
+    with SPtr^ do begin
+      RegisterType(otTimePField,veTimePField,
+                   TypeOf(TimePrintField),
+                   @PrintField.Store,@PrintField.Load);
+      RegisterPointer(ptTimePConv,@PrintTimeConvert);
+    end;
+  end;
+
+  {$ENDIF}
+
+  procedure LineFieldStream(SPtr : IdStreamPtr);
+  begin
+    PrintFieldStream(SPtr);
+    with SPtr^ do begin
+      RegisterType(otLinePField,veLinePField,TypeOf(LineField),
+                   @LineField.Store,@LineField.Load);
+      RegisterPointer(ptLJRule,@LJRule);
+    end;
+  end;
+
+  procedure ShadedFieldStream(SPtr : IdStreamPtr);
+  begin
+    SPtr^.RegisterType(otShadedPField,veShadedPField,
+                       TypeOf(ShadedField),
+                       @LineField.Store,@LineField.Load);
+  end;
+
+  procedure PrintBlockStream(SPtr : IdStreamPtr);
+  begin
+    DoubleListStream(SPtr);
+    with SPtr^ do
+      RegisterType(otPrintBlock,vePrintblock,TypeOf(PrintBlock),
+                   @PrintBlock.Store,@PrintBlock.Load);
+  end;
+
+  procedure PrintPageStream(SPtr : IdStreamPtr);
+  begin
+    StringPrintFieldStream(SPtr);
+    PrinterStream(SPtr);
+    PrintBlockStream(SPtr);
+    SingleListStream(SPtr);
+
+    with SPtr^ do
+      RegisterType(otPrintPage,vePrintPage,TypeOf(PrintPage),
+                   @PrintPage.Store,@PrintPage.Load);
+  end;
+
+{$ENDIF}
+
+  {...PrintedForm methods...}
+
+  constructor PrintedForm.Init(FormID : Byte; PrinterP : PrinterPtr);
+    {-Create a new PrintedForm with PrinterP as Printer driver}
+  begin
+    if not PrintedForm.InitCustom(FormID,DefTopMargin,DefBottomMargin, {!!.20}
+                      DefLeftMargin,DefRightMargin,PrinterP) then
+      Fail;
+  end;
+
+  constructor PrintedForm.InitCustom(FormID : Byte;
+                              TopMargin,BottomMargin,
+                              LeftMargin,RightMargin : Dimension;
+                              PrinterP : PrinterPtr);
+    {-Init a new PrintedForm with full control over margins, options, and printer
+      driver}
+  begin
+    fZeroPtrs;
+    if not SingleListNode.Init then
+      Fail;
+    if not fPages.Init then begin
+      Done;
+      Fail;
+    end;
+    fPrinter       := PrinterP;
+    fOptions       := 0;
+    fTopMargin     := TopMargin;
+    fBottomMargin  := BottomMargin;
+    fLeftMargin    := LeftMargin;
+    fRightMargin   := RightMargin;
+    fNumCopies     := DefNumCopies;
+    fTabSize       := DefTabSize;
+    fID            := FormID;
+    fUserData      := Nil;
+    fLastError     := 0;
+    fPromptPadCh   := DefPadCh;
+    fFieldPadCh    := DefPadCh;
+    fPromptOpts    := 0;
+    fFieldOpts     := 0;
+  end;
+
+  procedure PrintedForm.fZeroPtrs;
+
+  begin
+    @fPrePostForm  := Nil;
+    @fErrorHandler := Nil;
+    fCurrentPage   := Nil;
+  end;
+
+  destructor PrintedForm.Done;
+    {-Destroy this PrintedForm and free associated memory}
+  begin
+    fPages.Done;
+    {If printer loaded dynamically}                                    {!!.21}
+    if FlagIsSet(fOptions, fDisposeOfPrinter) then                     {!!.21}
+      Dispose(fPrinter, Done);                                         {!!.21}
+    SingleListNode.Done;
+  end;
+
+{$IFDEF UseStreams}
+
+  procedure FormStream(SPtr : IdStreamPtr);
+
+  begin
+    PrinterStream(SPtr);
+    PrintPageStream(SPtr);
+    SingleListStream(SPtr);
+
+    with SPtr^ do
+      RegisterType(otForm,veForm,TypeOf(PrintedForm),
+                   @PrintedForm.Store,@PrintedForm.Load);
+  end;
+
+  procedure PrintedForm.Store(var S : IdStream);
+                                                          {var removed}{!!.22}
+  begin
+    S.WriteRange(fOptions,fPrinter);
+    if not FlagIsSet(fOptions, fDontStorePrinter) then                 {!!.22}
+      S.PutPtr(fPrinter);                                              {!!.22}
+    fPages.Store(S);
+    S.WritePointer(@fPrePostForm);
+    S.WritePointer(@fErrorHandler);
+  end;
+
+  constructor PrintedForm.Load(var S : IdStream);
+
+  begin
+    fZeroPtrs;
+    fCurrentPage := Nil;
+    if not SingleListNode.Init then
+      Fail;
+    S.ReadRange(fOptions,fPrinter);
+    if not FlagIsSet(fOptions, fDontStorePrinter) then begin           {!!.22}
+      fPrinter := PrinterPtr(S.GetPtr);                                {!!.22}
+      {Form includes a printer so set flag to allow automatic dispose} {!!.21}
+      SetFlag(fOptions, fDisposeOfPrinter);                            {!!.21}
+    end;                                                               {!!.22}
+    if (not fPages.Load(S)) or (S.PeekStatus <> 0) then begin
+      Done;
+      Fail;
+    end;
+    @fPrePostForm  := S.ReadPointer;
+    @fErrorHandler := S.ReadPointer;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+{$ENDIF}
+
+  procedure PrintedForm.Process;
+    {-Print this PrintedForm}
+  var
+    Page : PrintPagePtr;
+  begin
+    {If preFormFunction returns False then exit without printing this form}
+    if not PrePostFormFunc(True) then
+      Exit;
+    if fLastError <> 0 then
+      Exit;
+
+    if FlagIsSet(fPrinter^.pOptions, pGenericLineFields) then   {!!.20}
+      ExpandLineFields;                                         {!!.20}
+
+    {get the first page}
+    Page := PrintPagePtr(fPages.Head);
+
+    {for each page in form, print}
+    while Page <> Nil do begin
+      fPrinter^.ResetPage;
+      fLastError := fPrinter^.pLastError;                        {!!.03}
+      if fLastError <> 0 then                                    {!!.03}
+        Exit;
+      Page^.Print(fPrinter);
+      fLastError := Page^.ppLastError;                           {!!.03}
+      if fLastError <> 0 then                                    {!!.03}
+        Exit;
+      Page := PrintPagePtr(fPages.Next(Page));
+    end;
+
+    {call the PostFormFunction (ignore return value) }
+    if PrePostFormFunc(False) then ;
+  end;
+
+  function PrintedForm.fPrinterPtr : PrinterPtr;
+  begin
+    fPrinterPtr := fPrinter;
+  end;
+
+  procedure PrintedForm.fSetPrnRegisteredType(RegProc : PrnRegProc);
+    {-Sets the underlying Printer object's registered hardware type}
+  begin
+    RegProc(fPrinter);
+  end;
+
+  function PrintedForm.fGetLastError : Word;
+    {-Returns the last error and resets to zero}
+  begin
+    fGetLastError := fLastError;
+    fLastError    := 0;
+  end;
+
+  function PrintedForm.fPrintErrorHandler(Recoverable : Boolean) : Boolean;
+    {-Routine to handle errors}
+  begin
+    fPrintErrorHandler := False;
+    if @fErrorHandler = Nil then
+      Exit;
+    if fErrorHandler(fPrinter,fLastError,Recoverable) then begin
+      fPrintErrorHandler := True;
+      fLastError := 0;
+    end;
+  end;
+
+  function PrintedForm.PrePostFormFunc(PreForm : Boolean) : Boolean;
+    {-Call the Pre/Post user function}
+  begin
+    if @fPrePostForm = Nil then
+      PrePostFormFunc := True
+    else
+      PrePostFormFunc := fPrePostForm(PreForm,@Self);
+  end;
+
+  procedure PrintedForm.fAdjustCoordinates(var Row,Col : Dimension);
+    {-Adjusts Row and Col to account for Current Block dimensions and Page
+      margins.}
+  begin
+    with fCurrentPage^, ppCurrentBlock^ do begin
+      Col := Col + {fLeftMargin +} pbBaseCol;                      {!!.21}
+      Row := Row + {fTopMargin +} pbBaseRow;                       {!!.21}
+    end;
+  end;
+
+  procedure PrintedForm.fAdjustCoordinatesDeci(var Row, Col : Dimension);{!!.30}
+  begin                                                                  {!!.30}
+    with fCurrentPage^, ppCurrentBlock^ do begin                         {!!.30}
+      Col := Col + LJCol2Deci(pbBaseCol, fPrinter);                      {!!.30}
+      Row := Row + LJRow2Deci(pbBaseRow, fPrinter);                      {!!.30}
+    end;                                                                 {!!.30}
+  end;                                                                   {!!.30}
+
+  procedure PrintedForm.fRelativeFromAbs(AbsRow, AbsCol : Dimension;
+                                  var Row, Col   : Dimension);
+  {-Return a set of block/page relative coordinates from absolute
+    printer coordinates.  Returns Row and Col relative to current
+    block on current page.}
+  begin
+    with fCurrentPage^, ppCurrentBlock^ do begin
+      Col := AbsCol - (fLeftMargin + pbBaseCol);
+      Row := AbsRow - (fTopMargin + pbBaseRow);
+    end;
+  end;
+
+  procedure PrintedForm.NewBlock(BaseRow, BaseCol : Dimension;
+                          BlockFunc : UserBlockFunc);
+    {-Starts a new block}
+
+  begin
+    {add a new block to the current page}
+    if fCurrentPage <> Nil then begin
+      BaseRow := BaseRow + fTopMargin;                      {!!.03}
+      BaseCol := BaseCol + fLeftMargin;                     {!!.03}
+      fCurrentPage^.ppAddBlock(BaseRow,BaseCol,BlockFunc);
+      fLastError := fCurrentPage^.ppGetLastError;
+    end;
+  end;
+
+  procedure PrintedForm.DupCurrentBlock(NewRow, NewCol : Dimension);
+    {-Duplicates the current block at the new block coordinates}
+  var
+    Block : PrintBlockPtr;
+  begin
+    if (fCurrentPage = Nil) or (fCurrentPage^.ppGetCurrentBlock = Nil) then
+      Exit;
+    DuplicateBlock(NewRow+fTopMargin,NewCol+fLeftMargin,           {!!.21}
+                   fCurrentPage^.ppGetCurrentBlock,Block);         {!!.21}
+    if Block = Nil then begin
+      fLastError := epFatal + ecOutOfMemory;
+      if fPrintErrorHandler(False) then ;
+      Exit;
+    end;
+    fCurrentPage^.ppAddBlockPrim(Block);
+  end;
+
+
+  procedure PrintedForm.DupCurrentPage;
+  var
+    Page : PrintPagePtr;
+  begin
+    if fCurrentPage = Nil then
+      Exit;
+    DuplicatePage(fCurrentPage,Page);
+    if Page = Nil then begin
+      fLastError := epFatal + ecOutOfMemory;
+      if fPrintErrorHandler(False) then ;
+      Exit;
+    end;
+    AddPage(Page);
+  end;
+
+  procedure PrintedForm.AddPrintFieldPrim(pf : PrintFieldPtr);
+    {-Add a print field to the current block}
+  begin
+    {add this field to current page's current block}
+    fCurrentPage^.ppAddField(pf);
+  end;
+
+{$IFDEF UseStreams}
+
+  procedure PrintedForm.SetUserRecord(var UserRec; UserRecSize : Word);
+    {-Set the address and size of the user record for current block}
+  begin
+    if fCurrentPage <> Nil then
+      if fCurrentPage^.ppCurrentBlock <> Nil then
+        fCurrentPage^.ppCurrentBlock^.pbSetUserRecord(UserRec,UserRecSize);
+  end;
+
+  function PrintedForm.GetUserRecord : Pointer;
+    {-Return a pointer to the user record for current block}
+  begin
+    if fCurrentPage <> Nil then
+      if fCurrentPage^.ppCurrentBlock <> Nil then
+        with fCurrentPage^.ppCurrentBlock^ do
+          GetUserRecord := pbGetUserRecord;
+  end;
+
+  function PrintedForm.GetUserRecordSize : Word;
+    {-Return the size of the user record for current block}
+  begin
+    if fCurrentPage <> Nil then
+      if fCurrentPage^.ppCurrentBlock <> Nil then
+        with fCurrentPage^.ppCurrentBlock^ do
+          GetUserRecordSize := pbGetUserRecordSize;
+  end;
+
+{$ENDIF}
+
+  procedure PrintedForm.PromptOptionsOn(OptionFlags : LongInt);
+    {-}
+  begin
+    SetLongFlag(fPromptOpts,OptionFlags);
+  end;
+
+  procedure PrintedForm.FieldOptionsOn(OptionFlags : LongInt);
+    {-}
+  begin
+    SetLongFlag(fFieldOpts,OptionFlags);
+  end;
+
+  procedure PrintedForm.PromptOptionsOff(OptionFlags : LongInt);
+    {-}
+  begin
+    ClearLongFlag(fPromptOpts,OptionFlags);
+  end;
+
+  procedure PrintedForm.FieldOptionsOff(OptionFlags : LongInt);
+    {-}
+  begin
+    ClearLongFlag(fFieldOpts,OptionFlags);
+  end;
+
+  function PrintedForm.PromptOptionsAreOn(OptionFlags : LongInt) : Boolean;
+    {-}
+  begin
+    PromptOptionsAreOn := LongFlagIsSet(fPromptOpts,OptionFlags);
+  end;
+
+  function PrintedForm.FieldOptionsAreOn(OptionFlags : LongInt) : Boolean;
+    {-}
+  begin
+    FieldOptionsAreOn := LongFlagIsSet(fFieldOpts,OptionFlags);
+  end;
+
+  procedure PrintedForm.SetPromptPadChar(PadChar : Char);
+    {-Sets the prompt Pad Character}
+  begin
+    fPromptPadCh := PadChar;
+  end;
+
+  function PrintedForm.GetPromptPadChar : Char;
+    {-Returns the prompt pad character}
+  begin
+    GetPromptPadChar := fPromptPadCh;
+  end;
+
+  procedure PrintedForm.SetFieldPadChar(PadChar : Char);
+    {-Sets the Field Pad Character}
+  begin
+    fFieldPadCh := PadChar;
+  end;
+
+  function PrintedForm.GetFieldPadChar : Char;
+    {-Returns the Field pad character}
+  begin
+    GetFieldPadChar := fFieldPadCh;
+  end;
+
+  procedure PrintedForm.AddTextField(pFieldID : Word; Prompt : String;
+                                     pRow, pCol : Dimension;
+                                     pAttr : Byte;
+                                     pWidth : Byte);
+
+  var
+    Field : StringPrintFieldPtr;
+    Sptr  : StringPtr;
+    PLen  : Byte absolute Prompt;
+
+  begin
+    {if string is longer than field width, then truncate to field width}
+    if PLen > pWidth then
+      PLen := pWidth;
+
+    {allocate memory for the string on the heap}
+    if not GetMemCheck(Sptr,Word(pWidth)+1) then begin {!!.10} {!!.22}
+      fLastError := epFatal + ecOutOfMemory;
+      Exit;
+    end;
+
+    {copy string to heap}
+    Sptr^ := Prompt;
+
+    {adjust the coordinates for Block dimensions and margins}
+    fAdjustCoordinates(pRow,pCol);
+
+    {Call the StringPrintField constructor}
+    Field := New(StringPrintFieldPtr,Init(pFieldID,NullPicture,
+                                          pRow,pCol,pAttr,pWidth,
+                                          Sptr^,fPromptPadCh,
+                                          fPromptOpts or
+                                          pfDeallocVarPtr or {!!.11}
+                                          pfTextField));     {!!.11}
+    if Field = Nil then begin
+      fLastError := epFatal + ecOutOfMemory;
+      FreeMemCheck(Sptr,Word(pWidth)+1);  {!!.10} {!!.22}
+    end
+    else
+      {add the field to the current page's current block}
+      AddPrintFieldPrim(Field);
+  end;
+
+  procedure PrintedForm.AddStringField(pFieldID : Word;
+                                Prompt : String;
+                                pRow, pCol : Dimension;
+                                pAttr : Byte;
+                                pWidth : Byte;
+                                fFieldID : Word;
+                                Picture : String;
+                                fRow, fCol : Dimension;
+                                fAttr : Byte;
+                                fWidth : Byte;
+                                var PrintSt : String);
+  var
+    Field : StringPrintFieldPtr;
+
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(StringPrintFieldPtr,Init(fFieldID,Picture,
+                                          fRow,fCol,fAttr,fWidth,
+                                          PrintSt,fFieldPadCh,
+                                          fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+  procedure PrintedForm.AddCharField(pFieldID : Word;
+                              Prompt : String;
+                              pRow, pCol : Dimension;
+                              pAttr : Byte;
+                              pWidth : Byte;
+                              fFieldID : Word;
+                              Picture : String;
+                              fRow, fCol : Dimension;
+                              fAttr      : Byte;
+                              fWidth     : Byte;
+                              var PrintChar : Char);
+  var
+    Field : CharPrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(CharPrintFieldPtr,Init(fFieldID,Picture,
+                                        fRow,fCol,fAttr,fWidth,
+                                        PrintChar,fFieldPadCh,
+                                        fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+  procedure PrintedForm.AddBooleanField(pFieldID : Word;
+                                 Prompt : String;
+                                 pRow, pCol : Dimension;
+                                 pAttr : Byte;
+                                 pWidth : Byte;
+                                 fFieldID : Word;
+                                 Picture : String;
+                                 fRow, fCol : Dimension;
+                                 fAttr : Byte;
+                                 fWidth : Byte;
+                                 var PrintBool : Boolean);
+  var
+    Field : BooleanPrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(BooleanPrintFieldPtr,Init(fFieldID,Picture,
+                                           fRow,fCol,fAttr,fWidth,
+                                           PrintBool,fFieldPadCh,
+                                           fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+  procedure PrintedForm.AddYesNoField(pFieldID : Word;
+                               Prompt : String;
+                               pRow, pCol : Dimension;
+                               pAttr : Byte;
+                               pWidth : Byte;
+                               fFieldID : Word;
+                               Picture : String;
+                               fRow, fCol : Dimension;
+                               fAttr : Byte;
+                               fWidth : Byte;
+                               var PrintYesNo : Boolean);
+  var
+    Field : YesNoPrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(YesNoPrintFieldPtr,Init(fFieldID,Picture,
+                                           fRow,fCol,fAttr,fWidth,
+                                           PrintYesNo,fFieldPadCh,
+                                           fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+  procedure PrintedForm.AddLongField(pFieldID : Word;
+                              Prompt : String;
+                              pRow, pCol : Dimension;
+                              pAttr : Byte;
+                              pWidth : Byte;
+                              fFieldID : Word;
+                              Picture : String;
+                              fRow, fCol : Dimension;
+                              fAttr : Byte;
+                              fWidth : Byte;
+                              var PrintLong : LongInt);
+  var
+    Field : LongPrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(LongPrintFieldPtr,Init(fFieldID,Picture,
+                                        fRow,fCol,fAttr,fWidth,
+                                        PrintLong,fFieldPadCh,
+                                        fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+
+  procedure PrintedForm.AddWordField(pFieldID : Word;
+                              Prompt : String;
+                              pRow, pCol : Dimension;
+                              pAttr : Byte;
+                              pWidth : Byte;
+                              fFieldID : Word;
+                              Picture : String;
+                              fRow, fCol : Dimension;
+                              fAttr : Byte;
+                              fWidth : Byte;
+                              var PrintWord : Word);
+  var
+    Field : WordPrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(WordPrintFieldPtr,Init(fFieldID,Picture,
+                                        fRow,fCol,fAttr,fWidth,
+                                        PrintWord,fFieldPadCh,
+                                        fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+  procedure PrintedForm.AddIntField(pFieldID : Word;
+                             Prompt : String;
+                             pRow, pCol : Dimension;
+                             pAttr : Byte;
+                             pWidth : Byte;
+                             fFieldID : Word;
+                             Picture : String;
+                             fRow, fCol : Dimension;
+                             fAttr : Byte;
+                             fWidth : Byte;
+                             var PrintInt : Integer);
+  var
+    Field : IntPrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(IntPrintFieldPtr,Init(fFieldID,Picture,
+                                        fRow,fCol,fAttr,fWidth,
+                                        PrintInt,
+                                        fFieldPadCh,fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+  procedure PrintedForm.AddByteField(pFieldID : Word;
+                              Prompt : String;
+                              pRow, pCol : Dimension;
+                              pAttr : Byte;
+                              pWidth : Byte;
+                              fFieldID : Word;
+                              Picture : String;
+                              fRow, fCol : Dimension;
+                              fAttr : Byte;
+                              fWidth : Byte;
+                              var PrintByte : Byte);
+  var
+    Field : BytePrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(BytePrintFieldPtr,Init(fFieldID,Picture,
+                                        fRow,fCol,fAttr,fWidth,
+                                        PrintByte,fFieldPadCh,fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+  procedure PrintedForm.AddShortField(pFieldID : Word;
+                               Prompt : String;
+                               pRow, pCol : Dimension;
+                               pAttr : Byte;
+                               pWidth : Byte;
+                               fFieldID : Word;
+                               Picture : String;
+                               fRow, fCol : Dimension;
+                               fAttr : Byte;
+                               fWidth : Byte;
+                               var PrintShort : ShortInt);
+  var
+    Field : ShortPrintFieldPtr;
+
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(ShortPrintFieldPtr,Init(fFieldID,Picture,
+                                         fRow,fCol,fAttr,fWidth,
+                                         PrintShort,
+                                         fFieldPadCh,fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+  procedure PrintedForm.AddRealField(pFieldID : Word;
+                              Prompt : String;
+                              pRow, pCol : Dimension;
+                              pAttr : Byte;
+                              pWidth : Byte;
+                              fFieldID : Word;
+                              Picture : String;
+                              fRow, fCol : Dimension;
+                              fAttr : Byte;
+                              fDPlaces : Byte;
+                              fWidth : Byte;
+                              var PrintReal : Real);
+  var
+    Field : RealPrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(RealPrintFieldPtr,Init(fFieldID,Picture,
+                                        fRow,fCol,fAttr,fWidth,fDPlaces,
+                                        PrintReal,fFieldPadCh,fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+  {$IFDEF UseBCD}
+  procedure PrintedForm.AddBCDField(pFieldID : Word;
+                             Prompt : String;
+                             pRow, pCol : Dimension;
+                             pAttr : Byte;
+                             pWidth : Byte;
+                             fFieldID : Word;
+                             Picture : String;
+                             fRow, fCol : Dimension;
+                             fAttr : Byte;
+                             fDPlaces : Byte;
+                             fWidth : Byte;
+                             var PrintBCD : BCD);
+  var
+    Field : BCDPrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(BCDPrintFieldPtr,Init(fFieldID,Picture,
+                                       fRow,fCol,fAttr,fWidth,fDPlaces,
+                                       PrintBCD,fFieldPadCh,fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+  {$ENDIF}
+  {$IFOPT N+}
+  procedure PrintedForm.AddExtField(pFieldID : Word;
+                             Prompt : String;
+                             pRow, pCol : Dimension;
+                             pAttr : Byte;
+                             pWidth : Byte;
+                             fFieldID : Word;
+                             Picture : String;
+                             fRow, fCol : Dimension;
+                             fAttr : Byte;
+                             fDPlaces : Byte;
+                             fWidth : Byte;
+                             var PrintExt : Extended);
+  var
+    Field : ExtPrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(ExtPrintFieldPtr,Init(fFieldID,Picture,
+                                       fRow,fCol,fAttr,fWidth,fDPlaces,
+                                       PrintExt,fFieldPadCh,fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+  procedure PrintedForm.AddDblField(pFieldID : Word;
+                             Prompt : String;
+                             pRow, pCol : Dimension;
+                             pAttr : Byte;
+                             pWidth : Byte;
+                             fFieldID : Word;
+                             Picture : String;
+                             fRow, fCol : Dimension;
+                             fAttr : Byte;
+                             fDPlaces : Byte;
+                             fWidth : Byte;
+                             var PrintDbl : Double);
+  var
+    Field : DblPrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(DblPrintFieldPtr,Init(fFieldID,Picture,
+                                       fRow,fCol,fAttr,fWidth,fDPlaces,
+                                       PrintDbl,fFieldPadCh,fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+  procedure PrintedForm.AddSglField(pFieldID : Word;
+                             Prompt : String;
+                             pRow, pCol : Dimension;
+                             pAttr : Byte;
+                             pWidth : Byte;
+                             fFieldID : Word;
+                             Picture : String;
+                             fRow, fCol : Dimension;
+                             fAttr : Byte;
+                             fDPlaces : Byte;
+                             fWidth : Byte;
+                             var PrintSgl : Single);
+  var
+    Field : SglPrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(SglPrintFieldPtr,Init(fFieldID,Picture,
+                                       fRow,fCol,fAttr,fWidth,fDPlaces,
+                                       PrintSgl,fFieldPadCh,fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+  procedure PrintedForm.AddCompField(pFieldID : Word;
+                              Prompt : String;
+                              pRow, pCol : Dimension;
+                              pAttr : Byte;
+                              pWidth : Byte;
+                              fFieldID : Word;
+                              Picture : String;
+                              fRow, fCol : Dimension;
+                              fAttr : Byte;
+                              fWidth : Byte;
+                              var PrintComp : Comp);
+  var
+    Field : CompPrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+    fAdjustCoordinates(fRow,fCol);
+    Field := New(CompPrintFieldPtr,Init(fFieldID,Picture,
+                                        fRow,fCol,fAttr,fWidth,0,
+                                        PrintComp,fFieldPadCh,fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+  {$ENDIF}
+  {$IFDEF UseDates}
+  procedure PrintedForm.AddDateField(pFieldID : Word;
+                              Prompt : String;
+                              pRow, pCol : Dimension;
+                              pAttr : Byte;
+                              pWidth : Byte;
+                              fFieldID : Word;
+                              Picture : String;
+                              fRow, fCol : Dimension;
+                              fAttr : Byte;
+                              fWidth : Byte;
+                              var PrintDate : Date);
+  var
+    Field : DatePrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+    fAdjustCoordinates(fRow,fCol);
+    if Length(Picture) = 0 then
+      Picture := 'mm/dd/yy';
+    Field := New(DatePrintFieldPtr,Init(fFieldID,Picture,
+                                        fRow,fCol,fAttr,fWidth,
+                                        PrintDate,fFieldPadCh,fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+
+  procedure PrintedForm.AddTimeField(pFieldID : Word;
+                              Prompt : String;
+                              pRow, pCol : Dimension;
+                              pAttr : Byte;
+                              pWidth : Byte;
+                              fFieldID : Word;
+                              Picture : String;
+                              fRow, fCol : Dimension;
+                              fAttr : Byte;
+                              fWidth : Byte;
+                              var PrintTime : Time);
+  var
+    Field : TimePrintFieldPtr;
+  begin
+    if Length(Prompt) > 0 then begin                         {!!.03}
+      AddTextField(pFieldID,Prompt,pRow,pCol,pAttr,pWidth);
+      if fLastError <> 0 then
+        Exit;
+    end;                                                     {!!.03}
+    fAdjustCoordinates(fRow,fCol);
+    if Length(Picture) = 0 then
+      Picture := 'hh:mm:ss';
+    Field := New(TimePrintFieldPtr,Init(fFieldID,Picture,
+                                        fRow,fCol,fAttr,fWidth,
+                                        PrintTime,fFieldPadCh,fFieldOpts));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      AddPrintFieldPrim(Field);
+  end;
+  {$ENDIF}
+
+  procedure PrintedForm.AddDirective(FieldID : Word;
+                                     Row,Col : Dimension;
+                                     On      : Boolean;
+                                     Attr    : Byte);
+
+
+  var
+    Field : PrintFieldPtr;
+    Flags : LongInt;
+  begin
+    fAdjustCoordinates(Row,Col);
+    if On then
+      Flags := pfDirectiveOn
+    else
+      Flags := pfDirectiveOff;
+    Field := New(PrintFieldPtr,Init(FieldID,NullPicture,
+                                    Row,Col,Attr,
+                                    0,0,0,0,0,DummyConversion,
+                                    NullPicture,' ',Flags));
+    if Field = Nil then
+      fLastError := epFatal + ecOutOfMemory
+    else
+      {add the field to the current page's current block}
+      AddPrintFieldPrim(Field);
+  end;
+
+  procedure NullPrintPrim(P : PrinterPtr; Line : LineFieldPtr);
+  begin
+  end;
+
+  procedure PrintedForm.ExpandLineFields;              {!!.20}
+  var
+    Page : PrintPagePtr;
+    Block : PrintBlockPtr;
+    Field : PrintFieldPtr;
+  begin
+    {expand each linefield for each block of each page}
+    Page := PrintPagePtr(fPages.Head);
+    while Page <> Nil do begin
+      with Page^ do begin
+        Block := PrintBlockPtr(ppBlocks.Head);
+        while Block <> Nil do begin
+          with Block^ do begin
+            Field := PrintFieldPtr(pbFields.Head);
+            while Field <> Nil do begin
+              if LongFlagIsSet(Field^.pfOptions, pfExpandableLine) then
+                if LineFieldPtr(Field)^.lfExpand(Block, fPrinter) then
+                  Field^.pfOptionsOn(pfHidden);
+              Field := PrintFieldPtr(pbFields.Next(Field));
+            end;
+          end;
+          Block := PrintBlockPtr(ppBlocks.Next(Block));
+        end;
+      end;
+      Page := PrintPagePtr(fPages.Next(Page));
+    end;
+  end;
+
+  procedure PrintedForm.AddLine(FieldID               : Word;
+                         Row, Col              : Dimension;
+                         Len,LineThickness     : Dimension;
+                         Horizontal            : Boolean;
+                         LineChar              : Char;
+                         Attr                  : Byte);
+
+  var
+    Row2,Col2 : Dimension;
+    Line      : LineFieldPtr;
+    Opts      : LongInt;
+    I         : Word;
+    L         : Byte;
+    Expandable : Boolean;               {!!.20}
+  begin
+    if Horizontal then begin
+      Col2 := Col + Len;
+      Row2 := Row;
+    end
+    else begin
+      Col2 := Col;
+      Row2 := Row + Len;
+    end;
+    Expandable := FlagIsSet(fPrinter^.pOptions, pGenericLineFields);    {!!.20}
+    if (not FlagIsSet(fPrinter^.pOptions, pSupportsHPRules)) and        {!!.20}
+       (not Expandable) then begin                                      {!!.20}
+      {simple lines}
+      L := Round(Len);
+      if Horizontal then
+        AddTextField(FieldID,CharStr(LineChar,L),Row,Col,Attr,L)
+      else
+        for I := 1 to L do
+          AddTextField(FieldID,LineChar,Row + (I-1),Col,Attr,1);
+    end
+    else begin
+      if Expandable then begin
+        fAdjustCoordinates(Row, Col);
+        fAdjustCoordinates(Row2, Col2);
+      end                                       {Added}           {!!.21}
+      else begin                                                  {!!.21}
+        with fCurrentPage^, ppCurrentBlock^ do begin              {!!.21}
+          Row := Row + LJRow2Deci(pbBaseRow,fPrinter);            {!!.21}
+          Col := Col + LJCol2Deci(pbBaseCol,fPrinter);            {!!.21}
+          Row2 := Row2 + LJRow2Deci(pbBaseRow,fPrinter);          {!!.21}
+          Col2 := Col2 + LJCol2Deci(pbBaseCol,fPrinter);          {!!.21}
+        end;                                    {End Added}       {!!.21}
+      end;
+
+
+      Line := New(LineFieldPtr,Init(FieldID,Row,Col,
+                                    Row2,Col2,LineThickness,
+                                    Attr,LJRule));
+      if Line = Nil then begin
+        fLastError := InitStatus;
+        Exit;
+      end;
+      if Expandable then begin                               {!!.20}
+        Line^.pfPadChar := LineChar;                         {!!.20}
+        SetLongFlag(Line^.pfOptions, pfExpandableLine);      {!!.20}
+        if Horizontal then                                   {!!.20}
+          SetLongFlag(Line^.pfOptions, pfHorizontal);        {!!.20}
+      end;                                                   {!!.20}
+      AddPrintFieldPrim(Line);
+    end;
+  end;
+
+  procedure PrintedForm.AddBox(FieldID : Word;
+                               Row, Col       : Dimension;
+                               Width, Height  : Dimension;
+                               HLineThickness : Dimension;
+                               VLineThickness : Dimension;
+                               BoxChars : BoxCharSet;
+                               Attr : Byte);
+  var
+    S : String;
+    R,C : Dimension;
+    W : Word;
+    BFP : BoxFieldPtr;                   {!!.20}
+  begin
+    if FlagIsSet(fPrinter^.pOptions, pGenericLineFields) then begin
+      fAdjustCoordinates(Row, Col);
+      BFP := New(BoxFieldPtr, Init(FieldID, Row, Col, Width, Height,
+                                   HLineThickness, VLineThickness,
+                                   BoxChars, Attr));
+      if BFP <> Nil then
+        fCurrentPage^.ppAddField(BFP)
+      else
+        fLastError := InitStatus; {!!!!}
+      Exit;
+    end;
+    if not FlagIsSet(fPrinterPtr^.pOptions, pSupportsHPRules) then begin
+      {make box with simple lines}
+      if (Width <= 2) or (Height <= 2) then
+        Exit;
+      W := Round(Width);
+      S := BoxChars[frTL] +
+           CharStr(BoxChars[frTT],W - 2) +
+           BoxChars[frTR];
+
+      AddTextField(FieldID,S,Row,Col,Attr,W);
+
+      S := BoxChars[frBL] +
+           CharStr(BoxChars[frBB],W - 2) +
+           BoxChars[frBR];
+      AddTextField(FieldID,S,Row+Height-1,Col,Attr,W);
+      R := Row+1;
+      AddLine(FieldID,R,Col,Height - 2,1,False,
+              BoxChars[frLL],Attr);
+      C := Col + Width - 1;
+      AddLine(FieldID,R,C,Height - 2,1,False,
+              BoxChars[frRR],Attr);
+    end
+    else begin
+      AddLine(FieldID,Row,Col,Width,HLineThickness,True,
+              '-',Attr);
+      if fLastError <> 0 then
+        Exit;
+      AddLine(FieldID,Row,Col,Height,VLineThickness,False,
+              '-',Attr);
+      if fLastError <> 0 then
+        Exit;
+      AddLine(FieldID,Row,Col+Width,Height+HLineThickness,
+              VLineThickness,
+              False,'-',Attr);
+      if fLastError <> 0 then
+        Exit;
+      AddLine(FieldID,Row+Height,Col,Width+VLineThickness,
+              HLineThickness,
+              True,'-',Attr);
+    end;
+  end;
+
+  procedure PrintedForm.AddShaded(FieldID : Word;
+                                  Row,Col,
+                                  Width,Height : Dimension;
+                                  Intensity: Byte);
+  var
+    Shade : ShadedFieldPtr;
+
+  begin
+    fAdjustCoordinatesDeci(Row, Col); {!!.30}
+    Shade := New(ShadedFieldPtr,Init(FieldID,Row,Col,
+                                     Width,Height,Intensity,LJRule));
+    if Shade = Nil then begin
+      fLastError := InitStatus;
+      Exit;
+    end;
+    AddPrintFieldPrim(Shade);
+  end;
+
+  procedure PrintedForm.SetUserData(P : Pointer);
+  begin
+    fUserData := P;
+  end;
+
+  function PrintedForm.GetUserData : Pointer;
+
+  begin
+    GetUserData := fUserData;
+  end;
+  procedure PrintedForm.SetPrePageFunc(ppFunc : UserPageFunc);
+    {-Sets the function that gets called before the current page is printed}
+  begin
+    if fCurrentPage <> Nil then
+      fCurrentPage^.SetPrePageFunc(ppFunc);
+  end;
+
+  procedure PrintedForm.SetPrePostFormFunc(ppFunc : UserFormFunc);
+    {-Sets the function that gets called before and after printing the form}
+  begin
+    fPrePostForm := ppFunc;
+  end;
+
+  function PrintedForm.FindField(FieldID : Word;
+                                 var Page : PrintPagePtr;
+                                 var Block : PrintBlockPtr) : PrintFieldPtr;
+
+  var
+    Field   : PrintFieldPtr;
+
+  begin
+    FindField := Nil;
+    Page := PrintPagePtr(fPages.Head);
+    while Page <> Nil do begin
+      with Page^ do begin
+        Block := PrintBlockPtr(ppBlocks.Head);
+        while Block <> Nil do begin
+          with Block^ do begin
+            Field := PrintFieldPtr(pbFields.Head);
+            while Field <> Nil do begin
+              if Field^.pfID = FieldID then begin
+                FindField := Field;
+                Exit;
+              end;
+              Field := PrintFieldPtr(Field^.dlNext);
+            end;
+          end;
+          Block := PrintBlockPtr(Block^.slNext);
+        end;
+      end;
+      Page := PrintPagePtr(fPages.Next(Page));
+    end;
+  end;
+
+  function PrintedForm.FindNextField(Field  : PrintFieldPtr;
+                              var Page : PrintPagePtr;
+                              var Block : PrintBlockPtr) : PrintFieldPtr;
+    {-Finds the next field with the same FieldID as Field}
+  var
+    FieldID : Word;
+
+  begin
+    FindNextField := Nil;
+    FieldID := Field^.pfGetID;
+    Field := PrintFieldPtr(Block^.pbFields.Next(Field));     {!!.02}
+    while Page <> Nil do begin
+      with Page^ do begin
+        while Block <> Nil do begin
+          with Block^ do
+            while Field <> Nil do begin                      {!!.02}
+              if Field^.pfID = FieldID then begin
+                FindNextField := Field;
+                Exit;
+              end;
+              Field := PrintFieldPtr(Field^.dlNext);         {!!.02}
+            end;                                             {!!.02}
+          Block := PrintBlockPtr(ppBlocks.Next(Block));      {!!.02}
+          if Block <> Nil then                               {!!.02}
+            Field := PrintFieldPtr(Block^.pbFields.Head);    {!!.02}
+        end;
+      end;
+      Page := PrintPagePtr(fPages.Next(Page));
+      if Page <> Nil then                                    {!!.10}
+        Block := PrintBlockPtr(Page^.ppBlocks.Head);         {!!.10}
+    end;
+  end;
+
+  procedure PrintedForm.ChangeConversion(FieldID : Word;
+                                         ConvertFunc : PrintConversionFunc);
+  var
+    Field : PrintFieldPtr;
+    Block : PrintBlockPtr;
+    Page  : PrintPagePtr;
+
+  begin
+    Field := FindField(FieldID,Page,Block);
+    while Field <> Nil do begin
+      Field^.SetConversion(ConvertFunc);
+      Field := FindNextField(Field,Page,Block);
+    end;
+  end;
+
+  procedure PrintedForm.SetMargins(TopMargin,BottomMargin,
+                            LeftMargin,RightMargin  : Dimension);
+
+  begin
+    fTopMargin     := TopMargin;
+    fBottomMargin  := BottomMargin;
+    fLeftMargin    := LeftMargin;
+    fRightMargin   := RightMargin;
+  end;
+
+  procedure PrintedForm.AddPage(Page : PrintPagePtr);
+  begin
+    fPages.Append(Page);
+    fCurrentPage := Page;
+  end;
+
+  procedure PrintedForm.NewPage;
+    {-Start a new page}
+  var
+    Page : PrintPagePtr;
+
+  begin
+    Page := New(PrintPagePtr,Init);
+    if Page = Nil then begin
+      fLastError := epFatal + ecOutOfMemory;
+      Exit;
+    end;
+    if fPrinter^.pOptionsAreOn(pNoSortPositionable+pPositionable) then {!!.03}
+      Page^.ppFlags := Page^.ppFlags and ppNoSortFields;               {!!.03}
+    fPages.Append(Page);
+    fCurrentPage := Page;
+  end;
+
+  procedure PrintedForm.AddPrintMode(Name,OnEscSeq,OffEscSeq : String;
+                              Width, Height : Dimension;
+                              ID : Byte; OptionFlags : Word);
+    {-Add a Print Mode to the Printer's linked list of modes}
+  begin
+    fPrinter^.AddPrintMode(Name,OnEscSeq,OffEscSeq,Width,Height,
+                           ID,OptionFlags);
+    with fPrinter^ do begin
+      fLastError := pGetLastError;
+      if fLastError <> 0 then
+        if fPrintErrorHandler(False) then ;
+    end;
+  end;
+
+  procedure PrintedForm.VisitAllPrintFields(PfProc : PrintFieldProc; var D);
+  var
+    Field   : PrintFieldPtr;
+    Block   : PrintBlockPtr;
+    Page    : PrintPagePtr;
+
+  begin
+    Page := PrintPagePtr(fPages.Head);
+    while Page <> Nil do begin
+      with Page^ do begin
+        Block := PrintBlockPtr(ppBlocks.Head);
+        while Block <> Nil do begin
+          with Block^ do begin
+            Field := PrintFieldPtr(pbFields.Head);
+            while Field <> Nil do begin
+              PfProc(Field,D,@Self);
+              Field := PrintFieldPtr(Field^.dlNext);
+            end;
+          end;
+          Block := PrintBlockPtr(ppBlocks.Next(Block));
+        end;
+      end;
+      Page := PrintPagePtr(fPages.Next(Page));
+    end;
+  end;
+
+  procedure PrintedForm.VisitAllPrintBlocks(PbProc : PrintBlockProc; var D);
+  var
+    Block   : PrintBlockPtr;
+    Page    : PrintPagePtr;
+
+  begin
+    Page := PrintPagePtr(fPages.Head);
+    while Page <> Nil do begin
+      with Page^ do begin
+        Block := PrintBlockPtr(ppBlocks.Head);
+        while Block <> Nil do begin
+          PbProc(Block,D,@Self);
+          Block := PrintBlockPtr(Block^.slNext);
+        end;
+      end;
+      Page := PrintPagePtr(fPages.Next(Page));
+    end;
+
+  end;
+
+  procedure PrintedForm.VisitAllPrintPages(PpProc : PrintPageProc; var D);
+  var
+    Page    : PrintPagePtr;
+  begin
+    Page := PrintPagePtr(fPages.Head);
+    while Page <> Nil do begin
+      PpProc(Page,D,@Self);
+      Page := PrintPagePtr(fPages.Next(Page));
+    end;
+  end;
+
+  procedure PrintedForm.SetHeader(HeaderStr : String; Row, Col : Dimension;
+                                  HAttr : Byte);
+    {-Set up a header for the current page}
+  begin
+    if fCurrentPage <> Nil then begin
+      Row := Row + fTopMargin;                                {!!.03}
+      Col := Col + fLeftMargin;                               {!!.03}
+      fCurrentPage^.SetHeader(HeaderStr,Row,Col,HAttr);
+      fLastError := fCurrentPage^.ppGetLastError;
+    end;
+  end;
+
+  procedure PrintedForm.SetHeaderFunc(Picture : String;
+                               HeadFunc : PrintConversionFunc);
+    {-Set the HeadFunc function pointer for the current page}
+  begin
+    if fCurrentPage <> Nil then begin
+      fCurrentPage^.SetHeaderFunc(Picture,HeadFunc);
+      fLastError := fCurrentPage^.ppGetLastError;
+    end;
+  end;
+
+  function PrintedForm.GetHeader : String;
+    {-Returns the header string for the current page}
+  begin
+    if fCurrentPage <> Nil then begin
+      GetHeader := fCurrentPage^.GetHeader;
+      fLastError := fCurrentPage^.ppGetLastError;
+    end;
+  end;
+
+  procedure PrintedForm.SetFooter(FooterStr : String; Row, Col : Dimension;
+                                  FAttr : Byte);
+    {-Set up a Footer for the current page}
+  begin
+    if fCurrentPage <> Nil then begin
+      Row := Row + fTopMargin;                                {!!.03}
+      Col := Col + fLeftMargin;                               {!!.03}
+      fCurrentPage^.SetFooter(FooterStr,Row,Col,FAttr);
+      fLastError := fCurrentPage^.ppGetLastError;
+    end;
+  end;
+
+  procedure PrintedForm.SetFooterFunc(Picture : String;
+                               FootFunc : PrintConversionFunc);
+    {-Set the HeadFunc function pointer for the current page}
+  begin
+    if fCurrentPage <> Nil then begin
+      fCurrentPage^.SetFooterFunc(Picture,FootFunc);
+      fLastError := fCurrentPage^.ppGetLastError;
+    end;
+  end;
+
+  function PrintedForm.GetFooter : String;
+    {-Returns the Footer string for the current page}
+  begin
+    if fCurrentPage <> Nil then begin
+      GetFooter := fCurrentPage^.GetFooter;
+      fLastError := fCurrentPage^.ppGetLastError;
+    end;
+  end;
+
+  procedure PrintedForm.SetErrorHandler(ErrorFunc : PrintErrorFunc);
+    {-Sets the user error handler}
+  begin
+    fErrorHandler := ErrorFunc;
+    fPrinter^.SetPrintErrorFunc(ErrorFunc);
+  end;
+
+
+  {...Report methods...}
+  constructor Report.Init;
+    {-Create a new Report}
+  begin
+    rLastError := 0;
+    if not Root.Init then
+      Fail;
+    if not rForms.Init then
+      Fail;
+  end;
+
+  destructor Report.Done;
+    {-Destroy a report}
+  begin
+    rForms.Done;
+    Root.Done;
+  end;
+
+{$IFDEF UseStreams}
+
+  procedure ReportStream(SPtr : IdStreamPtr);
+  begin
+    FormStream(SPtr);
+    SPtr^.RegisterType(otReport,veReport,TypeOf(Report),
+                       @Report.Store,@Report.Load);
+  end;
+
+  procedure Report.Store(var S : IdStream);
+  begin
+    rForms.Store(S);
+  end;
+
+  constructor Report.Load(var S : IdStream);
+  begin
+    Root.Init;
+    rCurrentForm := Nil;
+    rLastError   := 0;
+    rForms.Load(S);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+{$ENDIF}
+
+  procedure Report.Process;
+    {-Print the report}
+  var
+    Frm : PrintedFormPtr;
+  begin
+    {Loop for each PrintedForm in report}
+    Frm := PrintedFormPtr(rForms.Head);
+    while Frm <> Nil do begin
+      Frm^.Process;
+      Frm := PrintedFormPtr(rForms.Next(Frm));
+      if Frm^.fLastError <> 0 then
+        Exit;
+    end;
+  end;
+
+  function Report.rGetLastError : Word;
+  begin
+    rGetLastError := rLastError;
+    rLastError := 0;
+  end;
+
+  procedure Report.AddForm(fPtr : PrintedFormPtr);
+  begin
+    rCurrentForm := fPtr;
+    rForms.Append(fPtr);
+  end;
+
+  function Report.FindForm(FormID : Byte) : PrintedFormPtr;
+    {-Return a pointer to the PrintedForm with the specified ID}
+  var
+    Frm : PrintedFormPtr;
+  begin
+    FindForm := Nil;
+    Frm := PrintedFormPtr(rForms.Head);
+    while Frm <> Nil do begin
+      if Frm^.fID = FormID then begin
+        FindForm := Frm;
+        Exit;
+      end;
+      Frm := PrintedFormPtr(rForms.Next(Frm));
+    end;
+  end;
+
+  procedure Report.VisitAllForms(fProc : FormProc; var D);
+  var
+    Frm    : PrintedFormPtr;
+  begin
+    Frm := PrintedFormPtr(rForms.Head);
+    while Frm <> Nil do begin
+      fProc(Frm,D,@Self);
+      Frm := PrintedFormPtr(Frm^.fPages.Next(Frm));
+    end;
+  end;
+
+{$IFDEF UseStreams}
+
+  procedure AllBasicFieldsStream(SPtr : IdStreamPtr);
+  begin
+    PrintFieldStream(SPtr);
+    StringPrintFieldStream(SPtr);
+    CharPrintFieldStream(SPtr);
+    WordPrintFieldStream(SPtr);
+    BooleanPrintFieldStream(SPtr);
+    YesNoPrintFieldStream(SPtr);
+    LongPrintFieldStream(SPtr);
+    BytePrintFieldStream(SPtr);
+    IntPrintFieldStream(SPtr);
+    ShortPrintFieldStream(SPtr);
+    RealPrintFieldStream(SPtr);
+  end;
+  {$IFOPT N+}
+  procedure All8087FieldStream(SPtr : IdStreamPtr);
+  begin
+    ExtPrintFieldStream(SPtr);
+    DblPrintFieldStream(SPtr);
+    SglPrintFieldStream(SPtr);
+    CompPrintFieldStream(SPtr);
+  end;
+  {$ENDIF}
+
+  {$IFDEF UseDates}
+  procedure AllDateFieldsStream(SPtr : IdStreamPtr);
+  begin
+    DatePrintFieldStream(SPtr);
+    TimePrintFieldStream(SPtr);
+  end;
+  {$ENDIF}
+
+  procedure AllLineFieldsStream(SPtr : IdStreamPtr);
+
+  begin
+    LineFieldStream(SPtr);
+    ShadedFieldStream(SPtr);
+  end;
+
+  procedure AllPrintFieldsStream(SPtr : IdStreamPtr);
+
+  begin
+    AllBasicFieldsStream(SPtr);
+    {$IFDEF UseBCD}
+    BcdPrintFieldStream(SPtr);
+    {$ENDIF}
+    {$IFOPT N+}
+    All8087FieldStream(SPtr);
+    {$ENDIF}
+    {$IFDEF UseDates}
+    AllDateFieldsStream(SPtr);
+    {$ENDIF}
+    AllLineFieldsStream(SPtr);
+  end;
+
+{$ENDIF}

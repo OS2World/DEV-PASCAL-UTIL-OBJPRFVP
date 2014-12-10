@@ -1,0 +1,1867 @@
+{*********************************************************}
+{*                   MMMAIN.IN2 1.30                     *}
+{*     Copyright (c) TurboPower Software 1989, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  function EditColor(XL : Byte; var Color, Mono : Byte) : Boolean;
+    {-Pop up a list to get a color/mono choice}
+  const
+    ColorHdr = ' Color ';
+  var
+    CS : ColorSelector;
+    Redraw : Boolean;
+  begin
+    EditColor := False;
+    if not CS.Init(XL, 6, False) then
+      InsufficientMemory
+    else with CS do begin
+      wFrame.AddHeader(ColorHdr, heTC);
+      wFrame.AddShadow(shBR, shSeeThru);
+      SetColor(Color);
+      Process;
+      if (GetLastCommand <> ccQuit) then begin
+        if (GetColor <> Color) then begin
+          Modified := True;
+          EditColor := True;
+          Color := GetColor;
+        end;
+
+        SetColor(Mono);
+        with wFrame do
+          ChangeHeaderString(GetLastHeaderIndex, ' Mono ', Redraw);
+        ActivateWrite;
+        Erase;
+        Draw;
+        DeactivateWrite;
+        Process;
+        if (GetLastCommand <> ccQuit) and (GetColor <> Mono) then begin
+          Modified := True;
+          EditColor := True;
+          Mono := GetColor;
+        end;
+      end;
+
+      Erase;
+      Done;
+    end;
+  end;
+
+  function ApplyGlobally : Boolean;
+    {-See if user wants changes applied globally}
+  const
+    Prompt = 'Apply changes globally?';
+  var
+    OK : Boolean;
+    Esc : Boolean;
+  begin
+    if HaveObj then begin
+      {Update the menu system so that status shows}
+      with MainMenu do begin
+        ActivateWrite;
+        Erase;
+        Draw;
+        DeactivateWrite;
+      end;
+      OK := PopupYesNo('', Prompt, NoChar, Esc);
+      ApplyGlobally := OK and not Esc;
+    end else
+      ApplyGlobally := False;
+  end;
+
+  procedure ChangeDefColors(Item : Word);
+    {-Change default color set, propagate throughout menu system if specified}
+  const
+    defColorXL = 35;
+  begin
+    with UserMenu, DefColors do
+      case Item of
+        mmTextDef :
+          if not EditColor(defColorXL, TextColor, TextMono) then
+            Exit
+          else if ApplyGlobally then
+            SetAllNormAttr(TextColor, TextMono);
+        mmFrameDef :
+          if not EditColor(defColorXL, FrameColor, FrameMono) then
+            Exit
+          else if ApplyGlobally then
+            SetAllFrameAttr(FrameColor, FrameMono);
+        mmHeaderDef :
+          if not EditColor(defColorXL, HeaderColor, HeaderMono) then
+            Exit
+          else if ApplyGlobally then
+            SetAllHeaderAttr(HeaderColor, HeaderMono);
+        mmShadowDef :
+          if not EditColor(defColorXL, ShadowColor, ShadowMono) then
+            Exit
+          else if ApplyGlobally then
+            SetAllShadowAttr(ShadowColor, ShadowMono);
+        mmHiliteDef :
+          if not EditColor(defColorXL, HighItemColor, HighItemMono) then
+            Exit
+          else if ApplyGlobally then
+            SetAllHighAttr(HighItemColor, HighItemMono);
+        mmSelectedDef :
+          if not EditColor(defColorXL, SelItemColor, SelItemMono) then
+            Exit
+          else if ApplyGlobally then
+            SetAllSelectAttr(SelItemColor, SelItemMono);
+        mmProtectedDef :
+          if not EditColor(defColorXL, ProItemColor, ProItemMono) then
+            Exit
+          else if ApplyGlobally then
+            SetAllProtectAttr(ProItemColor, ProItemMono);
+        mmMouseDef :
+          if not EditColor(defColorXL, MouseColor, MouseMono) then
+            Exit;
+        mmHelpLineDef :
+          if not EditColor(defColorXL, DefHelpLineColor, DefHelpLineMono) then
+            Exit
+          else if HaveObj then
+            UserMenu.SetHelpAttr(DefHelpLineColor, DefHelpLineMono);
+      end;
+    RedrawUserObj(False);
+  end;
+
+  procedure ChangeSubColors(Item : Word);
+    {-Change color of a particular submenu}
+  const
+    subColorXL = 48;
+  begin
+    with UserMenu do
+      case Item of
+        mmTextSub :
+          with ActiveListPtr^ do
+            if not EditColor(subColorXL, ilNormColor, ilNormMono) then
+              Exit
+            else
+              ActiveWinPtr^.SetTextAttr(ilNormColor, ilNormMono);
+        mmFrameSub :
+          with ActiveWinPtr^.wFrame do begin {!!.22}
+            if not EditColor(subColorXL, frFrameColor, frFrameMono) then
+              Exit;
+            SetSpanAttr(frFrameColor, frFrameMono); {!!.22}
+          end; {!!.22}
+        mmHeaderSub :
+          with ActiveWinPtr^, wFrame do
+            if not EditColor(subColorXL, frHeaderColor, frHeaderMono) then
+              Exit
+            else
+              ResetHeaderColor(frHeaderColor, frHeaderMono);
+        mmShadowSub :
+          with ActiveWinPtr^, wFrame do
+            if not EditColor(subColorXL, frShadowColor, frShadowMono) then
+              Exit
+            else
+              ResetShadowColor(frShadowColor, frShadowMono);
+
+        mmHiliteSub :
+          with ActiveListPtr^ do
+            if not EditColor(subColorXL, ilHighColor, ilHighMono) then
+              Exit;
+        mmSelectedSub :
+          with ActiveListPtr^ do
+            if not EditColor(subColorXL, ilSelectColor, ilSelectMono) then
+              Exit;
+        mmProtectedSub :
+          with ActiveListPtr^ do
+            if not EditColor(subColorXL, ilProtectColor, ilProtectMono) then
+              Exit;
+      end;
+    RedrawUserObj(False);
+  end;
+
+  function OkToQuit : Boolean;
+    {-Returns True if OK to quit program}
+  var
+    Save : Boolean;
+    Esc : Boolean;
+  begin
+    OkToQuit := True;
+    if Modified then begin
+      Save := PopupYesNo(ObjName, SavePrompt, YesChar, Esc);
+      if Esc then
+        OkToQuit := False
+      else if Save then
+        {Save menu system}
+        SaveUserMenu;
+    end;
+  end;
+
+  procedure ScrollAround;
+    {-Allow user to position highlight bar and test menu system}
+  const
+    PromptMsg = ' <F10> Return to main menu  <AltX> Exit program ';
+  var
+    Finished : Boolean;
+    Prompt : StackWindow;
+  begin
+    if not HaveObj then
+      Exit;
+
+    MainMenu.Erase;
+
+    {Display a prompt line tucked under the user menu}
+    if not DrawPromptLine(PromptMsg) then
+      Exit;
+
+    {$IFDEF UseMouse}
+    if MouseInstalled then
+      if UserMenu.mnOptionsAreOn(mnMouseSupport) then begin
+        with DefColors do
+          SoftMouseCursor($0000, (ColorMono(MouseColor, MouseMono) shl 8)+
+                                 Byte(MouseChar));
+      end else begin
+        MenuCommands.cpOptionsOff(cpEnableMouse);
+        HideMouse;
+      end;
+    {$ENDIF}
+
+    Finished := False;
+    with UserMenu do
+      repeat
+        {get user menu choice}
+        Process;
+
+        case GetLastCommand of
+          MainMenuCmd, ccQuit, ccSelect :
+            Finished := True;
+          ccError, ExitCmd :
+            begin
+              Finished := True;
+              AllDone := OkToQuit;
+            end;
+        end;
+      until Finished;
+
+    {$IFDEF UseMouse}
+    if MouseInstalled then begin
+      with MainColors do
+        SoftMouseCursor($0000, (ColorMono(MouseColor, MouseMono) shl 8)+
+                               Byte(MouseChar));
+      MenuCommands.cpOptionsOn(cpEnableMouse);
+      ShowMouse;
+    end;
+    {$ENDIF}
+
+    RemovePromptLine;
+  end;
+
+  procedure AdjustMenuWindow(WPtr : RawWindowPtr; XL, YL, XH, YH : Byte);
+    {-Adjust the coordinates of a menu window}
+  var
+    Flags : LongInt;
+  begin
+    with WPtr^ do begin
+      Flags := wFlags;
+      SetLongFlag(wFlags, wResizeable);
+      AdjustWindow(XL, YL, XH, YH);
+      wFlags := Flags;
+    end;
+  end;
+
+  procedure AdjustMenuDimensions(WPtr : RawWindowPtr; W, H : Byte;
+                                 Shrink : Boolean);
+    {-Resize window as close as possible to specified width and height}
+  var
+    XL : Byte;
+    XH : Byte;
+    YL : Byte;
+    YH : Byte;
+    FXL : Byte;
+    FXH : Byte;
+    FYL : Byte;
+    FYH : Byte;
+  begin
+    with WPtr^ do begin
+      if not Shrink then
+        if (W <= Width) and (H <= Height) then
+          Exit;
+      XL := wXL;
+      YL := wYL;
+      XH := XL+W-1;
+      YH := YL+H-1;
+      if wFrame.IsFramed then begin
+        FXL := XL-1;
+        FXH := XH+1;
+        FYL := YL-1;
+        FYH := YH+1;
+      end else begin
+        FXL := XL;
+        FXH := XH;
+        FYL := YL;
+        FYH := YH;
+      end;
+      if FXH > ScreenWidth then begin
+        if FXH-FXL+1 > ScreenWidth then
+          {Do our best}
+          dec(XL, FXL-1)
+        else
+          {Slide left to fit on screen}
+          XL := ScreenWidth-W+1-(XL-FXL);
+        XH := ScreenWidth-(XL-FXL);
+      end;
+      if FYH > ScreenHeight then begin
+        if FYH-FYL+1 > ScreenHeight then
+          {Do our best}
+          dec(YL, FYL-1)
+        else
+          {Slide left to fit on screen}
+          YL := ScreenHeight-W+1-(YL-FYL);
+        YH := ScreenHeight-(YL-FYL);
+      end;
+
+      {Adjust the window coordinates}
+      AdjustMenuWindow(WPtr, XL, YL, XH, YH);
+    end;
+  end;
+
+  procedure AdjustSubmenu(Shrink : Boolean);
+    {-Recompute size of active submenu and redraw after items are modified}
+  const
+    ResizingMenu = ' resizing submenu';
+  var
+    WinPtr : RawWindowPtr;
+    Status : Word;
+    W : Byte;
+    H : Byte;
+  begin
+    {Compute new window coordinates and resize window}
+    UserMenu.ActiveListPtr^.OptimumSize(W, H);
+    if W = 0 then
+      W := DefXH-DefXL+1;
+    if H = 0 then
+      H := DefYH-DefYL+1;
+    WinPtr := UserMenu.ActiveWinPtr;
+    wStack.OptimizeTiled(False); {!!.11}
+    UserMenu.ActivateWrite;
+    WinPtr^.Erase;
+    AdjustMenuDimensions(WinPtr, W, H, Shrink);
+    WinPtr^.Draw;
+    UserMenu.DeactivateWrite;
+    wStack.OptimizeTiled(True); {!!.11}
+    Status := WinPtr^.RawError; {!!.01}
+    if Status <> 0 then begin
+      PopupErrorMessage(ErrorLeadIn+Long2Str(Status)+ResizingMenu);
+      WinPtr^.ClearErrors;      {!!.01}
+    end;
+  end;
+
+  function NextPos(ListPtr : MenuItemListPtr;
+                   ItemPtr : MenuItemNodePtr) : Byte;
+    {-Return DisplayPos for item starting naturally after ItemPtr}
+  var
+    DisplayPos : Byte;
+    SelectPos : Byte;
+    S : String;
+  begin
+    if ListPtr^.Orientation = Vertical then
+      NextPos := ItemPtr^.GetDisplayPos+1
+    else begin
+      ItemPtr^.DisplayInfo(DisplayPos, SelectPos, S);
+      NextPos := DisplayPos+Length(S)+2;
+    end;
+  end;
+
+  procedure ExpandItemsPrim(ListPtr : MenuItemListPtr;
+                            ItemPtr : MenuItemNodePtr;
+                            MinPos : Byte;
+                            Pack : Boolean);
+    {-Shift the DisplayPos of items starting at ItemPtr to at least meet MinPos}
+  begin
+    with ListPtr^ do
+      repeat
+        if Pack or (ItemPtr^.GetDisplayPos < MinPos) then
+          ItemPtr^.ChangeDisplayPos(MinPos);
+        MinPos := NextPos(ListPtr, ItemPtr);
+        ItemPtr := MenuItemNodePtr(Next(ItemPtr));
+      until ItemPtr = MenuItemNodePtr(Head);
+  end;
+
+  procedure ExpandItems(ListPtr : MenuItemListPtr;
+                        ItemPtr : MenuItemNodePtr;
+                        MinPos : Byte);
+    {-Adjust DisplayPos of items to a least meet MinPos}
+  begin
+    ExpandItemsPrim(ListPtr, ItemPtr, MinPos, False);
+  end;
+
+  procedure ShiftItems(ListPtr : MenuItemListPtr;
+                       ItemPtr : MenuItemNodePtr;
+                       Delta : Integer);
+    {-Shift the DisplayPos of items starting at ItemPtr by Delta}
+  begin
+    with ListPtr^ do
+      repeat
+        ItemPtr^.ChangeDisplayPos(ItemPtr^.GetDisplayPos+Delta);
+        ItemPtr := MenuItemNodePtr(Next(ItemPtr));
+      until ItemPtr = MenuItemNodePtr(Head);
+  end;
+
+  function MinDisplayPos(ListPtr : MenuItemListPtr) : Byte;
+    {-Return the minimum display position of a submenu given its orientation}
+  begin
+    if ListPtr^.Orientation = Vertical then
+      MinDisplayPos := 1
+    else
+      MinDisplayPos := 2;
+  end;
+
+  procedure PackItems(ListPtr : MenuItemListPtr);
+    {-Squeeze the items into minimal space}
+  begin
+    ExpandItemsPrim(ListPtr, MenuItemNodePtr(ListPtr^.Head),
+                    MinDisplayPos(ListPtr), True);
+  end;
+
+  function ChooseHeader(var HP : HeaderPtr) : Boolean;
+    {-Choose an existing header}
+  const
+    ErrorMsg = 'Frame has no headers';
+    PromptMsg = ' Select Header ';
+  var
+    HS : HeaderSelector;
+  begin
+    ChooseHeader := False;
+    HP := nil;
+    with UserMenu.ActiveWinPtr^ do
+      if not HasHeaders then
+        PopupErrorMessage(ErrorMsg)
+      else if not HS.Init(32, 13, 76, 23, 15, wFrame) then
+        InsufficientMemory
+      else with HS do begin
+        {change the attribute of the column labels}
+        with MainColors do
+          SetLabelAttr(HighItemColor, HighItemMono);
+        wFrame.AddHeader(PromptMsg, heTC);
+        wFrame.AddShadow(shBR, shSeeThru);
+        Process;
+        if GetLastCommand <> ccQuit then begin
+          HP := GetLastHeader;
+          ChooseHeader := True;
+        end;
+        Erase;
+        Done;
+      end;
+  end;
+
+  function ChooseHeaderType(var HPT : HeaderPosType) : Boolean;
+    {-Choose a header location}
+  const
+    ErrorMsg = 'Entry screen has no frame';
+    PromptMsg = ' Header Type ';
+  var
+    HTS : HeaderTypeSelector;
+  begin
+    ChooseHeaderType := False;
+    with UserMenu.ActiveWinPtr^ do
+      if not HasFrame then
+        PopupErrorMessage(ErrorMsg)
+      else if not HTS.Init(42, 15, 56, 20) then
+        InsufficientMemory
+      else with HTS do begin
+        wFrame.AddHeader(PromptMsg, heTC);
+        wFrame.AddShadow(shBR, shSeeThru);
+        Process;
+        if GetLastCommand <> ccQuit then begin
+          HPT := GetLastHeaderType;
+          ChooseHeaderType := True;
+        end;
+        Erase;
+        Done;
+      end;
+  end;
+
+  procedure RemoveHeader(HP : HeaderPtr);
+    {-Remove normal or span header and update screen}
+  begin
+    with UserMenu.ActiveWinPtr^ do begin
+      UserMenu.ActivateWrite;
+      Erase;
+      wFrame.frHeaders.Delete(HP);
+      Draw;
+      UserMenu.DeactivateWrite;
+      Modified := True;
+    end;
+  end;
+
+  procedure RemoveSubHeader;
+    {-Remove a header from current submenu}
+  const
+    ConfirmMsg = 'Delete Header';
+  var
+    HP : HeaderPtr;
+  begin
+    if ChooseHeader(HP) then
+      if ConfirmAction(ConfirmMsg) then
+        RemoveHeader(HP);
+  end;
+
+  function EditHeaderPrim(HP : HeaderPtr) : Boolean;
+    {-Edit the header string pointed to by HP}
+  const
+    PromptMsg = 'Header: ';
+    ConfirmMsg = 'Delete Header';
+  var
+    Status : Word;
+    MaxLen : Byte;
+    Redraw : Boolean;
+    S : string;
+  begin
+    EditHeaderPrim := False;
+
+    {edit the header string}
+    S := HP^.heName^;
+    MaxLen := UserMenu.ActiveWinPtr^.Width;
+    if Length(S) > MaxLen then
+      MaxLen := Length(S);
+    if not PopupGetString('', PromptMsg, False, False, MaxLen, S) then
+      Exit;
+
+    {check for no change}
+    if S = HP^.heName^ then begin
+      {Set result True to allow color editing even if string isn't changed}
+      EditHeaderPrim := True;
+      Exit;
+    end;
+
+    if S = '' then
+      if not ConfirmAction(ConfirmMsg) then
+        Exit;
+
+    with UserMenu.ActiveWinPtr^ do begin
+      UserMenu.ActivateWrite;
+      Erase;
+      if S = '' then
+        wFrame.frHeaders.Delete(HP)
+      else begin
+        wFrame.frChangeHeaderString(HP, S, Redraw);
+        EditHeaderPrim := True;
+      end;
+      Status := wFrame.GetLastError;
+
+      Draw;
+      UserMenu.DeactivateWrite;
+
+      if Status <> 0 then begin
+        InsufficientMemory;
+        EditHeaderPrim := False;
+      end;
+      Modified := True;
+    end;
+  end;
+
+  procedure ToggleBackdrop;
+    {-Switch to a new backdrop}
+  begin
+    if DefBackdrop = bdGrid then
+      DefBackdrop := bdPlain
+    else
+      inc(DefBackdrop);
+    wStack.OptimizeTiled(False); {!!.03}
+    if HaveObj then begin
+      UserMenu.ActivateWrite;
+      EraseUserMenu;
+      DrawBackdrop;
+      DrawUserMenu;
+      UserMenu.DeactivateWrite;
+    end else with MainMenu do begin
+      ActivateWrite;
+      Erase;
+      DrawBackdrop;
+      Draw;
+      DeactivateWrite;
+    end;
+    wStack.OptimizeTiled(True);  {!!.03}
+  end;
+
+  procedure RenumberKey(IPtr : MenuItemNodePtr; var D; MPtr : MenuPtr);
+    {-Assign new key number and increment for next item}
+  begin
+    IPtr^.ChangeKey(LongInt(D));
+    inc(LongInt(D));
+  end;
+
+  procedure RekeyUserMenu;
+    {-Assign all item codes in depth first ascending order}
+  const
+    ConfirmMsg = 'Renumber all items';
+    SuccessMsg = 'All items renumbered...';
+  var
+    NextKey : LongInt;
+  begin
+    if not ConfirmAction(ConfirmMsg) then
+      Exit;
+    NextKey := 1;
+    UserMenu.VisitAllItems(RenumberKey, NextKey);
+    Modified := True;
+    PopupDelayMessage(SuccessMsg);
+  end;
+
+  function PromptForDelay(var Delay : Word) : Boolean;
+    {-Pop up window and get a delay value}
+  const
+    HeaderMsg = 'Stage Delay';
+    PromptMsg = 'New value [0-1000]: ';
+  var
+    NewDelay : Word;
+  begin
+    PromptForDelay := False;
+    NewDelay := Delay;
+    if PopupGetWord(HeaderMsg, PromptMsg, NewDelay, 0, 1000) then
+      if NewDelay <> Delay then begin
+        Delay := NewDelay;
+        PromptForDelay := True;
+      end;
+  end;
+
+type
+  StageDelayRec =
+    record
+      NewDelay : Word;
+      Exploding : Boolean;
+    end;
+
+  procedure SetStageDelay(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+    {-Set stage delay of one submenu, and set flag if any one is exploding}
+  begin
+    with WPtr^, StageDelayRec(D) do begin
+      wStageDelay := NewDelay;
+      Exploding := Exploding or IsExploding;
+    end;
+  end;
+
+  procedure ChangeDefDelay;
+    {-Pop up window and get default explosion delay}
+  var
+    StageRec : StageDelayRec;
+  begin
+    if PromptForDelay(DefDelay) then
+      if ApplyGlobally then begin
+        StageRec.NewDelay := DefDelay;
+        StageRec.Exploding := False;
+        UserMenu.VisitAllWindows(SetStageDelay, StageRec);
+        if StageRec.Exploding then
+          RedrawUserObj(True);
+        Modified := True;
+      end;
+  end;
+
+  procedure ChangeDefExplosions;
+    {-Toggle default explosions}
+  begin
+    DefExplosions := not DefExplosions;
+    if ApplyGlobally then begin
+      if DefExplosions then begin
+        UserMenu.EnableAllExplosions(DefDelay);
+        RedrawUserObj(True);
+      end else
+        UserMenu.EnableAllNormalOpen;
+      Modified := True;
+    end;
+  end;
+
+  procedure ToggleDefShadows;
+    {-Toggle default shadows}
+  var
+    Status : Word;
+  begin
+    if DefShadow = shNone then
+      DefShadow := shSeeThru
+    else
+      inc(DefShadow);
+
+    if ApplyGlobally then
+      with UserMenu do begin
+        wStack.OptimizeTiled(False); {!!.11}
+        ActivateWrite;
+        EraseUserMenu;
+        AddShadows(True, shBR, DefShadow);
+        Status := RawError; {!!.01}
+        DrawUserMenu;
+        DeactivateWrite;
+        wStack.OptimizeTiled(True); {!!.11}
+        if Status <> 0 then begin
+          InsufficientMemory;
+          ClearErrors;      {!!.01}
+        end;
+        Modified := True;
+      end;
+  end;
+
+type
+  SoundEffectsRec =
+    record
+      SoundOn : Boolean;
+      Exploding : Boolean;
+    end;
+
+  procedure SetSoundBit(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+    {-Set sound bit of one submenu}
+  begin
+    with WPtr^, SoundEffectsRec(D) do begin
+      if SoundOn then
+        wFlags := wFlags or wSoundEffects
+      else
+        wFlags := wFlags and not wSoundEffects;
+      Exploding := Exploding or IsExploding;
+    end;
+  end;
+
+  procedure ToggleDefSound;
+    {-Toggle sound effects during explosions}
+  var
+    SoundRec : SoundEffectsRec;
+  begin
+    DefSound := not DefSound;
+    if DefSound then
+      SetLongFlag(DefOptions, wSoundEffects)
+    else
+      ClearLongFlag(DefOptions, wSoundEffects);
+    if ApplyGlobally then begin
+      SoundRec.SoundOn := DefSound;
+      SoundRec.Exploding := False;
+      UserMenu.VisitAllWindows(SetSoundBit, SoundRec);
+      if SoundRec.Exploding then
+        RedrawUserObj(True);
+      Modified := True;
+    end;
+  end;
+
+  function ChooseFrame(XL : Byte; var FR : FrameArray) : Boolean;
+    {-Return new frame choice and True if new selection made}
+  var
+    FS : FrameSelector;
+    NewFR : FrameArray;
+  begin
+    ChooseFrame := False;
+    with FS do begin
+      if not Init(XL, 8, XL+11, 23) then begin
+        InsufficientMemory;
+        Exit;
+      end;
+      wFrame.AddShadow(shBR, shSeeThru);
+      wFrame.AddCustomScrollBar(
+        frRR, 0, MaxLongInt, 5, 1, SliderChar, ScrollBarChar, MainColors);
+      SetInitialFrameChoice(FR);
+      Process;
+      GetLastFrameChoice(NewFR);
+      if (GetLastCommand <> ccQuit) and (NewFR <> FR) then begin
+        FR := NewFR;
+        ChooseFrame := True;
+      end;
+      Erase;
+      Done;
+    end;
+  end;
+
+type
+  FrameModRec =
+    record
+      Status : Word;
+      NewFrame : FrameArray;
+    end;
+
+  procedure ComputeJoins(SpanChar, NonSpanChar : Char;
+                         var FirstChar, LastChar : Char);
+    {-Return join characters given characters on orthogonal edges of frame}
+  const             {Span,NonSpan}
+    FirstJoin : array[1..4, 1..4] of Char =
+    (('Ä', 'Í', 'Ã', 'Ç'),
+     ('Ä', 'Í', 'Æ', 'Ì'),
+     ('Â', 'Ñ', '³', 'º'),
+     ('Ò', 'Ë', '³', 'º'));
+    LastJoin :  array[1..4, 1..4] of Char =
+    (('Ä', 'Í', '´', '¶'),
+     ('Ä', 'Í', 'µ', '¹'),
+     ('Á', 'Ï', '³', 'º'),
+     ('Ð', 'Ê', '³', 'º'));
+  var
+    SpanIndex : Byte;
+    NonSpanIndex : Byte;
+  begin
+    SpanIndex := Pos(SpanChar, 'ÄÍ³º');
+    NonSpanIndex := Pos(NonSpanChar, 'ÄÍ³º');
+    if (NonSpanIndex = 0) or (SpanIndex = 0) then begin
+      FirstChar := SpanChar;
+      LastChar := SpanChar;
+    end else begin
+      FirstChar := FirstJoin[SpanIndex, NonSpanIndex];
+      LastChar := LastJoin[SpanIndex, NonSpanIndex];
+    end;
+  end;
+
+  procedure FixupSpans(WPtr : RawWindowPtr);
+    {-Fix up any spans associated with window}
+  var
+    HPtr : HeaderPtr;
+    SpanChar : Char;
+    NonSpanChar : Char;
+    FirstChar : Char;
+    LastChar : Char;
+    Len : Byte;
+  begin
+    with WPtr^.wFrame do begin
+      HPtr := HeaderPtr(frHeaders.Head);
+      while HPtr <> nil do begin
+        with HPtr^ do
+          if heType = heSpan then begin
+            case hePosn of
+              frTT, frBB :
+                begin
+                  {Span goes horizontal}
+                  SpanChar := frChars[frTT];
+                  if SpanChar = NoFrameChar then
+                    SpanChar := 'Ä';
+                  NonSpanChar := frChars[frLL];
+                end;
+              frLL, frRR :
+                begin
+                  {Span goes vertical}
+                  SpanChar := frChars[frLL];
+                  if SpanChar = NoFrameChar then
+                    SpanChar := '³';
+                  NonSpanChar := frChars[frTT];
+                end;
+            end;
+            Len := Length(heName^);
+            FillChar(heName^[1], Len, SpanChar);
+            if Len > 2 then begin
+              ComputeJoins(SpanChar, NonSpanChar, FirstChar, LastChar);
+              heName^[1] := FirstChar;
+              heName^[Len] := LastChar;
+            end;
+          end;
+        HPtr := HeaderPtr(frHeaders.Next(HPtr));
+      end;
+    end;
+  end;
+
+  procedure SetFrameType(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+    {-Change a frame to NewFrame}
+  var
+    Status : Word absolute D;
+    SDT : ShadowDrawType;
+  begin
+    with FrameModRec(D) do
+      if Status = 0 then
+        with WPtr^, wFrame do begin
+          {Save the shadow type and remove shadows for now}
+          SDT := ShadowType;
+          frShadows.Done;
+          {Switch to the new frame type}
+          if NewFrame = NoWindowFrame then begin
+            frHeaders.Done;
+            wOptionsOff(wBordered);
+          end else
+            wOptionsOn(wBordered);
+          Status := WPtr^.RawError; {!!.01}
+          WPtr^.ClearErrors;        {!!.01}
+          if Status = 0 then begin
+            frChars := NewFrame;
+            {Add the shadows back}
+            if SDT <> shNone then
+              AddShadow(shBR, SDT);
+            {Fix up any spans}
+            FixupSpans(WPtr);
+            {Store the status}
+            Status := WPtr^.RawError; {!!.01}
+            WPtr^.ClearErrors;        {!!.01}
+          end;
+        end;
+  end;
+
+  procedure EditDefFrame;
+    {-Choose a new set of default frame characters}
+  var
+    FrameMod : FrameModRec;
+  begin
+    if ChooseFrame(20, DefFrame) then begin
+      if DefFrame = NoWindowFrame then
+        ClearLongFlag(DefOptions, wBordered)
+      else
+        SetLongFlag(DefOptions, wBordered);
+      if ApplyGlobally then
+        with UserMenu do begin
+          ActivateWrite;
+          EraseUserMenu;
+          FrameMod.Status := 0;
+          FrameMod.NewFrame := DefFrame;
+          VisitAllWindows(SetFrameType, FrameMod);
+          DrawUserMenu;
+          DeactivateWrite;
+          if FrameMod.Status <> 0 then
+            PopupErrorMessage(ErrorLeadIn+Long2Str(FrameMod.Status)+
+                              ModifyingFrame);
+          Modified := True;
+        end;
+    end;
+  end;
+
+  procedure ToggleDefHelp;
+    {-Change the default help line state}
+  begin
+    if HaveObj then begin
+      wStack.OptimizeTiled(False); {!!.11}
+      UserMenu.ActivateWrite;
+      EraseUserMenu;
+    end;
+    DefHelpActive := not DefHelpActive;
+    InitHelpLineProc;
+    if HaveObj then begin
+      if DefHelpActive then begin
+        if DefHelpRow = 0 then
+          DefHelpRow := ScreenHeight-1;
+        UserMenu.mnHelpRow := DefHelpRow;
+      end else
+        UserMenu.mnHelpRow := 0;
+      DrawUserMenu;
+      UserMenu.DeactivateWrite;
+      wStack.OptimizeTiled(True); {!!.11}
+      Modified := True;
+    end;
+  end;
+
+  procedure ChangeDefHelpRow;
+    {-Change the default help row}
+  const
+    HeaderMsg = 'Help row';
+    PromptMsg = 'New value [1-100]: ';
+  var
+    NewRow : Word;
+  begin
+    NewRow := DefHelpRow;
+    if PopupGetWord(HeaderMsg, PromptMsg, NewRow, 1, 100) then
+      if NewRow <> DefHelpRow then begin
+        DefHelpRow := NewRow;
+        if HaveObj and DefHelpActive then begin
+          RedrawUserObj(False);
+          UserMenu.mnHelpRow := DefHelpRow;
+          Modified := True;
+        end;
+      end;
+  end;
+
+type
+  OrientRec =
+    record
+      Status : Word;
+      NewOrient : mnOrientation;
+    end;
+
+  procedure SetOrientation(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+    {-Change orientation of each menu list to DefOrient}
+  var
+    LPtr : MenuItemListPtr;
+    HPtr : HeaderPtr;
+    W : Byte;
+    H : Byte;
+    SDT : ShadowDrawType; {!!.13}
+  begin
+    with OrientRec(D) do
+      if Status = 0 then begin
+        {Determine appropriate item list}
+        if WPtr = RawWindowPtr(MPtr) then
+          {the main menu}
+          LPtr := @MPtr^.mnItems
+        else
+          {a submenu}
+          LPtr := @SubMenuPtr(WPtr)^.smItems;
+
+        {Change orientation if needed}
+        with LPtr^ do
+          if Orientation <> NewOrient then begin
+            ilOrient := NewOrient;
+            if ilOrient = Vertical then
+              ilPad := 1
+            else
+              ilPad := 0;
+
+            if LPtr^.Head <> nil then begin
+              {Pack the items}
+              PackItems(LPtr);
+
+              with WPtr^ do begin                 {!!.13}
+                {Temporarily remove shadows}      {!!.13}
+                SDT := ShadowType;                {!!.13}
+                if SDT <> shNone then             {!!.13}
+                  wFrame.RemoveShadows;           {!!.13}
+              end;                                {!!.13}
+
+              {Compute new window coordinates and resize window}
+              OptimumSize(W, H);
+              AdjustMenuDimensions(WPtr, W, H, True);
+
+              with WPtr^ do begin
+                {Store the status}
+                Status := RawError; {!!.01}
+                ClearErrors;        {!!.01}
+
+                {Clear any span headers}
+                while HasHeaderType(heSpan, HPtr) do
+                  wFrame.frHeaders.Delete(HPtr);
+
+                if SDT <> shNone then             {!!.13}
+                  wFrame.AddShadow(shBR, SDT);    {!!.13}
+              end;
+            end;
+          end;
+      end;
+  end;
+
+  procedure ToggleDefOrient;
+    {-Change the default menu orientation}
+  var
+    ORec : OrientRec;
+  begin
+    if DefOrient = Horizontal then
+      DefOrient := Vertical
+    else
+      DefOrient := Horizontal;
+    if ApplyGlobally then
+      with UserMenu do begin
+        wStack.OptimizeTiled(False); {!!.11}
+        ActivateWrite;
+        EraseUserMenu;
+        ORec.Status := 0;
+        ORec.NewOrient := DefOrient;
+        VisitAllWindows(SetOrientation, ORec);
+        DrawUserMenu;
+        DeactivateWrite;
+        wStack.OptimizeTiled(True); {!!.11}
+        if ORec.Status <> 0 then
+          PopupErrorMessage(ErrorLeadIn+Long2Str(ORec.Status)+ChangingOrient);
+        Modified := True;
+      end;
+  end;
+
+  procedure ChangeUserFlags(Flag : Word);
+    {-Change global flags in the user menu system}
+  begin
+    if FlagIsSet(DefMOptions, Flag) then begin
+      ClearFlag(DefMOptions, Flag);
+      if HaveObj then begin
+        UserMenu.mnOptionsOff(Flag);
+        Modified := True;
+      end;
+    end else begin
+      SetFlag(DefMOptions, Flag);
+      if HaveObj then begin
+        UserMenu.mnOptionsOn(Flag);
+        Modified := True;
+      end;
+    end;
+  end;
+
+  procedure ShowMenuInfo;
+    {-Display information about current menu system}
+  var
+    MI : MenuInfoWindow;
+  begin
+    if HaveObj then
+      with MI do
+        if not Init(24, 6) then
+          InsufficientMemory
+        else begin
+          wFrame.AddShadow(shBR, shSeeThru);
+          Process;
+          Done;
+        end;
+  end;
+
+  procedure ChangeSubDelay;
+    {-Change the explosion delay of one submenu}
+  begin
+    with UserMenu.ActiveWinPtr^ do
+      {Prompt for new delay}
+      if PromptForDelay(wStageDelay) then begin
+        if IsExploding then
+          RedrawUserCurWin(True);
+        Modified := True;
+      end;
+  end;
+
+  procedure ChangeSubExplosions;
+    {-Toggle explosions for one submenu}
+  begin
+    with UserMenu.ActiveWinPtr^ do
+      if IsExploding then
+        EnableNormalOpen
+      else begin
+        if wStageDelay = 0 then
+          wStageDelay := DefDelay;
+        EnableExplosions(wStageDelay);
+        RedrawUserCurWin(True);
+      end;
+    Modified := True;
+  end;
+
+  procedure ToggleSubShadows;
+    {-Toggle shadow type for one submenu}
+  var
+    SDT : ShadowDrawType;
+    Status : Word;
+  begin
+    with UserMenu.ActiveWinPtr^ do begin
+      SDT := ShadowType;
+      if SDT = shNone then
+        SDT := shSeeThru
+      else
+        inc(SDT);
+
+      wStack.OptimizeTiled(False); {!!.11}
+      UserMenu.ActivateWrite;
+      Erase;
+      with wFrame do begin
+        RemoveShadows;
+        if SDT <> shNone then
+          AddShadow(shBR, SDT);
+      end;
+      Status := RawError; {!!.01}
+      ClearErrors;        {!!.01}
+      Draw;
+      UserMenu.DeactivateWrite;
+      wStack.OptimizeTiled(True); {!!.11}
+      ClearErrors;        {!!.01}
+      if Status <> 0 then
+        InsufficientMemory;
+      Modified := True;
+    end;
+  end;
+
+  procedure ToggleSubSound;
+    {-Change sound for one submenu}
+  begin
+    with UserMenu.ActiveWinPtr^ do
+      if wOptionsAreOn(wSoundEffects) then
+        ClearLongFlag(wFlags, wSoundEffects)
+      else begin
+        SetLongFlag(wFlags, wSoundEffects);
+        if IsExploding then
+          RedrawUserCurWin(True);
+      end;
+    Modified := True;
+  end;
+
+  procedure EditSubFrame;
+    {-Change the frame of one submenu}
+  var
+    FrameMod : FrameModRec;
+  begin
+    with UserMenu.ActiveWinPtr^ do
+      if ChooseFrame(37, wFrame.frChars) then begin
+        wStack.OptimizeTiled(False); {!!.11}
+        UserMenu.ActivateWrite;
+        Erase;
+
+        FrameMod.Status := 0;
+        FrameMod.NewFrame := wFrame.frChars;
+        SetFrameType(UserMenu.ActiveWinPtr, FrameMod, @UserMenu);
+
+        Draw;
+        UserMenu.DeactivateWrite;
+        wStack.OptimizeTiled(True); {!!.11}
+        if FrameMod.Status <> 0 then
+          PopupErrorMessage(ErrorLeadIn+Long2Str(FrameMod.Status)+ModifyingFrame);
+        Modified := True;
+      end;
+  end;
+
+  procedure EditSubHeader;
+    {-Modify the text of an existing header}
+  var
+    HP : HeaderPtr;
+  begin
+    if ChooseHeader(HP) then begin
+      {Edit the header string and the colors}
+      if EditHeaderPrim(HP) then
+        if EditColor(40, HP^.heAttrColor, HP^.heAttrMono) then begin
+          RedrawUserObj(False);
+          Modified := True;
+        end;
+    end;
+  end;
+
+  procedure AddSubHeader;
+    {-Add a new header}
+  const
+    PromptMsg = 'Header: ';
+  var
+    WinPtr : RawWindowPtr;
+    HPT : HeaderPosType;
+    HP : HeaderPtr;
+    Status : Word;
+    S : string;
+  begin
+    {select the location of the header}
+    if not ChooseHeaderType(HPT) then
+      Exit;
+
+    WinPtr := UserMenu.ActiveWinPtr;
+
+    if WinPtr^.HasHeaderType(HPT, HP) then begin
+      {edit the existing header at that location}
+      if EditHeaderPrim(HP) then ;
+
+    end else begin
+      S := '';
+      if not PopupGetString('', PromptMsg, False, False,
+                            WinPtr^.Width, S) then
+        Exit;
+
+      {check for empty string}
+      if (S = '') then
+        Exit;
+
+      with WinPtr^ do begin
+        UserMenu.ActivateWrite;
+        Erase;
+        wFrame.AddHeader(S, HPT);
+        Status := wFrame.GetLastError;
+        Draw;
+        UserMenu.DeactivateWrite;
+        Modified := True;
+        if Status <> 0 then
+          InsufficientMemory;
+      end;
+    end;
+  end;
+
+  procedure ToggleSubOrient;
+    {-Change the orientation of a submenu}
+  var
+    NewOrient : mnOrientation;
+    ORec : OrientRec;
+    WinPtr : RawWindowPtr;
+  begin
+    with UserMenu do begin
+      if ActiveListPtr^.Orientation = Vertical then
+        NewOrient := Horizontal
+      else
+        NewOrient := Vertical;
+      WinPtr := ActiveWinPtr;
+      wStack.OptimizeTiled(False); {!!.10}
+      ActivateWrite;
+      WinPtr^.Erase;
+
+      ORec.Status := 0;
+      ORec.NewOrient := NewOrient;
+      SetOrientation(WinPtr, ORec, @UserMenu);
+
+      WinPtr^.Draw;
+      DeactivateWrite;
+      wStack.OptimizeTiled(True); {!!.10}
+
+      if ORec.Status <> 0 then
+        PopupErrorMessage(ErrorLeadIn+Long2Str(ORec.Status)+ChangingOrient);
+      Modified := True;
+    end;
+  end;
+
+  procedure SetSubPadding;
+    {-Change the left padding value of a submenu}
+  const
+    HeaderMsg = 'Padding';
+    PromptMsg = 'New value [0-9]: ';
+  var
+    NewPad : Word;
+  begin
+    with UserMenu.ActiveListPtr^ do begin
+      {Prompt for new padding value}
+      NewPad := ilPad;
+      if PopupGetWord(HeaderMsg, PromptMsg, NewPad, 0, 9) then
+        if NewPad <> ilPad then begin
+          ilPad := NewPad;
+          RedrawUserCurWin(False);
+          Modified := True;
+        end;
+    end;
+  end;
+
+  function EditMarkPrim(RightMark : Boolean; var Mark : String) : Boolean;
+    {-Edit selection string, returning True if any selection was made}
+  const
+    HeaderLeadIn = 'Character for ';
+    HeaderEnd = ' select mark. Select #0 for no mark.';
+    LeftRight : array[Boolean] of String[5] = ('left', 'right');
+  var
+    Ch : Char;
+    CHS : CharSelector;
+    Header : String;
+  begin
+    EditMarkPrim := False;
+    if not CHS.Init(4, 5, 76, 20) then
+      InsufficientMemory
+    else with CHS do begin
+      wFrame.AddShadow(shBR, shSeeThru);
+      wFrame.AddCustomScrollBar(
+        frBB, 0, MaxLongInt, 1, 1, SliderChar, ScrollBarChar, MainColors);
+      Header := HeaderLeadIn+LeftRight[RightMark]+HeaderEnd;
+      wFrame.AddHeader(' '+Header+' ', heTC);
+      if Length(Mark) = 0 then
+        Ch := #0
+      else
+        Ch := Mark[1];
+      SetInitialCharChoice(Ch);
+      Process;
+      if GetLastCommand <> ccQuit then begin
+        Ch := GetLastCharChoice;
+        if Ch = #0 then
+          Mark := ''
+        else
+          Mark := Ch;
+        EditMarkPrim := True;
+      end;
+      Erase;
+      Done;
+    end;
+  end;
+
+  procedure EditMark(RightMark : Boolean);
+    {-Edit the selection string for an item list}
+  var
+    ListPtr : MenuItemListPtr;
+    CurPtr : MenuItemNodePtr;
+    OldMark : String[5];
+    Mark : String[5];
+  begin
+    with UserMenu do begin
+      ListPtr := ActiveListPtr;
+      with ListPtr^ do begin
+        if RightMark then
+          Mark := ilRightSel
+        else
+          Mark := ilLeftSel;
+        OldMark := Mark;
+        if EditMarkPrim(RightMark, Mark) then
+          if Mark <> OldMark then begin
+            if RightMark then
+              ilRightSel := Mark
+            else
+              ilLeftSel := Mark;
+
+            if Length(Mark) <> Length(OldMark) then begin
+              if Orientation = Horizontal then begin
+                {Shift items to right of current one}
+                CurPtr := CurrentItemPtr;
+                if (CurPtr <> nil) and (CurPtr <> MenuItemNodePtr(Tail)) then
+                  ShiftItems(ListPtr, MenuItemNodePtr(Next(CurPtr)),
+                             Integer(Length(Mark))-Length(OldMark));
+              end;
+
+              {Resize and redraw submenu}
+              AdjustSubmenu(False);
+
+            end else
+              RedrawUserObj(False);
+
+            Modified := True;
+          end;
+      end;
+    end;
+  end;
+
+type
+  MarkRec =
+    record
+      Mark : String[5];
+      RightMark : Boolean;
+      Status : Word;
+    end;
+
+  procedure SetMarkType(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+    {-Change select mark of specified window}
+  var
+    LPtr : MenuItemListPtr;
+    Delta : Integer;
+    W : Byte; {!!.13}
+    H : Byte; {!!.13}
+  begin
+    with MarkRec(D) do
+      if Status = 0 then begin
+        {Determine appropriate item list}
+        if WPtr = RawWindowPtr(MPtr) then
+          {the main menu}
+          LPtr := @MPtr^.mnItems
+        else
+          {a submenu}
+          LPtr := @SubMenuPtr(WPtr)^.smItems;
+
+        {Change marker if needed}
+        with LPtr^ do begin
+          Delta := 0;
+          if RightMark then begin
+            if Mark <> ilRightSel then begin
+              Delta := Integer(Length(Mark))-Length(ilRightSel);
+              ilRightSel := Mark;
+            end;
+          end else begin
+            if Mark <> ilLeftSel then begin
+              Delta := Integer(Length(Mark))-Length(ilLeftSel);
+              ilLeftSel := Mark;
+            end;
+          end;
+
+          if Delta <> 0 then
+            if Head <> nil then begin
+              if Orientation = Horizontal then
+                {Shift items to right of current one}
+                if (ilCurrent <> MenuItemNodePtr(Tail)) then
+                  ShiftItems(LPtr, MenuItemNodePtr(Next(ilCurrent)), Delta);
+
+              OptimumSize(W, H);     {!!.13}
+
+              {Resize window}
+              AdjustMenuDimensions(WPtr,
+                                   W, H, {!!.13}
+                                   {WPtr^.Width+Delta, WPtr^.Height,} {!!.13}
+                                   True);
+
+              {Store the status}
+              Status := WPtr^.RawError; {!!.01}
+              WPtr^.ClearErrors;        {!!.01}
+            end;
+        end;
+      end;
+  end;
+
+  procedure EditDefMark(RightMark : Boolean);
+    {-Edit the default selection string for an item list}
+  const
+    ModifyingMark = ' changing select mark';
+  var
+    Mark : String[5];
+    MRec : MarkRec;
+  begin
+    if RightMark then
+      Mark := DefRightMark
+    else
+      Mark := DefLeftMark;
+    if EditMarkPrim(RightMark, Mark) then begin
+      if RightMark then
+        DefRightMark := Mark
+      else
+        DefLeftMark := Mark;
+      if ApplyGlobally then
+        with UserMenu do begin
+          ActivateWrite;
+          EraseUserMenu;
+          MRec.Mark := Mark;
+          MRec.RightMark := RightMark;
+          MRec.Status := 0;
+          VisitAllWindows(SetMarkType, MRec);
+          DrawUserMenu;
+          DeactivateWrite;
+          if MRec.Status <> 0 then
+            PopupErrorMessage(ErrorLeadIn+Long2Str(Mrec.Status)+
+                              ModifyingMark);
+          Modified := True;
+        end;
+    end;
+  end;
+
+  function GetDirectionCmd : Word;
+    {-Return a keyboard command from the MakeMiscCommands CommandProcessor}
+  var
+    ChWord : Word;
+  begin
+    GetDirectionCmd := MakeMiscCommands.GetCommand(ChWord);
+  end;
+
+  function AdjustSpanPos(HdrPtr : HeaderPtr) : Boolean;
+    {-Adjust the position of the span given by HdrPtr}
+  const
+    PromptMsg = #27#24#25#26' to position, <Enter> to accept, <Esc> to restore ';
+    AdjustWindowSize = False; {set True to allow resizing of window here}
+  var
+    ListPtr : MenuItemListPtr;
+    WinPtr : RawWindowPtr;
+    DisplayPos : Byte;            {display offset of span}
+    DisplayNew : Byte;
+    DisplayPrv : Byte;
+    MinX : Integer;               {region cursor will be allowed to move in}
+    MinY : Integer;
+    MaxX : Integer;
+    MaxY : Integer;
+    CursorState : CursorStateRec;
+    Finished : Boolean;
+    FrameWidth : Byte;
+    Correction : Byte;
+    Orient : mnOrientation;
+
+    procedure DrawWindow;
+      {-Adjust size of window if needed and draw it}
+    var
+      Delta : Integer;
+    begin
+      with WinPtr^ do begin
+        Delta := Integer(DisplayNew)-DisplayPrv;
+        with HdrPtr^ do
+          if Orient = Vertical then
+            inc(heDY, Delta)
+          else
+            inc(heDX, Delta);
+
+        wStack.OptimizeTiled(False); {!!.11}
+        UserMenu.ActivateWrite;
+        Erase;
+        Draw;
+        {Assure headers are drawn last}
+        wFrame.DrawHeaders;
+        UserMenu.DeactivateWrite;
+        wStack.OptimizeTiled(True); {!!.11}
+
+        with HdrPtr^ do
+          if Orient = Vertical then
+            wGotoXY(1, heDY+Correction)
+          else
+            wGotoXY(heDX+Correction, 1);
+        {$IFDEF UseMouse}
+        {position mouse cursor}
+        if MouseInstalled then
+          MouseGotoXY(WhereXabs-MouseXLo, WhereYabs-MouseYLo);
+        {$ENDIF}
+        {Make hardware cursor visible}
+        NormalCursor;
+
+        DisplayPrv := DisplayNew;
+      end;
+    end;
+
+  begin
+    AdjustSpanPos := False;
+
+    with UserMenu do begin
+      ListPtr := ActiveListPtr;
+      with ListPtr^ do begin
+        {Erase the MAKEMENU menu}
+        MainMenu.Erase;
+
+        {Display a prompt line tucked under the user menu}
+        if not DrawPromptLine(PromptMsg) then
+          Exit;
+
+        Orient := Orientation;
+
+        WinPtr := ActiveWinPtr;
+        with WinPtr^ do begin
+          FrameWidth := Byte(wFrame.IsFramed);
+          Correction := 1-FrameWidth;
+
+          {Compute maximum region span can move within}
+          if Orient = Vertical then begin
+            MinX := wXL;
+            MaxX := MinX;
+            MinY := 1+FrameWidth;
+            MaxY := ScreenHeight-FrameWidth;
+          end else begin
+            MinX := 1+FrameWidth;
+            MaxX := ScreenWidth-FrameWidth;
+            MinY := wYL;
+            MaxY := MinY;
+          end;
+
+          {Save hardware and mouse cursor state, and hide both cursors}
+          SaveAllCursors(CursorState);
+
+          {$IFDEF UseMouse}
+          if MouseInstalled then begin
+            {slow down mouse}
+            SlowMouse;
+            {adjust mouse window coordinates}
+            MouseWindow(MinX, MinY, MaxX, MaxY);
+          end;
+          {$ENDIF}
+
+          Finished := False;
+          with HdrPtr^ do
+            if Orient = Vertical then
+              DisplayPos := heDY
+            else
+              DisplayPos := heDX;
+          inc(DisplayPos, Correction);
+          DisplayNew := DisplayPos;
+          DisplayPrv := DisplayNew;
+
+          {Draw the window as it should now appear}
+          DrawWindow;
+
+          repeat
+            {Update the display}
+            if DisplayNew <> DisplayPrv then
+              DrawWindow;
+
+            case GetDirectionCmd of
+              ccLeft :
+                if Orient = Horizontal then
+                  if DisplayNew > 1 then
+                    dec(DisplayNew)
+                  else if AdjustWindowSize then
+                    if wXL > MinX then begin
+                      ShiftItems(ListPtr, MenuItemNodePtr(Head), 1);
+                      AdjustMenuWindow(WinPtr, wXL-1, wYL, wXH, wYH);
+                      DrawWindow;
+                    end;
+              ccRight :
+                if Orient = Horizontal then
+                  if DisplayNew < Width then
+                    inc(DisplayNew)
+                  else if AdjustWindowSize then
+                    if wXH < MaxX then begin
+                      AdjustMenuWindow(WinPtr, wXL, wYL, wXH+1, wYH);
+                      inc(DisplayNew);
+                    end;
+              ccUp :
+                if Orient = Vertical then
+                  if DisplayNew > 1 then
+                    dec(DisplayNew)
+                  else if AdjustWindowSize then
+                    if wYL > MinY then begin
+                      ShiftItems(ListPtr, MenuItemNodePtr(Head), 1);
+                      AdjustMenuWindow(WinPtr, wXL, wYL-1, wXH, wYH);
+                      DrawWindow;
+                    end;
+              ccDown :
+                if Orient = Vertical then
+                  if DisplayNew < Height then
+                    inc(DisplayNew)
+                  else if AdjustWindowSize then
+                    if wYH < MaxY then begin
+                      AdjustMenuWindow(WinPtr, wXL, wYL, wXH, wYH+1);
+                      inc(DisplayNew);
+                    end;
+              ccQuit :
+                if not AdjustWindowSize then begin
+                  {Restore position}
+                  DisplayNew := DisplayPos;
+                  DrawWindow;
+                  Finished := True;
+                end;
+              ccMouseSel, ccSelect :
+                begin
+                  Finished := True;
+                  AdjustSpanPos := True;
+                end;
+            end;
+
+          until Finished;
+
+          if DisplayNew <> DisplayPos then
+            Modified := True;
+
+          {Restore hardware and mouse cursor state}
+          RestoreAllCursors(CursorState);
+
+          {Erase the prompt line}
+          RemovePromptLine;
+        end;
+      end;
+    end;
+  end;
+
+  procedure AddSubSpan;
+    {-Interactively add a new span header to the current window}
+  var
+    ListPtr : MenuItemListPtr;
+    WinPtr : RawWindowPtr;
+    CurPtr : MenuItemNodePtr;
+    HP : HeaderPtr;
+    DisplayPos : Byte;            {display offset of span}
+    Correction : Byte;
+    Orient : mnOrientation;
+    FirstChar : Char;             {characters used for span}
+    SpanChar : Char;
+    NonSpanChar : Char;
+    LastChar : Char;
+
+  begin
+    with UserMenu do begin
+      ListPtr := ActiveListPtr;
+      with ListPtr^ do begin
+        Orient := Orientation;
+
+        WinPtr := ActiveWinPtr;
+        with WinPtr^ do begin
+          {Correction for unframed windows}
+          Correction := Byte(not wFrame.IsFramed);
+
+          {Compute initial position for span}
+          CurPtr := CurrentItemPtr;
+          if CurPtr = nil then
+            DisplayPos := 1
+          else
+            DisplayPos := NextPos(ListPtr, CurPtr);
+
+          {Compute initial characters for span}
+          if Orient = Vertical then begin
+            {Span goes horizontal}
+            SpanChar := wFrame.frChars[frTT];
+            if SpanChar = NoFrameChar then
+              SpanChar := 'Ä';
+            NonSpanChar := wFrame.frChars[frLL];
+            if DisplayPos > Height then
+              DisplayPos := Height;
+          end else begin
+            {Span goes vertical}
+            SpanChar := wFrame.frChars[frLL];
+            if SpanChar = NoFrameChar then
+              SpanChar := '³';
+            NonSpanChar := wFrame.frChars[frTT];
+            if DisplayPos > Width then
+              DisplayPos := Width;
+          end;
+          ComputeJoins(SpanChar, NonSpanChar, FirstChar, LastChar);
+
+          {Add the initial span header}
+          {Correct for unframed windows since DisplayPos is frame-relative}
+          AddSeparator(FirstChar, SpanChar, LastChar, DisplayPos-Correction);
+          {Get pointer to header for easy manipulation}
+          with wFrame do
+            HP := frFindHeader(GetLastHeaderIndex);
+          if HP = nil then begin
+            InsufficientMemory;
+            Exit;
+          end;
+
+          {Adjust the position if desired}
+          if AdjustSpanPos(HP) then
+            Modified := True
+          else begin
+            {Remove the span just added}
+            RemoveHeader(HP);
+            RedrawUserCurWin(False);
+          end;
+        end;
+      end;
+    end;
+  end;
+
+  function ChooseSpan(var HP : HeaderPtr) : Boolean;
+    {-Choose an existing span to edit or kill}
+  const
+    ErrorMsg = 'Window has no spans';
+    PromptMsg = ' Select Span ';
+  var
+    SS : SpanSelector;
+  begin
+    ChooseSpan := False;
+    HP := nil;
+    with UserMenu, ActiveWinPtr^ do
+      if not HasSpans then
+        PopupErrorMessage(ErrorMsg)
+      else if not SS.Init(42, 13, 56, 23, wFrame,
+                          (ActiveListPtr^.Orientation = Horizontal)) then
+        InsufficientMemory
+      else with SS do begin
+        {change the attribute of the column labels}
+        with MainColors do
+          SetLabelAttr(HighItemColor, HighItemMono);
+        wFrame.AddHeader(PromptMsg, heTC);
+        wFrame.AddShadow(shBR, shSeeThru);
+        Process;
+        if GetLastCommand <> ccQuit then begin
+          HP := GetLastHeader;
+          ChooseSpan := True;
+        end;
+        Erase;
+        Done;
+      end;
+  end;
+
+  function ChooseSpanChars(var SCA : SpanCharArray;
+                           VertSpan : Boolean) : Boolean;
+    {-Choose a set of span characters}
+  const
+    PromptMsg = ' Chars ';
+  var
+    SCSP : SpanCharSelectorPtr;
+  begin
+    ChooseSpanChars := False;
+
+    {Instantiate appropriate span selector depending on orientation}
+    if VertSpan then
+      SCSP := New(VertSpanCharSelectorPtr, Init(42, 8, 48, 23))
+    else
+      SCSP := New(HorizSpanCharSelectorPtr, Init(42, 8, 48, 23));
+    if SCSP = nil then begin
+      InsufficientMemory;
+      Exit;
+    end;
+
+    with SCSP^ do begin
+      {Ornament the window and get a selection}
+      wFrame.AddShadow(shBR, shSeeThru);
+      wFrame.AddHeader(PromptMsg, heTC);
+      SetInitialSpanChoice(SCA);
+      Process;
+      GetLastSpanChoice(SCA);
+      if GetLastCommand <> ccQuit then
+        ChooseSpanChars := True;
+      Erase;
+    end;
+
+    Dispose(SCSP, Done);
+  end;
+
+  procedure EditSubSpan;
+    {-Select and modify an existing span}
+  var
+    HP : HeaderPtr;
+    SCA : SpanCharArray;
+    NewSCA : SpanCharArray;
+    St : String;
+  begin
+    {Pick an existing span to edit}
+    if ChooseSpan(HP) then
+      {Adjust span position or accept existing one}
+      if AdjustSpanPos(HP) then begin
+        {Redisplay menu system}
+        MainMenu.Draw;
+
+        {Build span char array from the header}
+        St := HP^.heName^;
+        SCA[1] := St[1];
+        if Length(St) > 2 then begin
+          SCA[2] := St[2];
+          SCA[3] := St[Length(St)];
+        end else begin
+          SCA[2] := SCA[1];
+          SCA[3] := SCA[1];
+        end;
+        NewSCA := SCA;
+
+        {Choose new span characters}
+        with UserMenu.ActiveListPtr^ do
+          if ChooseSpanChars(NewSCA, (Orientation = Horizontal)) then begin
+            {Rebuild the span header}
+            if NewSCA <> SCA then
+              Modified := True;
+            FillChar(St[1], Length(St), NewSCA[2]);
+            if Length(St) > 2 then begin
+              St[1] := NewSCA[1];
+              St[Length(St)] := NewSCA[3];
+            end;
+            HP^.heName^ := St;
+            RedrawUserCurWin(False);
+
+            {Choose new colors}
+            if EditColor(40, HP^.heAttrColor, HP^.heAttrMono) then begin
+              RedrawUserObj(False);
+              Modified := True;
+            end;
+          end;
+      end;
+  end;
+
+  procedure RemoveSubSpan;
+    {-Remove an existing span header}
+  const
+    ConfirmMsg = 'Delete Span';
+  var
+    HP : HeaderPtr;
+  begin
+    {Pick an existing span to edit}
+    if ChooseSpan(HP) then
+      if ConfirmAction(ConfirmMsg) then
+        RemoveHeader(HP);
+  end;

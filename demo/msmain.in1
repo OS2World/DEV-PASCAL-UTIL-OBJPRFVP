@@ -1,0 +1,1511 @@
+{*********************************************************}
+{*                  MAKESCRN.IN1 1.30                    *}
+{*     Copyright (c) TurboPower Software 1989, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+{!!.20 Library was renamed to OpLibrary throughout}
+
+const
+  {main menu item codes}
+  mmDefaults              = 01;
+    mmBackdrop            = 02;
+    mmStatusLine          = 03;
+    mmColorConsts         = 04;
+    mmHelpConsts          = 05;
+    mmUserHooks           = 06;
+    mmStreamCode          = 07;
+    mmFieldNames          = 08; {!!.01} {changed remaining ID's too}
+  mmWindow                = 09;
+    mmBorder              = 10;
+    mmColors              = 11;
+      mmTextColor         = 12;
+      mmBorderColor       = 13;
+      mmHeaderColor       = 14;
+      mmShadowColor       = 15;
+      mmScrollColor       = 16;
+      mmSliderColor       = 17;
+      mmHotColor          = 18;
+      mmMouseColor        = 19;
+      mmPromptColor       = 20;
+      mmSelPromptColor    = 21;
+      mmProPromptColor    = 22;
+      mmFieldColor        = 23;
+      mmSelFieldColor     = 24;
+      mmProFieldColor     = 25;
+      mmControlColor      = 26;
+      mmDelimiterColor    = 27;
+      mmSelDelimColor     = 28;
+      mmProDelimColor     = 29;
+      mmLoadColors        = 30;  {!!.03}
+      mmSaveColors        = 31;  {!!.03}
+    mmEffects             = 32;
+      mmDelay             = 33;
+      mmExplosions        = 34;
+      mmShadows           = 35;
+      mmSound             = 36;
+    mmHeaders             = 37;
+      mmHeaderAdd         = 38;
+      mmHeaderEdit        = 39;
+      mmHeaderRemove      = 40;
+    mmMove                = 41;
+    mmResize              = 42;
+    mmScrollBars          = 43;
+      mmScrollBottom      = 44;
+      mmScrollRight       = 45;
+      mmScrollSlider      = 46;
+      mmScrollBarChar     = 47;
+      mmScrollArrowTop    = 48;
+      mmScrollArrowBottom = 49;
+      mmScrollArrowLeft   = 50;
+      mmScrollArrowRight  = 51;
+  mmEntryScreen           = 52;
+    mmFieldOptions        = 53;
+      mmAutoAdvanceChar   = 54;
+      mmAutoAdvanceCursor = 55;
+      mmAutoNumLock       = 56;
+      mmBeepOnError       = 57;
+      mmClearFirstChar    = 58;
+      mmCursorToEnd       = 59;
+      mmExitOnClick       = 60;
+      mmForceCase         = 61;
+      mmForceTypingMode   = 62;
+      mmHouseCursor       = 63;
+      mmInsertPushes      = 64;
+      mmMapCtrls          = 65;
+      mmPadChar           = 66;
+      mmParensForMinus    = 67;
+      mmPasswordMode      = 68;  {!!.11}
+      mmProtected         = 69;  {!!.11}
+      mmRequired          = 70;
+      mmRightJustify      = 71;
+      mmSuppressZeros     = 72;
+      mmTrimBlanks        = 73;
+    mmDelimiters          = 74;
+    mmMouseSupport        = 75;
+    mmPasswordChar        = 76;
+    mmScrollByPage        = 77;
+    mmWrapMode            = 78;
+  mmFields                = 79;
+    mmFieldAdd            = 80;
+      mmAddTextOnly       = 81;  {!!.03}
+        mmAddText         = 82;  {!!.03}
+        mmAddHorizLine    = 83;  {!!.03}
+        mmAddVertLine     = 84;  {!!.03}
+        mmAddBox          = 85;  {!!.03}
+        mmAddShadowBox    = 86;  {!!.03}
+      mmAddString         = 87;
+      mmAddArray          = 88;
+      mmAddChar           = 89;
+      mmAddBoolean        = 90;
+      mmAddYesNo          = 91;
+      mmAddLongInt        = 92;
+      mmAddWord           = 93;
+      mmAddInteger        = 94;
+      mmAddByte           = 95;
+      mmAddShortInt       = 96;
+      mmAddReal           = 97;
+      mmAddBCD            = 98;
+      mmAddExtended       = 99;
+      mmAddDouble         = 100;
+      mmAddSingle         = 101;
+      mmAddComp           = 102;
+      mmAddDate           = 103;
+      mmAddDateString     = 104;
+      mmAddTime           = 105;
+    mmFieldCopy           = 106;
+    mmFieldEdit           = 107;
+    mmFieldMove           = 108;
+    mmFieldRemove         = 109;
+  mmObject                = 110;
+    mmObjLoad             = 111;
+    mmSave                = 112;
+    mmRename              = 113;
+    mmSaveAs              = 114;
+    mmObjInfo             = 115;
+    mmTest                = 116;
+    mmGenerateSource      = 117;
+    mmDocument            = 118;
+  mmLibrary               = 119;
+    mmLoad                = 120;
+    mmNew                 = 121;
+    mmDelete              = 122;
+    mmInfo                = 123;
+    mmPack                = 124;
+    mmQuit                = 125;
+
+  {Provide fast access to each menu item for dynamic protection of items}
+  FirstMenuItem   = mmDefaults;
+  LastMenuItem    = mmQuit;
+type
+  mmPointerArray  = array[FirstMenuItem..LastMenuItem] of MenuItemNodePtr;
+var
+  mmItems         : mmPointerArray;
+
+const
+  InsOverSt : array[Boolean] of array[1..4] of Char = ('Ins ', 'Over');
+  NoSt      : string[5] = 'No   ';
+  PageSt    : array[0..3] of string[5] = ('No   ', 'Kbd  ', 'Mouse', 'Both ');
+  UpperSt   : string[5] = 'Upper';
+  LowerSt   : string[5] = 'Lower';
+  ShadowSt  : array[ShadowDrawType] of string[5] = ('Big  ', 'Small', 'None ');
+
+  procedure EraseMainMenu;
+    {-Erase the main menu}
+  begin
+    if MainMenu.IsActive then
+      MainMenu.Erase;
+  end;
+
+  {$F+}
+  procedure MainMenuCustom(var Name : String; Key : LongInt;
+                           Selected, Highlighted : Boolean;
+                           WPtr : RawWindowPtr);
+    {-String customization routine for MainMenu}
+
+    procedure MergeString(Src : string; Col : Byte);
+      {-Merge Src into Dest at Dest[Col]}
+    begin
+      Move(Src[1], Name[Col], Length(Src));
+    end;
+
+    procedure MergeNumber(L : LongInt; Wid, Col : Byte);
+    var
+      S : string[20];
+    begin
+      MergeString(Pad(Long2Str(L), Wid), Col);
+    end;
+
+    procedure MergeYesNo(YN : Boolean; Col : Byte);
+    begin
+      Move(YesNoSt[YN], Name[Col], 3);
+    end;
+
+    procedure MergeAttrs(Color, Mono : Byte);
+    begin
+      MergeString(HexB(Color), 22);
+      MergeString(HexB(Mono), 25);
+    end;
+
+    procedure MergeOption(Flags : LongInt; Col : Byte);
+    begin
+      MergeYesNo(CES.esOptionsAreOn(Flags), Col);
+    end;
+
+    procedure MergeFieldOption(Flags : LongInt; Col : Byte);
+    begin
+      MergeYesNo(CES.esFieldOptionsAreOn(Flags), Col);
+    end;
+
+    procedure MergeSecFieldOption(Flags : LongInt; Col : Byte);
+    begin
+      MergeYesNo(CES.esSecFieldOptionsAreOn(Flags), Col);
+    end;
+
+    function ScrollByPageSt : string;
+    var
+      I : Word;
+    begin
+      with CES do begin
+        I := 0;
+        if esOptionsAreOn(esScrollbyPage) then
+          Inc(I);
+        if esOptionsAreOn(esMousePage) then
+          Inc(I, 2);
+        ScrollByPageSt := PageSt[I];
+      end;
+    end;
+
+    function DelimStr : string;
+    begin
+      with CES do
+        if (esLeftD = #0) or (esRightD = #0) then
+          DelimStr := 'None'
+        else
+          DelimStr := esLeftD+esRightD+'  ';
+    end;
+
+  begin
+    with CES, wFrame, asColors do
+      case Word(Key) of
+        mmStatusLine :
+          if Status.swPos = spHidden then
+            MergeString('None', 19)
+          else
+            MergeNumber(Status.wYL, 4, 19);
+        mmColorConsts :
+          MergeYesNo(GenColorNames, 19);
+        mmHelpConsts :
+          MergeYesNo(GenHelpNames, 19);
+        mmUserHooks :
+          MergeYesNo(GenUserHooks, 19);
+        mmStreamCode :
+          MergeYesNo(GenStreamCode, 19);
+        mmFieldNames :                    {!!.01}
+          MergeYesNo(GenFieldNames, 19);  {!!.01}
+        mmTextColor :
+          MergeAttrs(TextColor, TextMono);
+        mmBorderColor :
+          MergeAttrs(FrameColor, FrameMono);
+        mmHeaderColor :
+          MergeAttrs(HeaderColor, HeaderMono);
+        mmShadowColor :
+          MergeAttrs(ShadowColor, ShadowMono);
+        mmScrollColor :
+          MergeAttrs(ScrollBarColor, ScrollBarMono);
+        mmSliderColor :
+          MergeAttrs(SliderColor, SliderMono);
+        mmHotColor :
+          MergeAttrs(HotSpotColor, HotSpotMono);
+        mmMouseColor :
+          MergeAttrs(MouseColor, MouseMono);
+        mmPromptColor :
+          MergeAttrs(PromptColor, PromptMono);
+        mmSelPromptColor :
+          MergeAttrs(SelPromptColor, SelPromptMono);
+        mmProPromptColor :
+          MergeAttrs(ProPromptColor, ProPromptMono);
+        mmFieldColor :
+          MergeAttrs(FieldColor, FieldMono);
+        mmSelFieldColor :
+          MergeAttrs(SelFieldColor, SelFieldMono);
+        mmProFieldColor :
+          MergeAttrs(ProFieldColor, ProFieldMono);
+        mmControlColor :
+          MergeAttrs(CtrlColor, CtrlMono);
+        mmDelimiterColor :
+          MergeAttrs(DelimColor, DelimMono);
+        mmSelDelimColor :
+          MergeAttrs(SelDelimColor, SelDelimMono);
+        mmProDelimColor :
+          MergeAttrs(ProDelimColor, ProDelimMono);
+        mmDelay :
+          MergeNumber(cesStageDelay, 3, 13);
+        mmExplosions :
+          MergeYesNo(IsExploding, 13);
+        mmShadows :
+          MergeString(ShadowSt[ShadowType], 13);
+        mmSound :
+          MergeYesNo(wOptionsAreOn(wSoundEffects), 13);
+        mmScrollBottom :
+          MergeYesNo(HaveScrollBar(frBB), 15);
+        mmScrollRight :
+          MergeYesNo(HaveScrollBar(frRR), 15);
+        mmScrollSlider :
+          Name[16] := cesSliderChar;
+        mmScrollBarChar :
+          Name[16] := cesBarChar;
+        mmScrollArrowTop :
+          Name[16] := cesArrows[arrowUp];
+        mmScrollArrowBottom :
+          Name[16] := cesArrows[arrowDown];
+        mmScrollArrowLeft :
+          Name[16] := cesArrows[arrowLeft];
+        mmScrollArrowRight :
+          Name[16] := cesArrows[arrowRight];
+        mmAutoAdvanceChar :
+          MergeFieldOption(efAutoAdvanceChar, 22);
+        mmAutoAdvanceCursor :
+          MergeFieldOption(efAutoAdvanceCursor, 22);
+        mmAutoNumLock :
+          MergeFieldOption(efAutoNumLock, 22);
+        mmBeepOnError :
+          MergeFieldOption(efBeepOnError, 22);
+        mmClearFirstChar :
+          MergeFieldOption(efClearFirstChar, 22);
+        mmCursorToEnd :
+          MergeFieldOption(efCursorToEnd, 22);
+        mmExitOnClick :
+          MergeFieldOption(efClickExit, 22);
+        mmForceCase :
+          if esFieldOptionsAreOn(efForceUpper) then
+            MergeString(UpperSt, 22)
+          else if esFieldOptionsAreOn(efForceLower) then
+            MergeString(LowerSt, 22)
+          else
+            MergeString(NoSt, 22);
+        mmForceTypingMode :
+          if esFieldOptionsAreOn(efForceMode) then
+            Move(InsOverSt[esFieldOptionsAreOn(efForceOvertype)], Name[22], 4)
+          else
+            MergeString(NoSt, 22);
+        mmHouseCursor :
+          MergeFieldOption(efHouseCursorAtEnd, 22);
+        mmInsertPushes :
+          MergeFieldOption(efInsertPushes, 22);
+        mmMapCtrls :
+          MergeFieldOption(efMapCtrls, 22);
+        mmPadChar :
+          Name[23] := esPadChar;
+        mmParensForMinus :
+          MergeFieldOption(efParensForMinus, 22);
+        mmPasswordMode :                          {!!.11}
+          MergeFieldOption(efPasswordMode, 22);   {!!.11}
+        mmProtected :                             {!!.11}
+          MergeFieldOption(efProtected, 22);      {!!.11}
+        mmRequired :
+          MergeFieldOption(efRequired, 22);
+        mmRightJustify :
+          MergeFieldOption(efRightJustify, 22);
+        mmSuppressZeros :
+          MergeSecFieldOption(sefSuppressZero, 22);
+        mmTrimBlanks :
+          MergeFieldOption(efTrimBlanks, 22);
+        mmDelimiters :
+          MergeString(DelimStr, 18);
+        mmMouseSupport :
+          MergeYesNo(cesMouseSupport, 18);
+        mmPasswordChar :
+          Name[19] := esPasswordChar;
+        mmScrollByPage :
+          MergeString(ScrollByPageSt, 18);
+        mmWrapMode :
+          Move(WrapSt[asWrapMode], Name[18], 7); {!!.01}
+      end;
+  end;
+  {$F-}
+
+  procedure ProtectMenuItems;
+    {-Protect/unprotect main menu items as necessary}
+  const
+    SaveHaveLib : Boolean = True;
+    SaveHaveCES : Boolean = True;
+    SaveModified : Boolean = True;
+    SaveHaveFields : Boolean = True;
+  var
+    HaveFields : Boolean;
+
+    procedure SetProtection(ItemCode : LongInt; Enable : Boolean);
+      {-Protect disabled items}
+    begin
+      with mmItems[ItemCode]^ do
+        if Enable then
+          Unprotect
+        else
+          Protect;
+    end;
+
+  begin
+    with MainMenu do begin
+      if not HaveLib then
+        HaveCES := False;
+      if not HaveCES then
+        Modified := False;
+      HaveFields := HaveCES and CES.HasFields;
+
+      {protect items as necessary}
+      SetProtection(mmHeaders,        HaveCES and CES.HasFrame);
+      SetProtection(mmHeaderEdit,     HaveCES and CES.HasHeaders);
+      SetProtection(mmHeaderRemove,   HaveCES and CES.HasHeaders);
+      SetProtection(mmScrollBars,     HaveCES and CES.HasFrame);
+
+      SetProtection(mmObject,         HaveLib);
+      SetProtection(mmSave,           Modified);
+      SetProtection(mmRename,         HaveCES);
+      SetProtection(mmSaveAs,         HaveCES);
+      SetProtection(mmObjInfo,        HaveCES);
+      SetProtection(mmTest,           HaveCES);
+      SetProtection(mmGenerateSource, HaveCES);
+      SetProtection(mmDocument,       HaveCES);
+
+      SetProtection(mmDelete,         HaveLib);
+      SetProtection(mmInfo,           HaveLib);
+      SetProtection(mmPack,           HaveLib);
+
+      SetProtection(mmWindow,         HaveCES);
+      SetProtection(mmEntryScreen,    HaveCES);
+      SetProtection(mmFields,         HaveCES);
+
+      SetProtection(mmFieldEdit,      HaveFields);
+      SetProtection(mmFieldCopy,      HaveFields);
+      SetProtection(mmFieldMove,      HaveFields);
+      SetProtection(mmFieldRemove,    HaveFields);
+
+      {$IFNDEF UseBcd}
+      SetProtection(mmAddBCD, False);
+      {$ENDIF}
+      {$IFOPT N-}
+      SetProtection(mmAddExtended, False);
+      SetProtection(mmAddDouble, False);
+      SetProtection(mmAddSingle, False);
+      SetProtection(mmAddComp, False);
+      {$ENDIF}
+      {$IFNDEF UseDates}
+      SetProtection(mmAddDate, False);
+      SetProtection(mmAddDateString, False);
+      SetProtection(mmAddTime, False);
+      {$ENDIF}
+
+      {redraw the entire menu if appropriate}
+      if IsCurrent and
+        ((SaveHaveLib <> HaveLib) or (SaveHaveCES <> HaveCES) or
+         (SaveHaveFields <> HaveFields)) then
+           Redraw;
+
+      {save current values}
+      SaveHaveLib := HaveLib;
+      SaveHaveCES := HaveCES;
+      SaveHaveFields := HaveFields;
+    end;
+  end;
+
+  procedure AddFieldOptionsToMenu(var M : Menu; IsMainMenu : Boolean); {!!.11}
+    {-Add field option items to a menu}
+  var
+    IMM : Byte absolute IsMainMenu; {!!.11}
+  begin
+    with M do begin
+      AddItem('Auto advance char   Yes',   01, 1, mmAutoAdvanceChar);
+      AddItem('Auto advance cursor Yes',   02, 1, mmAutoAdvanceCursor);
+      AddItem('Auto NumLock        Yes',   03, 1, mmAutoNumLock);
+      AddItem('Beep on error       Yes',   04, 1, mmBeepOnError);
+      AddItem('Clear first char    Yes',   05, 1, mmClearFirstChar);
+      AddItem('Cursor to end       Yes',   06, 1, mmCursorToEnd);
+      AddItem('Exit on mouse click Yes',   07, 1, mmExitOnClick);
+      AddItem('Force case          Upper', 08, 1, mmForceCase);
+      AddItem('Force typing mode   Over',  09, 1, mmForceTypingMode);
+      AddItem('House cursor at end Yes',   10, 1, mmHouseCursor);
+      AddItem('Insert pushes       Yes',   11, 1, mmInsertPushes);
+      AddItem('Map control chars   Yes',   12, 1, mmMapCtrls);
+      if IsMainMenu then                                                {!!.11}
+        AddItem('Pad character       '' ''', 13, 1, mmPadChar);
+      AddItem('Parens for minus    Yes',   13+IMM, 1, mmParensForMinus);
+      AddItem('Password mode       Yes',   14+IMM, 1, mmPasswordMode);  {!!.11}
+      if not IsMainMenu then                                            {!!.11}
+        AddItem('Protected           Yes',   15, 1, mmProtected);       {!!.11}
+      AddItem('Required            Yes',   16, 1, mmRequired);          {!!.11}
+      AddItem('Right justify       Yes',   17, 1, mmRightJustify);      {!!.11}
+      AddItem('Suppress zeros      Yes',   18, 1, mmSuppressZeros);     {!!.11}
+      AddItem('Trim blanks         Yes',   19, 1, mmTrimBlanks);        {!!.11}
+    end;
+  end;
+
+  {$F+}
+  procedure SetItemPointers(IPtr : MenuItemNodePtr; var D; MPtr : MenuPtr);
+    {-Initialize array of pointers to each menu item}
+  begin
+    mmItems[Word(IPtr^.ItemKey)] := IPtr;
+  end;
+  {$F-}
+
+  function InitMainMenu : Boolean;
+    {-Initialize the main menu}
+  const
+    JointFrame : FrameArray = 'ÑÔÑ¾ÍÍ³³';
+  var
+    Dummy : Byte;
+  begin
+    InitMainMenu := False;
+
+    if not MainMenu.Init(3, 2, 76, 2, Horizontal) then
+      Exit;
+
+    with MainMenu, wFrame do begin
+      {install default error handler}
+      SetErrorProc(OurErrorProc);
+
+      mnOptionsOff(mnAllowPending);
+      AddHeader(' Object Professional Entry Screen Maker 1.30 ', heTC); {!!.20}
+      AddItem(' Defaults ', 2, 2, mmDefaults);
+        AddFramedSubMenu(4, 4, 26, 10, Vertical, JointFrame);  {!!.01}
+        AddItem('Backdrop',              1, 1, mmBackdrop);
+        AddItem('Status line      None', 2, 1, mmStatusLine);
+        AddItem('Color constants  Yes',  3, 1, mmColorConsts);
+        AddItem('Help constants   Yes',  4, 1, mmHelpConsts);
+        AddItem('User proc hooks  Yes',  5, 1, mmUserHooks);
+        AddItem('Streams code     Yes',  6, 1, mmStreamCode);
+        AddItem('Field names      Yes',  7, 1, mmFieldNames); {!!.01}
+        ItemsDone;
+      AddItem(' Window ', 15, 2, mmWindow);
+        AddFramedSubMenu(14, 4, 28, 10, Vertical, JointFrame);
+        AddItem('Border', 1, 1, mmBorder);
+        AddItem('Colors', 2, 1, mmColors);
+          AddFramedSubMenu(10, 3, 38, 23, Vertical, DefWindowFrame);
+          with ActiveSubPtr^, wFrame, MakeScrnColors do
+            AddCustomHeader(
+              ' Color Mono ', frTR, -12, 0, HighItemColor, HighItemMono);
+          AddItem('Text                00 00  ', 01, 1, mmTextColor);
+          AddItem('Border              00 00',   02, 1, mmBorderColor);
+          AddItem('Header              00 00',   03, 1, mmHeaderColor);
+          AddItem('Shadow              00 00',   04, 1, mmShadowColor);
+          AddItem('Scroll bar          00 00',   05, 1, mmScrollColor);
+          AddItem('Slider              00 00',   06, 1, mmSliderColor);
+          AddItem('Hot spot            00 00',   07, 1, mmHotColor);
+          AddItem('Mouse               00 00',   08, 1, mmMouseColor);
+          AddItem('Prompt              00 00',   09, 1, mmPromptColor);
+          AddItem('Selected prompt     00 00',   10, 1, mmSelPromptColor);
+          AddItem('Protected prompt    00 00',   11, 1, mmProPromptColor);
+          AddItem('Field               00 00',   12, 1, mmFieldColor);
+          AddItem('Selected field      00 00',   13, 1, mmSelFieldColor);
+          AddItem('Protected field     00 00',   14, 1, mmProFieldColor);
+          AddItem('Control characters  00 00',   15, 1, mmControlColor);
+          AddItem('Delimiter           00 00',   16, 1, mmDelimiterColor);
+          AddItem('Selected delimiter  00 00',   17, 1, mmSelDelimColor);
+          AddItem('Protected delimiter 00 00',   18, 1, mmProDelimColor);
+          AddSeparator('Æ', 'Í', 'µ',            19);                   {!!.03}
+          AddItem('Load color set',              20, 1, mmLoadColors);  {!!.03}
+          AddItem('Save color set',              21, 1, mmSaveColors);  {!!.03}
+          ItemsDone;
+        AddItem('Effects', 3, 1, mmEffects);
+          AddFramedSubMenu(16, 8, 33, 11, Vertical, DefWindowFrame);
+          AddItem('Delay      000',   1, 1, mmDelay);
+          AddItem('Explosions Yes',   2, 1, mmExplosions);
+          AddItem('Shadows    Small', 3, 1, mmShadows);
+          AddItem('Sound      Yes',   4, 1, mmSound);
+          ItemsDone;
+        AddItem('Headers', 4, 1, mmHeaders);
+          AddFramedSubMenu(16, 9, 23, 11, Vertical, DefWindowFrame);
+          AddItem('Add',    1, 1, mmHeaderAdd);
+          AddItem('Edit',   2, 1, mmHeaderEdit);
+          AddItem('Remove', 3, 1, mmHeaderRemove);
+          ItemsDone;
+        AddItem('Move   <AltM>', 5, 1, mmMove);
+        AddItem('Resize <AltR>', 6, 1, mmResize);
+        AddItem('Scroll bars',   7, 1, mmScrollBars);
+          AddFramedSubMenu(16, 12, 33, 19, Vertical, DefWindowFrame);
+          AddItem('Bottom       Yes',   1, 1, mmScrollBottom);
+          AddItem('Right        Yes',   2, 1, mmScrollRight);
+          AddItem('Slider char  '' ''', 3, 1, mmScrollSlider);
+          AddItem('Bar char     '' ''', 4, 1, mmScrollBarChar);
+          AddItem('Arrow top    '' ''', 5, 1, mmScrollArrowTop);
+          AddItem('Arrow bottom '' ''', 6, 1, mmScrollArrowBottom);
+          AddItem('Arrow left   '' ''', 7, 1, mmScrollArrowLeft);
+          AddItem('Arrow right  '' ''', 8, 1, mmScrollArrowRight);
+          ItemsDone;
+        ItemsDone;
+      AddItem(' Entry screen ', 26, 2, mmEntryScreen);
+        AddFramedSubMenu(23, 4, 47, 9, Vertical, JointFrame);        {!!.01}
+        AddItem('Field options',            1, 1, mmFieldOptions);
+          AddFramedSubMenu(25, 5, 51, 23, Vertical, DefWindowFrame); {!!.11}
+          AddFieldOptionsToMenu(MainMenu, True);
+          ItemsDone;
+        AddItem('Delimiters      None',     2, 1, mmDelimiters);
+        AddItem('Mouse support   Yes',      3, 1, mmMouseSupport);
+        AddItem('Password char   '' ''',    4, 1, mmPasswordChar);
+        AddItem('Scroll by page  Mouse',    5, 1, mmScrollByPage);
+        AddItem('Wrap mode       ExitBot',  6, 1, mmWrapMode);       {!!.01}
+        ItemsDone;
+      AddItem(' Fields ', 43, 2, mmFields);
+        AddFramedSubMenu(45, 4, 52, 8, Vertical, JointFrame);
+        AddItem('Add', 1, 1, mmFieldAdd);
+          AddFramedSubMenu(56, 3, 70, 22, Vertical, DefWindowFrame);
+          AddItem('Text only',       01, 1, mmAddTextOnly);           {!!.03}
+            AddFramedSubMenu(58, 5, 74, 9, Vertical, DefWindowFrame); {!!.03}
+            AddItem('Text',            01, 1, mmAddText);             {!!.03}
+            AddItem('Horizontal line', 02, 1, mmAddHorizLine);        {!!.03}
+            AddItem('Vertical line',   03, 1, mmAddVertLine);         {!!.03}
+            AddItem('Box',             04, 1, mmAddBox);              {!!.03}
+            AddItem('Shadowed box',    05, 1, mmAddShadowBox);        {!!.03}
+            ItemsDone;                                                {!!.03}
+          AddItem('String',          02, 1, mmAddString);
+          AddItem('Array of char',   03, 1, mmAddArray);
+          AddItem('Char',            04, 1, mmAddChar);
+          AddItem('Boolean',         05, 1, mmAddBoolean);
+          AddItem('Yes-no',          06, 1, mmAddYesNo);
+          AddItem('LongInt',         07, 1, mmAddLongInt);
+          AddItem('Word',            08, 1, mmAddWord);
+          AddItem('Integer',         09, 1, mmAddInteger);
+          AddItem('Byte',            10, 1, mmAddByte);
+          AddItem('ShortInt',        11, 1, mmAddShortInt);
+          AddItem('Real',            12, 1, mmAddReal);
+          AddItem('BCD',             13, 1, mmAddBCD);
+          AddItem('Extended',        14, 1, mmAddExtended);
+          AddItem('Double',          15, 1, mmAddDouble);
+          AddItem('Single',          16, 1, mmAddSingle);
+          AddItem('Comp',            17, 1, mmAddComp);
+          AddItem('Date',            18, 1, mmAddDate);
+          AddItem('Date string',     19, 1, mmAddDateString);
+          AddItem('Time',            20, 1, mmAddTime);
+          ItemsDone;
+        AddItem('Copy',         2, 1, mmFieldCopy);
+        AddItem('Edit',         3, 1, mmFieldEdit);
+        AddItem('Move',         4, 1, mmFieldMove);
+        AddItem('Remove',       5, 1, mmFieldRemove);
+        ItemsDone;
+      AddItem(' Object ', 54, 2, mmObject);
+        AddFramedSubMenu(53, 4, 66, 11, Vertical, JointFrame);
+        AddItem('Load',         01, 1, mmObjLoad);
+        AddItem('Save    <F2>', 02, 1, mmSave);
+        AddItem('Rename',       03, 1, mmRename);
+        AddItem('save As',      04, 6, mmSaveAs); {!!.02}
+        AddItem('Info  <AltI>', 05, 1, mmObjInfo);
+        AddItem('Test  <AltT>', 06, 1, mmTest);
+        AddItem('Write source', 07, 1, mmGenerateSource);
+        AddItem('Document',     08, 1, mmDocument);
+        ItemsDone;
+      AddItem(' Library ', 65, 2, mmLibrary);
+        AddFramedSubMenu(63, 4, 75, 9, Vertical, JointFrame);
+        AddItem('Load   <F3>',     1, 1, mmLoad);
+        AddItem('New',             2, 1, mmNew);
+        AddItem('Delete',          3, 1, mmDelete);
+        AddItem('Info <AltI>',     4, 1, mmInfo);
+        AddItem('Pack',            5, 1, mmPack);
+        AddItem('Quit <AltX>',     6, 1, mmQuit);
+        ItemsDoneCustom(False, mmLoad);
+      ItemsDoneCustom(False, mmLibrary);
+
+      {add shadows to all submenus}
+      AddShadows(True, shBR, shSeeThru);
+
+      {install string customization routine}
+      SetCustomStringProc(MainMenuCustom);
+
+      {set up pointers to menu items for fast protect capability}
+      VisitAllItems(SetItemPointers, Dummy);
+    end;
+
+    {protect menu items as necessary}
+    ProtectMenuItems;
+
+    InitMainMenu := (MainMenu.GetLastError = 0);
+  end;
+
+  constructor EntryScreenInfo.Init(X1, Y1 : Byte);
+    {-Initialize the entry screen info window using default colors and options}
+  begin
+    if not EntryScreenInfo.InitCustom(
+      X1, Y1, DefaultColorSet, DefWindowOptions) then
+        Fail;
+  end;
+
+  constructor EntryScreenInfo.InitCustom(X1, Y1 : Byte;
+                                         var Colors : ColorSet;
+                                         Options : LongInt);
+    {-Initialize the entry screen info window with custom options, colors}
+  const
+    Info = ' Info: ';
+    PressAnyKey = ' Press any key... ';
+  var
+    X2, Y2 : Byte;
+  begin
+    {calculate remaining coordinates}
+    X2 := X1+33;
+    Y2 := Y1+13;
+
+    {initialize window}
+    if not StackWindow.InitCustom(
+      X1, Y1, X2, Y2, Colors, Options or (wBordered+wUserContents)) then
+        Fail;
+
+    {add headers}
+    wFrame.AddHeader(Info+ObjName+' ', heTC);
+    if RawError = 0 then {!!.01}
+    {
+      InitStatus := RawError;
+      Done;
+      Fail;
+    end;
+    }
+      wFrame.AddHeader(PressAnyKey, heBC);
+    if RawError <> 0 then begin {!!.01}
+      InitStatus := RawError;   {!!.01}
+      Done;
+      Fail;
+    end;
+
+    {set attributes}
+    with Colors do begin
+      esiBrightColor := HighlightColor;
+      esiBrightMono  := HighlightMono;
+      esiDimColor    := TextColor;
+      esiDimMono     := TextMono;
+    end;
+  end;
+
+  procedure EntryScreenInfo.UpdateContents;
+    {-Redraw the entry screen info window}
+  var
+    A1, A2 : Byte;
+
+    function SizeLastSaved : string;
+    var
+      DEP : DirEntryPtr;
+    begin
+      DEP := Lib.FindAnyDirectoryEntry(ObjName);
+      if DEP = nil then
+        SizeLastSaved := 'n.a.'
+      else
+        SizeLastSaved := Long2Str(DEP^.deLength);
+    end;
+
+  begin
+    A1 := ColorMono(esiBrightColor, esiBrightMono);
+    A2 := ColorMono(esiDimColor, esiDimMono);
+
+    wFastWrite('Object information',              02, 02, A1);
+      wFastWrite('Size when last saved',          03, 04, A2);
+        wFastWrite(SizeLastSaved,                 03, 28, A2);
+      wFastWrite('Needs saving',                  04, 04, A2);
+        wFastWrite(YesNoSt[Modified],             04, 28, A2);
+    wFastWrite('Entry screen information',        06, 02, A1);
+      wFastWrite('Entry fields',                  07, 04, A2);
+        wFastWrite(Long2Str(CES.EntryFieldCount), 07, 28, A2);
+      wFastWrite('Text fields',                   08, 04, A2);
+        wFastWrite(
+          Long2Str(CES.TextFieldCount($FFFF)),    08, 28, A2);  {!!.03}
+      wFastWrite('Scrollable',                    09, 04, A2);
+        wFastWrite(YesNoSt[CES.IsScrollable],     09, 28, A2);
+    wFastWrite('Memory',                          11, 02, A1);
+      wFastWrite('In use',                        12, 04, A2);
+        wFastWrite(Long2Str(MemInUse),            12, 28, A2);
+      wFastWrite('Available',                     13, 04, A2);
+        wFastWrite(Long2Str(MemAvail),            13, 28, A2);
+
+    StackWindow.UpdateContents; {!!.01}
+  end;
+
+  procedure EntryScreenInfo.Process;
+    {-Display the entry screen info window and wait for a keypress}
+  var
+    I : Word;
+  begin
+    {display the info window}
+    Draw;
+    if RawError <> 0 then {!!.01}
+      Exit;
+
+    {hide the cursor}
+    SetCursor(cuHidden);
+
+    {wait for a key or button press}
+    {$IFDEF UseMouse}
+    I := ReadKeyOrButton;
+    {$ELSE}
+    I := ReadKeyWord;
+    {$ENDIF}
+  end;
+
+  procedure ShowEntryScreenInfo;
+    {-Display info about the current entry screen}
+  var
+    ESI : EntryScreenInfo;
+  begin
+    if HaveCES then
+      with ESI do
+        if not Init(24, 6) then
+          InsufficientMemory
+        else begin
+          wFrame.AddShadow(shBR, shSeeThru);
+          Process;
+          Erase;
+          Done;
+        end;
+  end;
+
+  {$F+}
+  function DummyFunc : Boolean;
+  begin
+    DummyFunc := False;
+  end;
+
+  procedure cesPreEdit(ESP : EntryScreenPtr);
+  begin
+    Status.FastUpdate(DummyFunc);
+  end;
+
+  procedure cesPostEdit(ESP : EntryScreenPtr);
+  begin
+    with ESP^ do
+      if GetLastCommand = StatusCmd then begin
+        Status.Toggle;
+        SetLastCommand(ccNone);
+      end;
+  end;
+  {$F-}
+
+  procedure TestEntryScreen;
+    {-Test behavior of the entry screen}
+  var
+    MouseColorWrong : Boolean;
+    SaveFirst, SaveLast : LongInt;
+  begin
+    with CES do begin
+      {make sure there's something to test}
+      if not HasDataFields then begin
+        PopupErrorMessage('No fields to test');
+        Exit;
+      end;
+
+      {make sure fields aren't all protected}            {!!.11}
+      if AllFieldsProtected then begin                   {!!.11}
+        PopupErrorMessage('All fields are protected');   {!!.11}
+        Exit;                                            {!!.11}
+      end;                                               {!!.11}
+
+      {save options for first and last fields in entry screen}
+      SaveFirst := EntryFieldPtr(asFields.Head)^.sfOptions;
+      SaveLast := EntryFieldPtr(asFields.Tail)^.sfOptions;
+
+      {$IFDEF UseMouse}
+      {adjust mouse support}
+      MouseColorWrong :=
+        ColorMono(asColors.MouseColor, asColors.MouseMono) <>
+        ColorMono(MakeScrnColors.MouseColor, MakeScrnColors.MouseMono);
+      if not cesMouseSupport then begin
+        HideMouse;
+        EntryCommands.cpOptionsOff(cpEnableMouse);
+      end
+      else if MouseColorWrong then
+        with asColors do
+          SoftMouseCursor($0000, (ColorMono(MouseColor, MouseMono) shl 8)+$04);
+      {$ENDIF}
+
+      {set current field as close to cursor as possible}
+      GuessCurrentField;
+
+      {erase main menu}
+      EraseMainMenu;
+
+      {erase the entry screen}
+      Erase;
+
+      {re-bind CES to ScrollingEntryScreen}
+      ForceReset;
+      sesBind;
+
+      {install the pre- and post-edit procs}
+      esPreEditProc := cesPreEdit;
+      esPostEditProc := cesPostEdit;
+
+      {install error handler}
+      cwErrorProc := OurErrorProc;
+
+      {draw the status line}
+      Status.Display;
+
+      {<AltS>: toggle status command}
+      EntryCommands.AddCommand(StatusCmd, 1, $1F00, $0000);
+
+      {process commands}
+      Process;
+
+      {cancel toggle status command}
+      EntryCommands.AddCommand(ccNone, 1, $1F00, $0000);
+
+      {re-bind CES to CustomEntryScreen}
+      cesBind;
+      ForceReset;
+
+      {get rid of the pre- and post-edit procs}
+      @esPreEditProc := nil;
+      @esPostEditProc := nil;
+
+      {reset the error handler}
+      cwErrorProc := DefaultErrorProc;
+
+      {reset cesX and cesY}
+      ResetXY;
+
+      {redraw the entry screen}
+      Draw;
+
+      {draw the status line}
+      Status.Display;
+
+      {restore options for first and last fields in entry screen}
+      EntryFieldPtr(asFields.Head)^.sfOptions := SaveFirst;
+      EntryFieldPtr(asFields.Tail)^.sfOptions := SaveLast;
+
+      {$IFDEF UseMouse}
+      {restore mouse support}
+      EntryCommands.cpOptionsOn(cpEnableMouse);
+      if MouseColorWrong and cesMouseSupport then
+        with MakeScrnColors do
+          SoftMouseCursor($0000, (ColorMono(MouseColor, MouseMono) shl 8)+$04);
+      ShowMouse;
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RedrawCES(ShowEffects : Boolean);
+    {-Redraw the entry screen}
+  begin
+    with CES do
+      if ShowEffects then begin
+        EraseMainMenu;
+        Erase;
+        Draw;
+      end
+      else begin
+        ActivateWrite;
+        Erase;
+        Draw;
+        DeactivateWrite;
+      end;
+  end;
+
+  procedure LoadEntryScreen;
+    {-Display a list of objects and load/create the one chosen}
+  const
+    TypeCodes = [otCustomEntryScreen];
+    Prompt1 = 'Library''s directory is full. Proceed?';
+    Prompt2 = 'Name of entry screen: ';
+    MaxLen = SizeOf(DirEntryName)-1;
+    ErrorMsg = 'Entry screen not compatible with screen dimensions';
+  var
+    LS : OpLibrarySelector;
+    Save, Esc : Boolean;
+    AllowNew, OK : Boolean;
+    Proceed : Boolean;
+    I : Word;
+
+    procedure DisposeLS;
+      {-Dispose of library selector}
+    begin
+      LS.Erase;
+      LS.Done;
+    end;
+
+  begin
+    if not HaveLib then
+      Exit;
+
+    {if modified then save it}
+    if Modified then begin
+      Save := PopupYesNo(ObjName, SavePrompt, YesChar, Esc);
+      if Esc then
+        Exit;
+      if Save then
+        SaveEntryScreen;
+    end;
+
+    {dispose of current entry screen}
+    DisposeEntryScreen;
+
+    {any room left in library's directory for new objects?}
+    AllowNew := Lib.AvailableEntries > 0;
+    if not AllowNew then begin
+      Proceed := PopupYesNo('Warning', Prompt1, YesChar, Esc);
+      if Esc or not Proceed then
+        Exit;
+    end;
+
+    {initialize the library selector}
+    if not LS.Init(30, 6, 51, 21, Lib, TypeCodes, AllowNew) then begin
+      InsufficientMemory;
+      Exit;
+    end;
+
+    {add a shadow}
+    LS.wFrame.AddShadow(shBR, shSeeThru);
+
+    {change the attribute of the column labels}
+    with MakeScrnColors do
+      LS.SetLabelAttr(HighItemColor, HighItemMono);
+
+    {make a selection}
+    LS.Process;
+    case LS.GetLastCommand of
+      ccQuit, ccError :
+        begin
+          DisposeLS;
+          Exit;
+        end;
+    end;
+
+    {is it an existing object or a new one?}
+    I := LS.GetLastObjectChoice;
+    if I = 0 then begin
+      {prompt for a name}
+      ObjName := '';
+      repeat
+        if (not PopupGetString('New object', Prompt2, True, True, MaxLen, ObjName)) or
+           (ObjName = '') then begin
+             DisposeLS;
+             Exit;
+           end;
+
+        {check for conflict with existing name}
+        OK := Lib.FindAnyDirectoryIndex(ObjName) = 0;
+        if not OK then
+          PopupErrorMessage('Name is already in use');
+      until OK;
+
+      {try to create the entry screen}
+      DisposeLS;
+      EraseMainMenu;
+      HaveCES := CreateEntryScreen;
+      Status.Display;
+    end
+    else begin
+      {find the name of the object}
+      ObjName := Lib.FindEntryByIndex(I)^.GetEntryName;
+
+      {try to load it into memory}
+      HaveCES := MergeEntryScreen;
+      DisposeLS;
+      if HaveCES then begin
+        {adjust window to fit current screen size}
+        CES.UpdateScreenSize;
+        if CES.GetLastError <> 0 then begin
+          PopupErrorMessage(ErrorMsg);
+          CES.Done;
+          HaveCES := False;
+          Modified := False;
+        end
+        else begin
+          EraseMainMenu;
+          Status.Display;
+          CES.Draw;
+        end;
+      end;
+    end;
+  end;
+
+  procedure NewLibrary;
+    {-Create a new library}
+  var
+    Save, Esc : Boolean;
+    NewLib : PathStr;
+  begin
+    {if library is already open then save it}
+    if Modified then begin
+      Save := PopupYesNo(ObjName, SavePrompt, YesChar, Esc);
+      if Esc then
+        Exit;
+      if Save then
+        SaveEntryScreen;
+    end;
+
+    {get the name of the library}
+    NewLib := '';
+    if not PopupGetString(
+      'New Library', 'Filename [.'+DefLibExt+']: ', True, True, PathLen, NewLib) then
+        Exit;
+    if NewLib = '' then
+      Exit;
+
+    LibName := DefaultExtension(NewLib, DefLibExt);
+    if not ExistCheck(LibName) then
+      Exit;
+
+    {close the current library}
+    CloseLibrary;
+
+    {open the new one}
+    HaveLib := CreateLibrary;
+    if HaveLib then begin
+      {register everything}
+      Lib.RegisterHier(CustomEntryScreenStream);
+      Lib.RegisterHier(LoadableColorSetStream);   {!!.03}
+
+      {get the new object}
+      LoadEntryScreen;
+    end;
+  end;
+
+  procedure LoadLibrary;
+    {-Load a new library and/or entry screen}
+  var
+    Save, Esc : Boolean;
+    NewLib : PathStr;
+  begin
+    {if library is already open then save it}
+    if Modified then begin
+      Save := PopupYesNo(ObjName, SavePrompt, YesChar, Esc);
+      if Esc then
+        Exit;
+      if Save then
+        SaveEntryScreen;
+    end;
+
+    {get the name of the library}
+    NewLib := LibName;
+    if not PopupGetFileName(
+      'Load Library', 'Filename [.'+DefLibExt+']: ', PathLen, DefLibExt, NewLib) then
+        Exit;
+
+    if NewLib <> LibName then begin
+      {close the current library}
+      CloseLibrary;
+
+      {open the new one}
+      if not OpenLibrary(NewLib) then
+        Exit;
+    end;
+
+    {get the new object}
+    LoadEntryScreen;
+  end;
+
+type
+  FieldRecord =
+    record
+      frModified       : Boolean; {modified?}
+      frName           : string[20]; {name of the field}
+      frType           : Byte;    {type of the field}
+      frEditor         : Byte;    {editor for the field}
+      frPrompt         : string[80]; {prompt for the field}
+      frPRow           : Word;    {coordinates for the prompt}
+      frPCol           : Word;
+      frPicture        : string;  {picture mask}
+      frFRow           : Word;    {coordinates for the field}
+      frFCol           : Word;
+      frWidth          : Byte;    {width of the field}
+      frMaxLen         : Byte;    {maximum length of string}
+      frPromptColor    : Byte;    {for unselected prompt}
+      frPromptMono     : Byte;
+      frSelPromptColor : Byte;    {for selected prompt}
+      frSelPromptMono  : Byte;
+      frProPromptColor : Byte;    {for protected prompt}
+      frProPromptMono  : Byte;
+      frFieldColor     : Byte;    {for unselected field}
+      frFieldMono      : Byte;
+      frSelFieldColor  : Byte;    {for selected field}
+      frSelFieldMono   : Byte;
+      frProFieldColor  : Byte;    {for protected field}
+      frProFieldMono   : Byte;
+      frCtrlColor      : Byte;    {for control characters}
+      frCtrlMono       : Byte;
+      frOptions        : LongInt; {primary option settings}
+      frSecOptions     : LongInt; {secondary option settings}
+      frPadChar        : Char;    {char used to pad end of string}
+      frDPlaces        : Byte;    {max decimal places, if no '.' in Picture}
+      frRangeLo        : RangeType; {valid range for the field}
+      frRangeHi        : RangeType;
+    end;
+const
+  ItemToTypeCode : array[mmAddString..mmAddTime] of Byte = (
+    {mmAddString}     otStringEField,
+    {mmAddArray}      otArrayEField,
+    {mmAddChar}       otCharEField,
+    {mmAddBoolean}    otBooleanEField,
+    {mmAddYesNo}      otYesNoEField,
+    {mmAddLongInt}    otLongIntEField,
+    {mmAddWord}       otWordEField,
+    {mmAddInteger}    otIntegerEField,
+    {mmAddByte}       otByteEField,
+    {mmAddShortInt}   otShortIntEField,
+    {mmAddReal}       otRealEField,
+    {mmAddBCD}        otBcdEField,
+    {mmAddExtended}   otExtendedEField,
+    {mmAddDouble}     otDoubleEField,
+    {mmAddSingle}     otSingleEField,
+    {mmAddComp}       otCompEField,
+    {mmAddDate}       otDateEField,
+    {mmAddDateString} otDateStEField,
+    {mmAddTime}       otTimeEField );
+
+  {field ID's for data field entry screen}
+  idName      = 00;
+  idPrompt    = 01;
+  idPRow      = 02;
+  idPCol      = 03;
+  idType      = 04;
+  idEditor    = 05;
+  idPicture   = 06;
+  idFRow      = 07;
+  idFCol      = 08;
+  idWidth     = 09;  {Width or DPlaces used, not both}
+  idDPlaces   = 09;
+  idPadChar   = 10;
+  idOptions   = 11;
+  idRangeLo   = 12;
+  idRangeHi   = 13;
+  idPColor    = 14;
+  idPMono     = 15;
+  idSelPColor = 16;
+  idSelPMono  = 17;
+  idProPColor = 18;
+  idProPMono  = 19;
+  idFColor    = 20;
+  idFMono     = 21;
+  idSelFColor = 22;
+  idSelFMono  = 23;
+  idProFColor = 24;
+  idProFMono  = 25;
+  idCtrlColor = 26;
+  idCtrlMono  = 27;
+
+  FieldOptionMask =
+    efProtected+efPasswordMode+          {!!.11}
+    efAutoAdvanceChar+efAutoAdvanceCursor+efAutoNumLock+efBeepOnError+
+    efClearFirstChar+efCursorToEnd+efClickExit+efForceUpper+efForceLower+
+    efForceMode+efForceOvertype+efHouseCursorAtEnd+efInsertPushes+efMapCtrls+
+    efParensForMinus+efRequired+efRightJustify+efTrimBlanks;
+  FieldFlagMask =                        {!!.02}
+    sefSmartExponents+sefSwitchCommands+sefPadCurrentOnly+sefSuppressZero+
+    sefNoFieldMovement+sefWindowRelative+sefInsertByDefault;
+
+  PascalChars : CharSet = ['A'..'Z', 'a'..'z', '0'..'9', '_'];
+var
+  FR : FieldRecord;
+  FieldOptionsMenu : Menu;
+  FES : EntryScreen;
+
+  function IsSimple : Boolean;
+    {-Is this a simple field?}
+  begin
+    IsSimple := FR.frEditor = edSimple;
+  end;
+
+  function IsNumeric : Boolean;
+    {-Is this a numeric field?}
+  begin
+    IsNumeric := FR.frEditor = edNumeric;
+  end;
+
+  {$F+}
+  procedure PictureChoice(Item : Word; Mode : pkMode; var IType : pkItemType;
+                          var IString : string; PickPtr : PickListPtr);
+    {-Return a picture mask sample given an index}
+  begin
+    IString := ' '+GetPicture(Item)^+' ';
+  end;
+  {$F-}
+
+  procedure GetTrimmedPicture(I : Word);
+    {-Trim the picture mask}
+  var
+    S : string;
+    SLen : Byte absolute S;
+  begin
+    {don't insert '...'}
+    if I = 28 then
+      RingBell;
+    S := GetPicture(I)^;
+    if SLen > 10 then
+      SLen := 10;
+    if S[1] <> ' ' then
+      FR.frPicture := Trim(S)
+    else
+      FR.frPicture := S;
+    FR.frModified := True;
+  end;
+
+  procedure PictureMaskSamples;
+    {-Display a list of picture mask samples}
+  const
+    BottomHeader = '<Esc> or <Enter> to exit, <AltI> to insert picture mask';
+  var
+    PL : PickList;
+  begin
+    with PL do begin
+      if not Init(
+        7, 5, 74, 20, 68, 29, PictureChoice, PickVertical, SingleChoice) then begin
+          InsufficientMemory;
+          Exit;
+        end;
+
+      {adjust frame coordinates}
+      with wFrame do
+        AdjustFrameCoords(frXL, frYL-2, frXH, frYH+2);
+
+      {add headers}
+      with wFrame, MakeScrnColors do begin
+        AddSpanHeader(DefLeftTee, DefCrossBar, DefRightTee, 2, frTT);
+        AddSpanHeader(DefLeftTee, DefCrossBar, DefRightTee, -2, frBB);
+
+        AddCustomHeader('Picture', frTL, 2, 1,
+          HighItemColor, HighItemMono);
+        AddCustomHeader('Characters Allowed', frTL, 14, 1,
+          HighItemColor, HighItemMono);
+        AddCustomHeader(BottomHeader, frBL, 7, -1,
+          HighItemColor, HighItemMono)
+      end;
+
+      {add shadow}
+      wFrame.AddShadow(shBR, shSeeThru);
+
+      {$IFDEF UseScrollBars}
+      {add vertical scroll bar}
+      wFrame.AddCustomScrollBar(
+        frRR, 0, MaxLongInt, 1, 1, SliderChar, ScrollBarChar, MakeScrnColors);
+      {$ENDIF}
+
+      if GetLastError <> 0 then begin
+        Done;
+        InsufficientMemory;
+        Exit;
+      end;
+
+      {AltI: Insert sample picture mask}
+      PickCommands.AddCommand(ccUser50, 1, $1700, $0000);
+
+      {process commands}
+      Process;
+
+      if GetLastCommand = ccUser50 then
+        GetTrimmedPicture(GetLastChoice);
+
+      {cancel exit command}
+      PickCommands.AddCommand(ccNone, 1, $1700, $0000);
+
+      {erase the pick list}
+      Erase;
+    end;
+  end;
+
+  function frOptionsAreOn(Flags : LongInt) : Boolean;
+  begin
+    frOptionsAreOn := (FR.frOptions and Flags = Flags);
+  end;
+
+  procedure frOptionsOn(Flags : LongInt);
+  begin
+    SetLongFlag(FR.frOptions, Flags);
+  end;
+
+  procedure frOptionsOff(Flags : LongInt);
+  begin
+    ClearLongFlag(FR.frOptions, Flags);
+  end;
+
+  function frSecOptionsAreOn(Flags : LongInt) : Boolean;
+  begin
+    frSecOptionsAreOn := (FR.frSecOptions and Flags = Flags);
+  end;
+
+  procedure frSecOptionsOn(Flags : LongInt);
+  begin
+    SetLongFlag(FR.frSecOptions, Flags);
+  end;
+
+  procedure frSecOptionsOff(Flags : LongInt);
+  begin
+    ClearLongFlag(FR.frSecOptions, Flags);
+  end;
+
+  procedure DefaultPictureMasks;
+    {-Supply a default picture mask}
+  begin
+    with FR do
+      if ((frType = otStringEField) or (frType = otArrayEField)) and {!!.03}
+        (Length(frPicture) = 1) and (frWidth > 1) and (frPicture[1] in PictureChars) then begin
+        frPicture := CharStr(frPicture[1], frWidth);
+        frModified := True;
+      end
+      else if frPicture = '' then begin
+        case frType of
+          otBooleanEField :
+            frPicture := BooleanOnly;
+
+          otYesNoEField :
+            frPicture := YesNoOnly;
+
+          otLongIntEField, otIntegerEField, otShortIntEField,
+          otWordEField, otByteEField :
+            frPicture := CharStr(NumberOnly, frWidth);
+
+          otRealEField, otBcdEField, otExtendedEField,
+          otDoubleEField, otSingleEField, otCompEField :
+            frPicture := CharStr(DigitOnly, frWidth);
+
+          {$IFDEF UseDates}
+          otDateEField, otDateStEField :
+            frPicture := 'mm/dd/yy';
+
+          otTimeEField :
+            frPicture := 'hh:mm:ss';
+          {$ENDIF}
+
+          else
+            frPicture := 'X';
+        end;
+        frModified := True;
+      end;
+  end;
+
+  procedure InitBlankFieldRec(TypeCode : Byte);
+    {-Initialize a blank field record}
+  begin
+    FillChar(FR, SizeOf(FR), 0);
+
+    with CES, asColors do begin
+      FR.frType := TypeCode;
+      FR.frEditor := edNormal;
+      FR.frPRow := cesY;
+      FR.frPCol := cesX;
+      FR.frFRow := cesY;
+      FR.frFCol := cesX;
+      FR.frWidth := 1;
+      FR.frMaxLen := 1;
+      FR.frPromptColor := PromptColor;
+      FR.frPromptMono := PromptMono;
+      FR.frSelPromptColor := SelPromptColor;
+      FR.frSelPromptMono := SelPromptMono;
+      FR.frProPromptColor := ProPromptColor;
+      FR.frProPromptMono := ProPromptMono;
+      FR.frFieldColor := FieldColor;
+      FR.frFieldMono := FieldMono;
+      FR.frSelFieldColor := SelFieldColor;
+      FR.frSelFieldMono := SelFieldMono;
+      FR.frProFieldColor := ProFieldColor;
+      FR.frProFieldMono := ProFieldMono;
+      FR.frCtrlColor := CtrlColor;
+      FR.frCtrlMono := CtrlMono;
+      FR.frOptions := asFieldOptions;
+      FR.frSecOptions := esFieldFlags;
+      FR.frPadChar := esPadChar;
+
+      {supply default picture masks}
+      DefaultPictureMasks;
+      FR.frModified := False;
+
+      {set default range}
+      case TypeCode of
+        otCharEField :
+          begin
+            FR.frRangeLo.rtChar := ' ';
+            FR.frRangeHi.rtChar := ' ';
+          end;
+
+        {$IFDEF UseDates}
+        otDateEField :
+          begin
+            FR.frRangeLo.rtDate := BadDate;
+            FR.frRangeHi.rtDate := BadDate;
+          end;
+
+        otTimeEField :
+          begin
+            FR.frRangeLo.rtTime := BadTime;
+            FR.frRangeHi.rtTime := BadTime;
+          end;
+        {$ENDIF}
+      end;
+
+      FR.frWidth := Length(FR.frPicture);
+    end;
+  end;
+
+  procedure InitFieldRecFromEFP(EFP : EntryFieldPtr);
+    {-Initialize the field record from the specified entry field}
+  var
+    I : Word;
+  begin
+    with FR, EFP^ do begin
+      frModified := False;
+      frName := StringFromHeap(sfFieldName);
+      frType := GetTypeCode(EFP);
+      frEditor := GetEditor(EFP);
+      frPrompt := efPrompt^;
+      frPRow := sfPRow;
+      frPCol := sfPCol;
+      frPicture := efPicture^;
+      frFRow := sfFRow;
+      frFCol := sfFCol;
+      frWidth := sfFWidth;
+      frMaxLen := efMaxLen;
+      frPromptColor := sfPromptColor;
+      frPromptMono := sfPromptMono;
+      frSelPromptColor := sfSelPromptColor;
+      frSelPromptMono := sfSelPromptMono;
+      frProPromptColor := sfProPromptColor;
+      frProPromptMono := sfProPromptMono;
+      frFieldColor := sfFieldColor;
+      frFieldMono := sfFieldMono;
+      frSelFieldColor := sfSelFieldColor;
+      frSelFieldMono := sfSelFieldMono;
+      frProFieldColor := sfProFieldColor;
+      frProFieldMono := sfProFieldMono;
+      frCtrlColor := sfCtrlColor;
+      frCtrlMono := sfCtrlMono;
+      frOptions := sfOptions;
+      frSecOptions := sfFlags;
+      frPadChar := efPadChar;
+      frDPlaces := efDPlaces;
+      frRangeLo := efRangeLo;
+      frRangeHi := efRangeHi;
+    end;
+  end;

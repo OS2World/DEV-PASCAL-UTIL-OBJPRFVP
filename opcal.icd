@@ -1,0 +1,61 @@
+{*********************************************************}
+{*                    OPCAL.ICD 1.30                     *}
+{*    Copyright (c) TurboPower Software 1989, 1992.      *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {.F-}
+const
+  ccIncMonth = ccUser50;
+  ccDecMonth = ccUser51;
+  ccIncYear  = ccUser52;
+  ccDecYear  = ccUser53;
+  ccToday    = ccUser54;
+
+  {Keystroke to command mapping}
+  CalKeyMax       = 140;
+  CalKeyID        : string[10] = 'opcal keys';
+  CalKeySet       : array[0..CalKeyMax] of Byte = (
+  {length keys         command type      key sequence}
+  3,      $00, $3B,    ccHelp,           {F1}
+  3,      $00, $47,    ccHome,           {Home}
+  3,      $00, $48,    ccUp,             {Up}
+  3,      $00, $49,    ccDecMonth,       {PgUp}
+  3,      $00, $4B,    ccLeft,           {Left}
+  3,      $00, $4D,    ccRight,          {Right}
+  3,      $00, $4F,    ccEnd,            {End}
+  3,      $00, $50,    ccDown,           {Down}
+  3,      $00, $51,    ccIncMonth,       {PgDn}
+  3,      $00, $76,    ccIncYear,        {^PgDn}
+  3,      $00, $77,    ccToday,          {^Home}
+  3,      $00, $84,    ccDecYear,        {^PgUp}
+  2,      $03,         ccIncMonth,       {^C}
+  2,      $04,         ccRight,          {^D}
+  2,      $05,         ccUp,             {^E}
+  2,      $0D,         ccSelect,         {^M, Enter}
+  2,      $12,         ccDecMonth,       {^R}
+  2,      $13,         ccLeft,           {^S}
+  2,      $17,         ccUp,             {^W}
+  2,      $18,         ccDown,           {^X}
+  2,      $1A,         ccDown,           {^Z}
+  2,      $1B,         ccQuit,           {Esc}
+  3,      $11, $03,    ccIncYear,        {^QC}
+  3,      $11, $12,    ccDecYear,        {^QR}
+  {$IFDEF UseMouse}
+  3,      $00, $EF,    ccMouseSel,       {Click left}
+  3,      $00, $EE,    ccQuit,           {Click right}
+  3,      $00, $ED,    ccHelp,           {Click both}
+  {$ELSE}
+                 0, 0, 0, 0, 0, {90}
+  0, 0, 0, 0, 0, 0, 0,
+  {$ENDIF}
+                       0, 0, 0, {100}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {110}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {120}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, {130}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0  {140}
+  );
+  {.F+}
+
+const
+  CalCfgEnd : Byte = 0;

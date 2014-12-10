@@ -1,0 +1,348 @@
+{*********************************************************}
+{*                   OPFORM.IN3 1.30                     *}
+{*     Copyright (c) TurboPower Software 1989, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {conversion routines}
+
+  function DummyConversion(PFP : PrintFieldPtr) : Boolean;
+  begin
+    DummyConversion := True;
+  end;
+
+  function PrintStringConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for string fields}
+  {!!.01}
+  var
+    Len : Byte;
+  begin
+    with PFP^ do begin
+      Len := afMaxLen;
+      if Byte(pfVarPtr^) > Len then begin
+        Byte(pfString^[0]) := Len;                                      {!!.01}
+        Move(String(pfVarPtr^)[1], pfString^[1], Byte(pfString^[0]));   {!!.01}
+      end
+      else
+        pfString^ := String(pfVarPtr^);
+
+      if Length(pfString^) < Len then begin
+        MergePicture(pfString^, pfString^);
+        pfPadField;
+      end;
+    end;
+    PrintStringConvert := True;
+  end;
+
+  function PrintCharConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for Character fields}
+
+  begin
+    with PFP^ do begin
+      pfString^ := Char(pfVarPtr^);
+      if Length(pfString^) < Length(afPicture) then
+        MergePicture(pfString^,pfString^);
+      pfPadField;
+    end;
+    PrintCharConvert := True;
+  end;
+
+  function PrintWordConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for Word fields}
+
+  begin
+    with PFP^ do begin
+      MergePicture(pfLong2Str(Word(pfVarPtr^),4), pfString^);  {!!.01}
+      pfPadField;
+    end;
+    PrintWordConvert := True;
+  end;
+
+  function PrintLongConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for LongInt fields}
+
+  begin
+    with PFP^ do begin
+      MergePicture(pfLong2Str(LongInt(pfVarPtr^),8), pfString^); {!!.01}
+      pfPadField;
+    end;
+    PrintLongConvert := True;
+  end;
+
+  function PrintBoolConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for booleans}
+  begin
+    with PFP^ do begin
+      if Boolean(pfVarPtr^) then
+        pfString^ := TrueChar
+      else
+        pfString^ := FalseChar;
+      if Length(pfString^) < Length(afPicture) then
+        MergePicture(pfString^,pfString^);
+      pfPadField;
+    end;
+    PrintBoolConvert := True;
+  end;
+
+  function PrintYesNoConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for yes/no fields}
+  begin
+    with PFP^ do begin
+      if Boolean(pfVarPtr^) then
+        pfString^ := YesChar
+      else
+        pfString^ := NoChar;
+      if Length(pfString^) < Length(afPicture) then
+        MergePicture(pfString^,pfString^);
+      pfPadField;
+    end;
+    PrintYesNoConvert := True;
+  end;
+
+  function PrintIntConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for Integer fields}
+
+  begin
+    with PFP^ do begin
+      MergePicture(pfLong2Str(Integer(pfVarPtr^),4), pfString^);  {!!.01}
+      pfPadField;
+    end;
+    PrintIntConvert := True;
+  end;
+
+  function PrintByteConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for Byte fields}
+
+  begin
+    with PFP^ do begin
+      MergePicture(pfLong2Str(Byte(pfVarPtr^),2), pfString^);   {!!.01}
+      pfPadField;
+    end;
+    PrintByteConvert := True;
+  end;
+
+  function PrintShortConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for ShortInt fields}
+
+  begin
+    with PFP^ do begin
+      MergePicture(pfLong2Str(ShortInt(pfVarPtr^),2), pfString^); {!!.01}
+      pfPadField;
+    end;
+    PrintShortConvert := True;
+  end;
+
+  function PrintRealConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for Real fields}
+  var
+    S       : String[80];
+    Width,
+    Places  : Word;
+
+  begin
+    with PFP^ do begin
+      if Real(pfVarPtr^) = BadReal then begin                     {!!.02}{!!.12}
+        PrintRealConvert := False;                                {!!.02}
+        Exit;                                                     {!!.02}
+      end;                                                        {!!.02}
+      CalcWidthAndPlaces(Width,Places);
+      Str(Real(pfVarPtr^):Width:Places,S);
+      if afDPlaces <> 0 then
+        TrimTrailingZeros(S)
+      else                                                 {!!.02}
+        TrimSpacesPrim(S);                                 {!!.02}
+      MergePicture(S, pfString^);
+      pfPadField;
+    end;
+    PrintRealConvert := True;
+  end;
+
+{$IFDEF UseBcd}
+  function PrintBCDConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for BCD fields}
+  var
+    S       : String[80];
+    Width,
+    Places  : Word;
+
+  begin
+    with PFP^ do begin
+      if EqualBCD(BCD(pfVarPtr^), BadBCD) then begin       {!!.02}
+        PrintBCDConvert := False;                                 {!!.02}
+        Exit;                                                     {!!.02}
+      end;                                                        {!!.02}
+      CalcWidthAndPlaces(Width,Places);
+      S := StrBCD(BCD(pfVarPtr^),Width,Places);
+      if afDPlaces <> 0 then
+        TrimTrailingZeros(S);
+      MergePicture(S, pfString^);
+      pfPadField;
+    end;
+    PrintBCDConvert := True;
+  end;
+{$ENDIF}
+
+{$IFOPT N+}
+  function PrintExtConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for Extended fields}
+  var
+    S       : String[80];
+    Width,
+    Places  : Word;
+
+  begin
+    with PFP^ do begin
+      if Extended(pfVarPtr^) = BadExt then begin                  {!!.02}
+        PrintExtConvert := False;                                 {!!.02}
+        Exit;                                                     {!!.02}
+      end;                                                        {!!.02}
+      CalcWidthAndPlaces(Width,Places);
+      Str(Extended(pfVarPtr^):Width:Places,S);
+      if afDPlaces <> 0 then
+        TrimTrailingZeros(S);
+      MergePicture(S, pfString^);
+      pfPadField;
+    end;
+    PrintExtConvert := True;
+  end;
+
+  function PrintDblConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for Double fields}
+  var
+    S       : String[80];
+    Width,
+    Places  : Word;
+
+  begin
+    with PFP^ do begin
+      if Double(pfVarPtr^) = BadDbl then begin                    {!!.02}
+        PrintDblConvert := False;                                 {!!.02}
+        Exit;                                                     {!!.02}
+      end;                                                        {!!.02}
+      CalcWidthAndPlaces(Width,Places);
+      Str(Double(pfVarPtr^):Width:Places,S);
+      if afDPlaces <> 0 then
+        TrimTrailingZeros(S);
+      MergePicture(S, pfString^);
+      pfPadField;
+    end;
+    PrintDblConvert := True;
+  end;
+
+  function PrintSglConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for Words}
+  var
+    S       : String[80];
+    Width,
+    Places  : Word;
+
+  begin
+    with PFP^ do begin
+      if Single(pfVarPtr^) = BadSgl then begin                    {!!.02}
+        PrintSglConvert := False;                                 {!!.02}
+        Exit;                                                     {!!.02}
+      end;                                                        {!!.02}
+      CalcWidthAndPlaces(Width,Places);
+      Str(Single(pfVarPtr^):Width:Places,S);
+      if afDPlaces <> 0 then
+        TrimTrailingZeros(S);
+      MergePicture(S, pfString^);
+      pfPadField;
+    end;
+    PrintSglConvert := True;
+  end;
+
+  function PrintCompConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion routine for Words}
+  var
+    S       : String[80];
+    Width,
+    Places  : Word;
+
+  begin
+    with PFP^ do begin
+      if Comp(pfVarPtr^) = BadComp then begin                     {!!.02}
+        PrintCompConvert := False;                                {!!.02}
+        Exit;                                                     {!!.02}
+      end;                                                        {!!.02}
+      CalcWidthAndPlaces(Width,Places);
+      Str(Comp(pfVarPtr^):Width:Places,S);
+      if afDPlaces <> 0 then
+        TrimTrailingZeros(S);
+      MergePicture(S, pfString^);
+      pfPadField;
+    end;
+    PrintCompConvert := True;
+  end;
+
+{$ENDIF}
+
+{$IFDEF UseDates}
+  function PrintDateConvert(PFP : PrintFieldPtr) : Boolean;
+
+  begin
+    with PFP^ do
+      pfString^ := DateToDateString(afPicture,Date(pfVarPtr^));
+    PrintDateConvert := True;                                    {!!.12}
+  end;
+
+  function PrintTimeConvert(PFP : PrintFieldPtr) : Boolean;
+    {-Conversion function for Time Fields}
+
+  begin
+    with PFP^ do
+      pfString^ := TimeToTimeString(afPicture,Time(pfVarPtr^));
+    PrintTimeConvert := True;                                    {!!.12}
+  end;
+
+{$ENDIF}
+
+  {Laserjet specific line draw}
+
+  procedure LJRule(P : PrinterPtr; Field : LineFieldPtr);
+    {-Prints LineField as a Laserjet Rule}
+  var
+    Pattern : Dimension;
+
+  begin
+    with P^, Field^ do begin
+      {position the cursor}
+      P^.PrintStrPrim(LJBuildEscapeSeq(lfRow1,LJVD,LJMaskChar,rtAbsolute));
+      if pLastError <> 0 then
+        Exit;
+      P^.PrintStrPrim(LJBuildEscapeSeq(lfCol1,LJHD,LJMaskChar,rtAbsolute));
+      if pLastError <> 0 then
+        Exit;
+
+      {set horizonal / vertical rule/pattern}
+      PrintStrPrim(LJBuildEscapeSeq(pfHeight,LJVRuleDeci,
+                   LJMaskChar,rtAbsolute));
+      if pLastError <> 0 then
+        Exit;
+
+      PrintStrPrim(LJBuildEscapeSeq(pfWidth,LJHRuleDeci,
+                   LJMaskChar,rtAbsolute));
+      if pLastError <> 0 then
+        Exit;
+
+      Pattern := pfAttr;
+      if Pattern > 100.0 then
+        (*Pattern := Pattern - 100.0;*)   {!!.30}
+        Pattern := 100.0;                 {!!.30}
+
+      PrintStrPrim(LJBuildEscapeSeq(Pattern,LJRulePattern,
+                                    LJMaskChar,rtAbsolute));
+
+      if pLastError <> 0 then
+        Exit;
+
+      if FlagIsSet(pfOptions,pfPattern) then begin
+        if pfAttr > 100 then
+          PrintStrPrim(LJHPPattern)
+        else
+          PrintStrPrim(LJPrintPattern);
+      end
+      else
+        PrintStrPrim(LJPrintRule);
+    end;
+  end;

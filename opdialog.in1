@@ -1,0 +1,233 @@
+  {*********************************************************}
+  {*                  OPDIALOG.IN1 1.30                    *}
+  {*      Copyright (c) TurboPower Software 1990, 1992.    *}
+  {*                 All rights reserved.                  *}
+  {*********************************************************}
+
+const
+  SpecialExitCommands : ByteSet =
+    [ccTab, ccBackTab, ccNested, ccDone, ccChar, ccAltKey,      {!!.11}
+     ccNextField, ccPrevField];                                 {!!.11}
+
+  constructor WindowControl.Init(ID : Word;              var Prompt : string;
+                                 pRow, pCol : Word;      cRow, cCol : Word;
+                                 cWidth, cHeight : Byte; HelpIndex : Word;
+                                 prOptions, seOptions, dcOptions : LongInt;
+                                 var Colors : ColorSet;  var dColors : DialogColorSet;
+                                 DefCmd : Word;          var CW : CommandWindow);
+    {-Initialize a command window control}
+  begin
+    {set pointers to the window and its parent}
+    wcWin := @CW;
+
+    ClearLongFlag(prOptions, efRequired+efTrimBlanks);
+    if not Control.InitNPP(
+      ID, Prompt, pRow, pCol, emNullError, cRow, cCol, cWidth, cHeight,
+      HelpIndex, BlankRange, BlankRange, 0, 0, NullMsgLen, ' ', prOptions,
+      seOptions or ifMultiLine, dcOptions or dcSelectByChar, Colors, dColors) then
+        Fail;
+
+    dcDefCmd := DefCmd;
+    efValidate := NullValidation;
+  end;
+
+  procedure WindowControl.Convert(PostEdit : Boolean);
+  begin
+    {do nothing}
+  end;
+
+  procedure WindowControl.Draw(var St : string;
+                               Row, Col : Word;
+                               FA, CA, POffset : Byte;
+                               PasswordChar : Char;
+                               var Flags : PictureFlags);
+  begin
+    {do nothing}
+  end;
+
+  procedure WindowControl.Edit(Row, Col : Word;     FA, CA : Byte;
+                               PasswordChar : Char; PosCode : Byte;
+                               ReadOnly : Boolean;  var CC : Word;
+                               var ChWord : Word;   var InsertMode : Boolean;
+                               EP : ErrorProc;      UnitCode : Byte;
+                               var CP : CommandProcessor);
+  var
+    Cmd : Word;
+    Ch : Char absolute ChWord;
+    Dummy : Boolean;
+    SaveWinOptions : LongInt;
+    CtP : ControlPtr;
+    SaveErrorProc : ErrorProc;
+    SaveUnitCode : Word;
+    SaveHelpIndex : Word;
+    SaveExitSetPtr : ByteSetPtr;
+    SaveCPP : CommandProcessorPtr;
+    SaveActiveChild : WindowPtr;
+  begin
+    with wcWin^ do begin
+      {$IFDEF UseMouse}
+        {activate AllMouseEvents option}
+        SaveWinOptions := wFlags;
+        wFlags := wFlags or wAllMouseEvents;
+      {$ENDIF}
+
+      if LongFlagIsSet(sfFlags, sefSwitchCommands) then begin
+        {switch command processors}
+        SaveCPP := cwCmdPtr;
+        cwCmdPtr := @CP;
+      end;
+
+      {switch error handlers, etc.}
+      SaveErrorProc := cwErrorProc;
+      cwErrorProc := EP;
+
+      SaveUnitCode := cwUnitCode;
+      cwUnitCode := UnitCode;
+
+      SaveHelpIndex := wHelpIndex;
+      wHelpIndex := sfHelpIndex;
+
+      SaveExitSetPtr := GetExitCommandPtr;
+      SetExitCommands(@SpecialExitCommands);
+
+      SaveActiveChild := wParentPtr^.ActiveChild;
+      wParentPtr^.SetActiveChild(wcWin);
+
+      {make a selection}
+      repeat
+        wParentPtr^.Process;
+
+        CC := cwCmd;
+        ChWord := cwKey;
+        if CC = ccSelect then
+          CC := dcDefCmd;
+        case CC of
+          ccExitAtTop,
+          ccExitAtBot,
+          ccExitLeft,
+          ccExitRight :
+            CC := ccNone;
+          ccAltKey,
+          ccChar :
+            begin
+              CtP := FindSelectionChar(Ch);
+              if (CtP = nil) or (CtP = @Self) then
+                CC := ccNone;
+            end;
+          {$IFDEF UseMouse}
+          ccMouseDown,
+          ccMouseSel :
+            with DialogBoxPtr(wParentPtr)^ do begin
+              Cmd := CC;
+              if not (dgEvaluateMouseCommand(Cmd, Dummy, False) or {!!.12}
+                      ((asNext <> asCurrent) and (asNext <> nil))) then
+                CC := ccNone;
+            end;
+          {$ENDIF}
+          ccQuit      : if not LongFlagIsSet(sfOptions, efAllowEscape) then
+                          CC := ccTab;
+        end;
+      until efOkToAdvance(CC);
+
+      {$IFDEF UseMouse}
+        {restore previous window options}
+        wFlags := SaveWinOptions;
+      {$ENDIF}
+
+      if LongFlagIsSet(sfFlags, sefSwitchCommands) then
+        {restore previous command processor}
+        cwCmdPtr := SaveCPP;
+
+      {restore error handler, etc.}
+      cwErrorProc := SaveErrorProc;
+      cwUnitCode := SaveUnitCode;
+      wHelpIndex := SaveHelpIndex;
+      SetExitCommands(SaveExitSetPtr);
+
+      {reset active window}
+      wParentPtr^.SetActiveChild(SaveActiveChild);
+    end;
+  end;
+
+
+{$IFDEF UseStreams}
+  constructor WindowControl.Load(var S : IdStream);
+    {-Load a window control from a stream}
+  var
+    WP : WindowPtr;
+    I : Word;
+  begin
+    if WindowControlParent = nil then begin
+      S.Error(epNonFatal+ecIdNotRegistered);
+      Fail;
+    end;
+
+    if not Control.Load(S) then
+      Fail;
+
+    S.Read(I, SizeOf(I));
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {ask the parent for the address of the I'th child window}
+    WP := WindowControlParent^.ChildPtr(I);
+    if WP = nil then begin
+      S.Error(epNonFatal+ecIdNotRegistered);
+      Done;
+      Fail;
+    end
+    else
+      wcWin := Pointer(WP);
+  end;
+
+  procedure WindowControl.Store(var S : IdStream);
+    {-Store a window control in a stream}
+  var
+    I : Word;
+  begin
+    {store only the index for the child window}
+    I := wcWin^.wParentPtr^.ChildIndex(wcWin);
+    if (I = $FFFF) then
+      {not found}
+      S.Error(epNonFatal+ecIdNotRegistered)
+    else begin
+      Control.Store(S);
+      S.Write(I, SizeOf(I));
+    end;
+  end;
+
+  procedure WindowControlStream(SPtr : IdStreamPtr);
+    {-Register all types needed for a WindowControl}
+  begin
+    ControlStream(SPtr);
+    with SPtr^ do
+      RegisterType(otWindowControl, veWindowControl,
+                   TypeOf(WindowControl),
+                   @WindowControl.Store, @WindowControl.Load);
+  end;
+
+  procedure EditControlStream(SPtr : IdStreamPtr);
+    {-Register all types needed for an editing control}
+  begin
+    ControlStream(SPtr);
+    with SPtr^ do begin
+      RegisterPointer(ptStringConversion, @StringConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure SimpleEditControlStream(SPtr : IdStreamPtr);
+    {-Register all types needed for a simple editing control}
+  begin
+    ControlStream(SPtr);
+    with SPtr^ do begin
+      RegisterPointer(ptSimpleStringConversion, @SimpleStringConversion);
+      RegisterPointer(ptSimpleDrawString,       @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor,     @SimpleStringEditor);
+    end;
+  end;
+
+{$ENDIF}

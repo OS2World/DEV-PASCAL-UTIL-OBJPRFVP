@@ -1,0 +1,2052 @@
+  {*********************************************************}
+  {*                    OPHELP.IN3 1.30                    *}
+  {*     Copyright (c) TurboPower Software 1987, 1992.     *}
+  {*                 All rights reserved.                  *}
+  {*********************************************************}
+
+  procedure ScrollingHelpWindow.hwUpdateHelp;
+    {-Draw entire help window}
+  var
+    H : Byte;
+    Row : Byte;
+    Attr : Byte;
+    Line : shLineRec;
+    InXref : Word;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+    StackRec : shStackRec; {!!.03}
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+
+    {Correct if height changed} {!!.03}
+    H := Height;
+    if H <> shInitHgt then begin
+      shFindLastLine;
+      if shLast.TextOfs = $FFFF then begin
+        {A zoom or resize occurred that left blank lines at bot of win}
+        shInitFirst(shFirst);
+        shFindLastLine;
+        if shLast.TextOfs <> $FFFF then
+          repeat
+            shNextLine(shLast, Line);
+            if Line.TextOfs <> $FFFF then begin
+              shLast := Line;
+              shNextLine(shFirst, shFirst);
+            end;
+          until Line.TextOfs = $FFFF;
+      end;
+      shInitHgt := H;
+    end;
+
+    {Reset shMaxCol in case window width was changed}
+    if FlagIsSet(hwFlags, hwAdjustScroll) then
+      shSetMaxScroll;
+
+    {Draw all the lines}
+    Line := shFirst;
+    {H := Height;} {!!.03}
+    Attr := hwSetAttr(Char(0));
+    for Row := 1 to H do begin
+      if Row = H then
+        shLast := Line;
+      if Line.TextOfs = $FFFF then
+        {Clear line}
+        FastFill(Width, wBackChar, wYL+Row-1, wXL, Attr)
+      else
+        {Draw line}
+        shDrawLine(Row, Line);
+    end;
+
+    {Draw xref highlight}                       {!!.13}
+    shPrvX := 0;                                {!!.13}
+    shPrvY := 0;                                {!!.13}
+    shPrvXRO := $FFFF;                          {!!.13}
+    shPrvXRT := $FFFF;                          {!!.13}
+    if FlagIsSet(hwFlags, hwHighlightXref) then {!!.13}
+      shUpdateHighlight;                        {!!.13}
+
+    {Save time if already in help Process routine}
+    if not FlagIsSet(hwFlags, hwProcessingHelp) then begin
+      shInitMaxOfs;
+      if hwMoreRec.HdrNum <> 255 then             {!!.13}
+        if ActiveFramePtr = @wFrame then begin    {!!.13}
+          pkResetMoreRec(hwMoreRec, (shInitBotOfs < shMaxBotOfs));
+          pkUpdateMoreRec(hwMoreRec,
+                          (shFirst.TextOfs > 0),
+                          (shLast.TextOfs < shMaxBotOfs),
+                          (shInitBotOfs < shMaxBotOfs));
+        end;
+
+      {$IFDEF UseScrollBars}
+      {Set up for scroll bars}
+      hwSetupForScrollBars;
+      hwUpdateScrollBars;
+      {$ENDIF}
+
+      {Update help stack for adjusted parameters} {!!.03}
+      hwStack.PopTail(StackRec);
+      if hwStack.GetStatus = 0 then
+        hwPushCurTopic;
+    end;
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+  end;
+
+  function ScrollingHelpWindow.shFindXrefTopic(MX, MY : Byte) : Word;
+    {-Return topic of xref at position MX,MY or $FFFF for none}
+  var
+    LineCol : Word;
+    ScrnCol : Word;
+    ScrnRow : Byte;
+    BufCh : Char;
+    Finished : Boolean;
+    InXref : Boolean;
+    Line : shLineRec;
+    CurTopic : Word;
+  begin
+    shFindXrefTopic := $FFFF;
+
+    Line := shFirst;
+    ScrnRow := 0;
+    LineCol := 1;             {Visible position within line}
+    ScrnCol := hwHelpPad;     {Screen output column}
+
+    with Line do begin
+      {Starting in xref highlight?}
+      InXref := (FlexStk[FlexSP] = XrefToggle);
+
+      Finished := False;
+      repeat
+        BufCh := hwBufP^[TextOfs];
+
+        case BufCh of
+          Attr1Toggle..Attr3Toggle : {Modifying video attribute}
+            ;
+
+          XrefToggle :              {Marking a cross-reference}
+            InXref := not InXref;
+
+          IndexMarker :             {Cross-reference topic index}
+            begin
+              CurTopic := Word(Pointer(@hwBufP^[TextOfs+1])^);
+              Inc(TextOfs, 2);
+            end;
+
+          LineBrkMark,       {End of line}
+          PageBrkMark :      {End of page -- acts like end of line here}
+            begin
+              inc(ScrnRow);
+              LineCol := 1;
+              ScrnCol := hwHelpPad;
+              Finished := (ScrnRow > MY);
+            end;
+
+          SectEndMark :      {End of section}
+            Finished := True;
+
+        else
+          {Visible character}
+          if LineCol >= shCurCol then begin
+            {In visible region of line}
+            if InXref then
+              if (ScrnRow = MY) and (ScrnCol = MX) then begin
+                {Match, get the current topic number and quit}
+                shFindXrefTopic := CurTopic;
+                Finished := True;
+              end;
+            Inc(ScrnCol);
+          end;
+          Inc(LineCol);
+        end;
+
+        Inc(TextOfs);
+      until Finished;
+    end;
+  end;
+
+  function ScrollingHelpWindow.hwFindTextOfs : Word;
+    {-Return text offset of current cursor position}
+  var
+    MX : Byte;
+    MY : Byte;
+    LineCol : Word;
+    ScrnCol : Word;
+    ScrnRow : Byte;
+    BufCh : Char;
+    Finished : Boolean;
+    Line : shLineRec;
+  begin
+    hwFindTextOfs := $FFFF;
+
+    Line := shFirst;
+    ScrnRow := 0;
+    LineCol := 1;             {Visible position within line}
+    ScrnCol := hwHelpPad;     {Screen output column}
+    MX := WCursorX-wXL;
+    MY := WCursorY-wYL;
+
+    with Line do begin
+      Finished := False;
+      repeat
+        BufCh := hwBufP^[TextOfs];
+
+        case BufCh of
+          Attr1Toggle..Attr3Toggle, {Modifying video attribute}
+          XrefToggle :              {Marking a cross-reference}
+            ;
+
+          IndexMarker :             {Cross-reference topic index}
+            Inc(TextOfs, 2);
+
+          LineBrkMark,       {End of line}
+          PageBrkMark :      {End of page -- acts like end of line here}
+            begin
+              inc(ScrnRow);
+              LineCol := 1;
+              ScrnCol := hwHelpPad;
+              Finished := (ScrnRow > MY);
+            end;
+
+          SectEndMark :      {End of section}
+            Finished := True;
+
+        else
+          {Visible character}
+          if LineCol >= shCurCol then begin
+            {In visible region of line}
+            if (ScrnRow = MY) and (ScrnCol = MX) then begin
+              {Match, get the current topic number and quit}
+              hwFindTextOfs := TextOfs;
+              Finished := True;
+            end;
+            Inc(ScrnCol);
+          end;
+          Inc(LineCol);
+        end;
+
+        Inc(TextOfs);
+      until Finished;
+    end;
+  end;
+
+  {$IFDEF UseMouse}
+  procedure ScrollingHelpWindow.shPositionCursor(X, Y : Byte);
+    {-Position cursor within window if valid coordinates}
+  var
+    YT : Byte;
+    Line : shLineRec;
+  begin
+    if (X < wXL+hwHelpPad) or (X > wXH-hwHelpPad) then
+      {Don't move cursor outside horizontal boundaries}
+      Line.TextOfs := $FFFF
+    else if Y > wCursorY then begin
+      {Move cursor only if it fits within the text}
+      YT := wCursorY;
+      shFindCurLine(Line);
+      while (YT < Y) and (Line.TextOfs <> $FFFF) do begin
+        inc(YT);
+        shNextLine(Line, Line);
+      end;
+    end else
+      Line.TextOfs := 0;
+    if Line.TextOfs <> $FFFF then begin
+      wCursorX := X;
+      wCursorY := Y;
+    end;
+  end;
+
+  {!!.03} {Reorganization to support mouse dragging}
+  function ScrollingHelpWindow.shEvaluateMouseCmd : Boolean;
+    {-Evaluate mouse command}
+  var
+    XrefTopic : Word;
+    BarPos : LongInt;
+    FramePos : FramePosType;
+    HotCode : Byte;
+    {MOn : Boolean;}    {!!.02}
+    {TendUp : Boolean;} {!!.03}
+    InitTextOfs : Word; {!!.03}
+    WX : Byte;
+    WY : Byte;
+    SameItem : Boolean;
+    Dragging : Boolean;
+  begin
+    shEvaluateMouseCmd := False;
+
+    {Determine position of mouse}
+    BarPos := cwMouseResults(cwCmd, FramePos, HotCode); {!!.13}
+
+    {Should mouse event be ignored?}
+    if cwIgnoreMouseEvent(Dragging, cwCmd, FramePos, HotCode) then
+      Exit;
+
+    case HotCode of
+      hsNone:
+        begin
+          {Not a hot spot}
+          if FramePos = frInsideActive then begin
+            {Inside window, search for an xref at the mouse position}
+
+            {Compute absolute coordinate of mouse}
+            WX := MouseKeyWordX+MouseXLo;
+            WY := MouseKeyWordY+MouseYLo;
+
+            {Search for an xref at the mouse position}
+            XrefTopic := shFindXrefTopic(WX-wXL, WY-wYL);
+
+            if XrefTopic = $FFFF then
+              {No matching xref, just reposition cursor}
+              shPositionCursor(WX, WY)
+            else begin
+              {Cursor is on an xref}
+              SameItem := (WX = wCursorX) and (WY = wCursorY);
+
+              if not SameItem then begin
+                {Selecting a new xref}
+                shPositionCursor(WX, WY);
+                if FlagIsSet(pkFlags, pkSelectOnClick) then
+                  {Force immediate selection}
+                  SameItem := True
+                else if cwCmd = ccMouseDown then
+                  {Set flag that requires double click when dragging}
+                  SetFlag(hwFlags, hwChangedXref);
+              end;
+
+              if cwCmd = ccMouseSel then
+                {Button was released}
+                if SameItem then
+                  if FlagIsSet(hwFlags, hwChangedXref) then
+                    {Clear double click flag}
+                    ClearFlag(hwFlags, hwChangedXref)
+                  else if XrefTopic = XrefForIndex then
+                    {Show index}
+                    shEvaluateMouseCmd := hwHelpIndex
+                  else begin
+                    {On a cross-reference topic with mouse button released}
+                    hwPushCurTopic;
+                    hwNewTopic(XrefTopic);
+                  end;
+            end;
+
+          end else if (not Dragging) or (cwCmd = ccMouseDown) then
+            {Button was pressed outside of active window, not on a hot spot}
+            if LongFlagIsSet(wFlags, wAllMouseEvents) then begin {!!.22}
+              hwPushCurTopic;                                    {!!.22}
+              shEvaluateMouseCmd := True;                        {!!.22}
+            end else                                             {!!.22}
+              shEvaluateMouseCmd := False;                       {!!.22}
+        end;
+
+      hsSpot,            {Single character hot spot}
+      hsRegion0..255 :   {User-defined region relative to a frame}
+        begin {!!.22 reorganized}
+          if (HotCode = hwPrevHotSpot) and (FramePos = hwPrevSpotPos) then begin
+            {Request for previous topic}
+            if (cwCmd = ccMouseSel) and (hwStack.Elements <> 0) then
+              hwPopCurTopic;
+          end else if (cwCmd <> ccMouseAuto) then begin
+            {A different hot spot; treat as user exit command}
+            hwPushCurTopic;
+            shEvaluateMouseCmd := True;
+          end;
+          Exit;
+        end;
+
+    else
+      if Dragging and (cwCmd = ccMouseSel) then
+        {A hot spot, but this wasn't the right kind of mouse event}
+        Exit;
+    end;
+
+
+    case HotCode of
+      hsDecV :           {Decrement vertical scroll}
+        if FlagIsSet(hwFlags, hwMousePage) then
+          shPageUp
+        else
+          shScrollUp;
+
+      hsDecH :           {Decrement horizontal scroll}
+        if shCurCol > 1 then begin
+          dec(shCurCol);
+          if wCursorX < wXH-hwHelpPad then
+            inc(wCursorX);
+        end;
+
+      hsIncV :
+        if FlagIsSet(hwFlags, hwMousePage) then
+          shPageDn
+        else
+          shScrollDown;
+
+      hsIncH :
+        if shCurCol < shMaxCol then begin
+          inc(shCurCol);
+          if wCursorX > wXL+hwHelpPad then
+            dec(wCursorX);
+        end;
+
+      {$IFDEF UseScrollBars}
+      hsBar :            {Slider portion of a scroll bar}
+        case FramePos of
+          frLL, frRR :   {Vertical scroll bar}
+            {!!.03} {Smoother operation when dragging}
+            if shInitBotOfs <> $FFFF then begin
+              InitTextOfs := shLast.TextOfs;
+              while shLast.TextOfs > BarPos do begin
+                shPrevLine(shLast, shLast);
+                shPrevLine(shFirst, shFirst);
+              end;
+              while shLast.TextOfs < BarPos do begin
+                shNextLine(shLast, shLast);
+                shNextLine(shFirst, shFirst);
+              end;
+              if shLast.TextOfs <> InitTextOfs then
+                {Force a screen update}
+                shPrvCol := 0;
+            end;
+        else             {Horizontal scroll bar}
+          shCurCol := BarPos;
+        end;
+      {$ENDIF}
+
+    end;
+
+    {!!.02}
+    {duplicate case statement removed}
+  end;
+  {$ENDIF}
+
+  procedure ScrollingHelpWindow.shFindCurLine(var Line : shLineRec);
+    {-Return linerec for line currently at wCursorY}
+  var
+    Row : Byte;
+  begin
+    Line := shFirst;
+    for Row := wYL to wCursorY-1 do
+      if Line.TextOfs = $FFFF then
+        Exit
+      else
+        shNextLine(Line, Line);
+  end;
+
+  function ScrollingHelpWindow.shLineLen(Line : shLineRec) : Word;
+    {-Return visible length of line starting at Line}
+  var
+    Len : Word;
+    BufCh : Char;
+    Finished : Boolean;
+  begin
+    Len := 0;
+    Finished := False;
+    with Line do
+      repeat
+        BufCh := hwBufP^[TextOfs];
+
+        case BufCh of
+          Attr1Toggle..Attr3Toggle,
+          XrefToggle :       {Modifying video attribute}
+            ;
+
+          IndexMarker :      {Cross-reference topic}
+            Inc(TextOfs, 2); {Skip over the topic number link}
+
+          LineBrkMark,       {End of line}
+          PageBrkMark,       {End of page -- acts like end of line here}
+          SectEndMark :      {End of section}
+            begin
+              dec(TextOfs);
+              while (Len > 0) and (hwBufP^[TextOfs] = ' ') do begin
+                dec(Len);
+                dec(TextOfs);
+              end;
+              Finished := True;
+            end;
+        else
+          {Visible character}
+          Inc(Len);
+        end;
+        Inc(TextOfs);
+      until Finished;
+    shLineLen := Len;
+  end;
+
+  function ScrollingHelpWindow.shSelectXref : Boolean;
+    {-Select topic indicated by xref at current position}
+  var
+    Topic : Word;
+  begin
+    shSelectXref := False;
+    Topic := CurrentXrefTopic;
+    if Topic <> $FFFF then
+      if Topic = XrefForIndex then
+        {Show index}
+        shSelectXref := hwHelpIndex
+      else begin
+        {New topic}
+        hwPushCurTopic;
+        hwNewTopic(Topic);
+      end;
+  end;
+
+  procedure ScrollingHelpWindow.shDownLine;
+    {-Move cursor down one line}
+  var
+    Line : shLineRec;
+  begin
+    if wCursorY < wYH then begin
+      shFindCurLine(Line);
+      shNextLine(Line, Line);
+      if Line.TextOfs <> $FFFF then
+        inc(wCursorY);
+    end else
+      shVertScr := +1;
+  end;
+
+  procedure ScrollingHelpWindow.shUpLine;
+    {-Move cursor down one line}
+  begin
+    if wCursorY > wYL then
+      dec(wCursorY)
+    else
+      shVertScr := -1;
+  end;
+
+  procedure ScrollingHelpWindow.shScrollDown;
+    {-Scroll down if possible}
+  var
+    Line : shLineRec;
+  begin
+    if shLast.TextOfs <> $FFFF then begin
+      {The window is full of lines}
+      shNextLine(shLast, Line);
+      if Line.TextOfs <> $FFFF then begin
+        {There is a line past the last one}
+        if wCursorY > wYL then
+          dec(wCursorY);
+        shVertScr := +1;
+      end;
+    end;
+  end;
+
+  procedure ScrollingHelpWindow.shScrollUp;
+    {-Scroll up one line if possible}
+  begin
+    if shFirst.TextOfs <> 0 then begin
+      if wCursorY < wYH then
+        inc(wCursorY);
+      shVertScr := -1;
+    end;
+  end;
+
+  procedure ScrollingHelpWindow.shLeft;
+    {-Process character left command}
+  begin
+    if wCursorX > wXL+hwHelpPad then
+      dec(wCursorX)
+    else if shCurCol > 1 then
+      dec(shCurCol);
+  end;
+
+  procedure ScrollingHelpWindow.shRight;
+    {-Process character right command}
+  begin
+    if wCursorX < wXH-hwHelpPad then
+      inc(wCursorX)
+    else if shCurCol < shMaxCol then
+      inc(shCurCol);
+  end;
+
+  procedure ScrollingHelpWindow.shPageUp;
+    {-Process PgUp command}
+  var
+    Rows : Byte;
+    Hgt : Byte;
+  begin
+    if shFirst.TextOfs <> 0 then begin
+      Rows := 0;
+      Hgt := Height;
+      repeat
+        shPrevLine(shFirst, shFirst);
+        shPrevLine(shLast, shLast);
+        inc(Rows);
+      until (Rows = Hgt) or (shFirst.TextOfs = 0);
+      shPrvCol := 0;
+      if Rows < Hgt then
+        wCursorY := wYL;
+    end else
+      wCursorY := wYL;
+  end;
+
+  procedure ScrollingHelpWindow.shPageDn;
+    {-Process PgDn command}
+  var
+    Rows : Byte;
+    Hgt : Byte;
+    Line : shLineRec;
+  begin
+    if shLast.TextOfs <> $FFFF then begin
+      Rows := 0;
+      Hgt := Height;
+      repeat
+        shNextLine(shLast, Line);
+        if Line.TextOfs <> $FFFF then begin
+          shLast := Line;
+          shNextLine(shFirst, shFirst);
+          inc(Rows);
+        end;
+      until (Rows = Hgt) or (Line.TextOfs = $FFFF);
+      shPrvCol := 0;
+      if Rows < Hgt then
+        shScreenBot;
+    end else
+      shScreenBot;
+  end;
+
+  procedure ScrollingHelpWindow.shScreenTop;
+    {-Move cursor to first line of window}
+  begin
+    wCursorY := wYL;
+  end;
+
+  procedure ScrollingHelpWindow.shScreenBot;
+    {-Move cursor to last line of window}
+  var
+    Line : shLineRec;
+  begin
+    shFindCurLine(Line);
+    shNextLine(Line, Line);
+    while (wCursorY < wYH) and (Line.TextOfs <> $FFFF) do begin
+      inc(wCursorY);
+      shNextLine(Line, Line);
+    end;
+  end;
+
+  procedure ScrollingHelpWindow.shHorizScroll(LinePos : Integer);
+    {-Scroll window and move cursor to make position LinePos current}
+  begin
+    Inc(LinePos, Integer(wXL)+hwHelpPad-shCurCol);
+    if LinePos > wXH-hwHelpPad then begin
+      Inc(shCurCol, LinePos-(wXH-hwHelpPad));
+      if shCurCol > shMaxCol then
+        shCurCol := shMaxCol;
+      wCursorX := wXH-hwHelpPad;
+    end else if LinePos < wXL+hwHelpPad then begin
+      Dec(shCurCol, (wXL+hwHelpPad)-LinePos);
+      if shCurCol < 1 then
+        shCurCol := 1;
+      wCursorX := wXL+hwHelpPad;
+    end else
+      wCursorX := LinePos;
+  end;
+
+  procedure ScrollingHelpWindow.shStartOfLine;
+    {-Move cursor to start of line}
+  begin
+    wCursorX := wXL+hwHelpPad;
+    shCurCol := 1;
+  end;
+
+  procedure ScrollingHelpWindow.shEndOfLine;
+    {-Move cursor to end of line}
+  var
+    TempX : Word;
+    Line : shLineRec;
+  begin
+    shFindCurLine(Line);
+    if Line.TextOfs <> $FFFF then
+      shHorizScroll(shLineLen(Line)+1);
+  end;
+
+  procedure ScrollingHelpWindow.shTopOfFile;
+    {-Position cursor to top of file}
+  begin
+    wCursorX := wXL+hwHelpPad;
+    wCursorY := wYL;
+    if (shCurCol <> 1) or (shFirst.TextOfs <> 0) then begin
+      shInitFirst(shFirst);
+      shFindLastLine;
+      shCurCol := 1;
+      shPrvCol := 0;
+    end;
+  end;
+
+  procedure ScrollingHelpWindow.shEndOfFile;
+    {-Scroll down to end of help topic}
+  var
+    Line : shLineRec;
+  begin
+    if shLast.TextOfs <> $FFFF then begin
+      repeat
+        shNextLine(shLast, Line);
+        if Line.TextOfs <> $FFFF then begin
+          shLast := Line;
+          shNextLine(shFirst, shFirst);
+        end;
+      until Line.TextOfs = $FFFF;
+      shPrvCol := 0;
+      wCursorY := wYH;
+    end else
+      shScreenBot;
+    shEndOfLine;
+  end;
+
+  procedure ScrollingHelpWindow.shFindCurPos(var Line : shLineRec;
+                                             var LineCol : Word);
+    {-Return the line and offsets of the cursor position}
+  var
+    WX : Word;
+    ScrnCol : Word;
+    BufCh : Char;
+  begin
+    LineCol := 1;             {Visible position within line}
+    ScrnCol := hwHelpPad;     {Screen output column}
+
+    {Position at start of current line}
+    shFindCurLine(Line);
+
+    with Line do
+      if TextOfs <> $FFFF then begin
+        WX := wCursorX-wXL;       {Current window-relative cursor}
+
+        repeat
+          BufCh := hwBufP^[TextOfs];
+
+          case BufCh of
+            Attr1Toggle..Attr3Toggle,
+            XrefToggle :       {Modifying video attribute}
+              UpdFlex(FlexStk, FlexSp, BufCh);
+
+            IndexMarker :      {Cross-reference topic}
+              Inc(TextOfs, 2); {Skip over the topic number link}
+
+            LineBrkMark,       {End of line}
+            PageBrkMark,       {End of page -- acts like end of line here}
+            SectEndMark :      {End of section}
+              begin
+                {Position to end of line}
+                if TextOfs > 0 then begin
+                  dec(TextOfs);
+                  dec(LineCol);
+                  if hwBufP^[TextOfs] <> ' ' then begin
+                    inc(TextOfs);
+                    inc(LineCol);
+                  end;
+                end;
+                Exit;
+              end;
+
+          else
+            {Visible character}
+            if LineCol >= shCurCol then begin
+              {In visible region of line}
+              if ScrnCol = WX then
+                {Found current position}
+                Exit;
+              Inc(ScrnCol);
+            end;
+            Inc(LineCol);
+
+          end; {case BufCh of}
+
+          Inc(TextOfs);
+        until False;
+      end;
+  end;
+
+  function ScrollingHelpWindow.shSeparator(Ch : Char) : Boolean;
+    {-Return True if Ch is a separator, like a space}
+  begin
+    shSeparator := (Ch = ' ');
+  end;
+
+  procedure ScrollingHelpWindow.shWordLeft;
+    {-Move cursor to next word left}
+  var
+    LineCol : Word;
+    BufCh : Char;
+    Finished : Boolean;
+    LookingForChar : Boolean;
+    LookingForSpace : Boolean;
+    FirstChar : Boolean;
+    Line : shLineRec;
+  begin
+    {Find offsets to cursor}
+    shFindCurPos(Line, LineCol);
+
+    with Line do
+      if (TextOfs = 0) or (TextOfs = $FFFF) then
+        {At start of topic, or in an unknown location}
+        Exit
+
+      else if LineCol = 1 then begin
+        {No text precedes the cursor}
+        if (wCursorX = wXL+hwHelpPad) and (shCurCol = 1) then begin
+          {At start of line, move to end of previous line}
+          shFindCurLine(Line);
+          shPrevLine(Line, Line);
+          shHorizScroll(shLineLen(Line)+1);
+          if wCursorY > wYL then
+            dec(wCursorY)
+          else
+            shVertScr := -1;
+        end else
+          {Move to beginning of line}
+          shHorizScroll(1);
+
+      end else begin
+        {In the middle of a line}
+        LookingForChar := False;
+        LookingForSpace := False;
+        FirstChar := True;
+        Finished := False;
+        repeat
+          BufCh := hwBufP^[TextOfs];
+
+          case BufCh of
+            Attr1Toggle..Attr3Toggle : {Modifying video attribute}
+              UpdFlex(FlexStk, FlexSp, BufCh);
+
+            XrefToggle :
+              begin
+                UpdFlex(FlexStk, FlexSp, BufCh);
+                if FlexStk[FlexSp] <> XrefToggle then
+                  {Topic number precedes this XrefToggle}
+                  dec(TextOfs, 2);
+              end;
+
+            IndexMarker :      {Cross-reference topic}
+              ;
+
+            LineBrkMark,       {End of line}
+            PageBrkMark,       {End of page -- acts like end of line here}
+            SectEndMark :      {End of section}
+              if not FirstChar then begin
+                {Position at start of line}
+                shHorizScroll(1);
+                Finished := True;
+              end else
+                Dec(LineCol);
+
+          else
+            {Visible character}
+            if LookingForChar then begin
+              if not shSeparator(BufCh) then begin
+                {Found end of previous word}
+                LookingForChar := False;
+                LookingForSpace := True;
+              end;
+            end else if LookingForSpace then begin
+              if shSeparator(BufCh) then begin
+                {Found start of current word}
+                shHorizScroll(LineCol+1);
+                Finished := True;
+              end;
+            end else if not FirstChar then begin
+              if shSeparator(BufCh) then
+                LookingForChar := True
+              else
+                LookingForSpace := True;
+            end;
+
+            Dec(LineCol);
+            FirstChar := False;
+          end; {case BufCh of}
+
+          Dec(TextOfs);
+        until Finished;
+      end;
+  end;
+
+  procedure ScrollingHelpWindow.shWordRight;
+    {-Move cursor to next word right}
+  var
+    LineCol : Word;
+    CurLineCol : Word;
+    BufCh : Char;
+    Finished : Boolean;
+    LookingForChar : Boolean;
+    LookingForSpace : Boolean;
+    Line : shLineRec;
+  begin
+    {Find offsets to cursor}
+    shFindCurPos(Line, LineCol);
+
+    with Line do
+      if TextOfs <> $FFFF then begin
+        CurLineCol := LineCol;
+        if shSeparator(hwBufP^[TextOfs]) then begin
+          LookingForChar := True;
+          LookingForSpace := False;
+        end else begin
+          LookingForSpace := True;
+          LookingForChar := False;
+        end;
+
+        Finished := False;
+        repeat
+          BufCh := hwBufP^[TextOfs];
+
+          case BufCh of
+            Attr1Toggle..Attr3Toggle,
+            XrefToggle :       {Modifying video attribute}
+              ;
+
+            IndexMarker :      {Cross-reference topic}
+              Inc(TextOfs, 2); {Skip over the topic number link}
+
+            LineBrkMark,       {End of line}
+            PageBrkMark,       {End of page -- acts like end of line here}
+            SectEndMark :      {End of section}
+              begin
+                {Position to end of line}
+                if TextOfs > 0 then begin
+                  dec(TextOfs);
+                  while (LineCol > 0) and (hwBufP^[TextOfs] = ' ') do begin
+                    dec(LineCol);
+                    dec(TextOfs);
+                  end;
+                end;
+                if LineCol > CurLineCol then
+                  {Just move cursor to end of line}
+                  shHorizScroll(LineCol)
+                else if BufCh <> SectEndMark then begin
+                  {Position at start of next line}
+                  wCursorX := wXL+hwHelpPad;
+                  shCurCol := 1;
+                  if wCursorY < wYH then
+                    inc(wCursorY)
+                  else
+                    shVertScr := +1;
+                end;
+                Finished := True;
+              end;
+
+          else
+            {Visible character}
+            if LookingForChar then begin
+              if not shSeparator(BufCh) then begin
+                {Found start of next word}
+                shHorizScroll(LineCol);
+                Finished := True;
+              end;
+            end else if LookingForSpace then begin
+              if shSeparator(BufCh) then begin
+                {Found end of current word}
+                LookingForSpace := False;
+                LookingForChar := True;
+              end;
+            end;
+            Inc(LineCol);
+          end; {case BufCh of}
+
+          Inc(TextOfs);
+        until Finished;
+      end;
+  end;
+
+  procedure ScrollingHelpWindow.shXrefLeft;
+    {-Move cursor to next Xref left}
+  var
+    LineCol : Word;
+    CurLineCol : Word;
+    Len : Word;
+    BufCh : Char;
+    Finished : Boolean;
+    LeavingXref : Boolean;
+    InXref : Boolean;
+    Line : shLineRec;
+    ScrollCount : Integer;
+    SaveX, SaveY : Word;
+    SaveCol : Word;
+    SaveTextOfs : Word;
+    Diff : Word;
+  begin
+    {First, get the length of the current line}
+    shFindCurLine(Line);
+    Len := shLineLen(Line);
+
+    {Now find offsets to the cursor}
+    shFindCurPos(Line, LineCol);
+
+    {If cursor is beyond endofline, move it in}
+    if LineCol > Len then begin
+      Diff := LineCol - Len;
+      Dec(LineCol, Diff);
+      Dec(Line.TextOfs);
+    end;
+
+    {Save some stuff}
+    ScrollCount := 0;
+    SaveY := wCursorY;
+    SaveX := wCursorX;
+    SaveCol := shCurCol;
+
+    with Line do
+      if TextOfs <> $FFFF then begin
+
+        {Are we starting on an xref or normal text?}
+        if (FlexStk[FlexSP] = XrefToggle) then begin
+          LeavingXref := True;
+          InXref := True;
+        end else begin
+          LeavingXref := False;
+          InXref := False;
+        end;
+        CurLineCol := LineCol;
+        Finished := False;
+        repeat
+          BufCh := hwBufP^[TextOfs];
+          if TextOfs = 0 then
+            BufCh := SectEndMark;
+
+          case BufCh of
+            Attr1Toggle..Attr3Toggle :
+              ;
+            XrefToggle :
+              begin
+                UpdFlex(FlexStk, FlexSp, BufCh);                       {!!.13}
+                if LeavingXref then begin
+                  {Exiting the initial xref, look for the next one}
+                  LeavingXref := False;
+                  InXref := False;
+                  {Move to beginning of this topic}
+                  shHorizScroll(LineCol+1);
+                  SaveCol := shCurCol;
+                  SaveX := wCursorX;
+                   {Index topic precedes this}
+                  Dec(TextOfs, 2);
+                end else begin
+                  InXref := not InXref;
+                  if not InXref then begin
+                    shHorizScroll(LineCol+1);
+                    Finished := True;
+                  end;
+                end;
+              end;
+
+            IndexMarker :      {Cross-reference topic}
+              ;
+
+            LineBrkMark,       {End of line}
+            PageBrkMark,       {End of page -- acts like end of line here}
+            SectEndMark :      {End of section}
+              begin
+                {Adjust wCursor and/or scroll count for prev line}
+                if BufCh <> SectEndMark then begin
+                  SaveTextOfs := TextOfs;
+                  inc(TextOfs); {!!.21}
+                  shPrevLine(Line, Line);
+                  LineCol := shLineLen(Line);
+                  TextOfs := SaveTextOfs;
+                  dec(TextOfs);
+                  while (TextOfs > 0) and (hwBufP^[TextOfs] = ' ') do
+                    dec(TextOfs);
+                  inc(TextOfs);
+                  if wCursorY > wYL then
+                    Dec(wCursorY)
+                  else
+                    Dec(ScrollCount);
+                end else begin
+                  {No next xref, don't do anything}
+                  Finished := True;
+                  ScrollCount := 0;
+                  wCursorY := SaveY;
+                  wCursorX := SaveX;
+                  shCurCol := SaveCol;
+                end;
+              end;
+          else
+            {Visible character}
+            Dec(LineCol);
+          end; {case BufCh of}
+
+          Dec(TextOfs);
+        until Finished;
+
+        {Adjust the screen scroll}
+        while ScrollCount < 0 do begin
+          shPrevLine(shFirst, shFirst);
+          shPrevLine(shLast, shLast);
+          Inc(ScrollCount);
+          shPrvCol := 0;
+        end;
+      end;
+  end;
+
+  procedure ScrollingHelpWindow.shXrefRight;
+    {-Move cursor to next Xref right}
+  var
+    LineCol : Word;
+    CurLineCol : Word;
+    BufCh : Char;
+    Finished : Boolean;
+    LeavingXref : Boolean;
+    InXref : Boolean;
+    Line : shLineRec;
+    ScrollCount : Word;
+    SaveY : Word;
+    SaveCol : Word;
+  begin
+    {Find offsets to cursor}
+    shFindCurPos(Line, LineCol);
+    ScrollCount := 0;
+    SaveY := wCursorY;
+    SaveCol := shCurCol;
+
+    with Line do
+      if TextOfs <> $FFFF then begin
+        if (FlexStk[FlexSP] = XrefToggle) then
+          LeavingXref := True
+        else begin
+          LeavingXref := False;
+          InXref := False;
+        end;
+        CurLineCol := LineCol;
+        Finished := False;
+        repeat
+          BufCh := hwBufP^[TextOfs];
+
+          case BufCh of
+            Attr1Toggle..Attr3Toggle :
+              ;
+            XrefToggle :
+              begin
+                if LeavingXref then begin
+                  LeavingXref := False;
+                  InXref := False;
+                end else begin
+                  InXref := not InXref;
+                  if InXref then begin
+                    shHorizScroll(LineCol);
+                    Finished := True;
+                  end;
+                end;
+              end;
+
+            IndexMarker :      {Cross-reference topic}
+              Inc(TextOfs, 2); {Skip over the topic number link}
+
+            LineBrkMark,       {End of line}
+            PageBrkMark,       {End of page -- acts like end of line here}
+            SectEndMark :      {End of section}
+              begin
+                {Adjust wCursor and/or scroll count}
+                if BufCh <> SectEndMark then begin
+                  shCurCol := 1;
+                  LineCol := 1;
+                  if wCursorY < wYH then
+                    inc(wCursorY)
+                  else
+                    Inc(ScrollCount);
+                end else begin
+                  {No next xref, don't do anything}
+                  Finished := True;
+                  ScrollCount := 0;
+                  wCursorY := SaveY;
+                  shCurCol := SaveCol;
+                end;
+              end;
+          else
+            {Visible character}
+            Inc(LineCol);
+          end; {case BufCh of}
+
+          Inc(TextOfs);
+        until Finished;
+
+        {Adjust the screen scroll}
+        while ScrollCount > 0 do begin
+          shNextLine(shLast, Line);
+          if Line.TextOfs <> $FFFF then begin
+            shLast := Line;
+            shNextLine(shFirst, shFirst);
+            dec(ScrollCount);
+          end;
+          shPrvCol := 0;
+       end;
+     end;
+  end;
+
+  function ScrollingHelpWindow.shBlockPosAtCursor : Word;
+    {-Return a valid block position from the current cursor location}
+  var
+    Line : shLineRec;
+    LineCol : Word;
+  begin
+    shFindCurPos(Line, LineCol);
+    shBlockPosAtCursor := Line.TextOfs;
+  end;
+
+  procedure ScrollingHelpWindow.shMarkBlockBegin;
+    {-Start a marked block}
+  begin
+    shBlockBegin := shBlockPosAtCursor;
+    shBlockOn := (shBlockEnd >= shBlockBegin);
+
+    {Update the window}
+    hwUpdateHelp;
+  end;
+
+  procedure ScrollingHelpWindow.shMarkBlockEnd;
+    {-End a marked block}
+  begin
+    {Actual block end is one position prior to cursor}
+    shBlockEnd := shBlockPosAtCursor;
+    if shBlockEnd > 0 then begin
+      dec(shBlockEnd);
+      shBlockOn := (shBlockEnd >= shBlockBegin);
+    end else
+      shBlockOn := False;
+
+    {Update the window}
+    hwUpdateHelp;
+  end;
+
+  procedure ScrollingHelpWindow.shBlockToggle;
+    {-Toggle block marking}
+  begin
+    if shBlockEnd >= shBlockBegin then begin
+      shBlockOn := not shBlockOn;
+      {Update the window}
+      hwUpdateHelp;
+    end;
+  end;
+
+  function ScrollingHelpWindow.shBlockCopy : Boolean;
+    {-Pass a pointer to the help text to a user procedure}
+  begin
+    if shBlockOn and (shBlockBegin <= shBlockEnd) then
+      shBlockCopy := shSend(@hwBufP^[shBlockBegin],
+                            shBlockEnd-shBlockBegin+1,
+                            @Self)
+    else
+      shBlockCopy := False;
+  end;
+
+  function ScrollingHelpWindow.shEvaluateCmd : Boolean;
+    {-Evaluate command}
+  begin
+    shEvaluateCmd := False;
+
+    case cwCmd of
+      ccNone :             {Invalid keystroke}
+        ;
+
+      ccUp :               {Move cursor or scroll}
+        shUpLine;
+
+      ccDown :
+        shDownLine;
+
+      ccScrollUp :         {^W}
+        shScrollUp;
+
+      ccScrollDn :         {^Z}
+        shScrollDown;
+
+      ccLeft :
+        shLeft;
+
+      ccRight :
+        shRight;
+
+      ccPageUp :
+        shPageUp;
+
+      ccPageDn :
+        shPageDn;
+
+      ccHome :
+        shStartOfLine;
+
+      ccEnd :
+        shEndOfLine;
+
+      ccTopOfFile :
+        shTopOfFile;
+
+      ccEndOfFile :
+        shEndOfFile;
+
+      ccScreenTop :
+        shScreenTop;
+
+      ccScreenBot :
+        shScreenBot;
+
+      ccWordLeft :
+        shWordLeft;
+
+      ccWordRight :
+        shWordRight;
+
+      ccNextXref :
+        shXrefRight;
+
+      ccPrevXref :
+        shXrefLeft;
+
+      ccSelect :           {Select xref}
+        shEvaluateCmd := shSelectXref;
+
+      {$IFDEF UseMouse}
+      ccMouseSel,          {Mouse selection - left button up}
+      ccMouseDown,         {Mouse left button down} {!!.03}
+      ccMouseAuto :        {Mouse autorepeat event} {!!.03}
+        shEvaluateCmd := shEvaluateMouseCmd;
+      {$ENDIF}
+
+      ccPrevTopic :        {Previous topic}
+        if hwStack.Elements <> 0 then
+          hwPopCurTopic;
+
+      ccIndex :            {Help index}
+        if FlagIsSet(hwFlags, hwPickIndex) then
+          shEvaluateCmd := hwHelpIndex;
+
+      ccNested :           {Call to nested user routine}
+        shEvaluateCmd := hwUserNested(@Self);
+
+      ccHelp :             {Help - weird but not impossible}
+        RequestHelp(wHelpIndex);
+
+      ccBlkBegin :         {Start marked block}
+        if FlagIsSet(hwFlags, hwBlockMark) then
+          shMarkBlockBegin;
+
+      ccBlkEnd :           {End marked block}
+        if FlagIsSet(hwFlags, hwBlockMark) then
+          shMarkBlockEnd;
+
+      ccBlkToggle :        {Toggle block visibility}
+        if FlagIsSet(hwFlags, hwBlockMark) then
+          shBlockToggle;
+
+      ccBlkCopy :          {Paste the marked block}
+        if FlagIsSet(hwFlags, hwBlockMark) then
+          if shBlockCopy then begin {!!.02}
+            shEvaluateCmd := True;  {!!.02}
+            hwPushCurTopic;         {!!.02}
+          end;                      {!!.02}
+
+      ccQuit,              {Exit}
+      ccUser0..$FFFF :     {User exit commands}
+        begin
+          hwPushCurTopic;
+          shEvaluateCmd := True;
+        end;
+
+    else
+      if (cwCmd <= 255) and (GetExitCommandPtr <> nil) then
+        {Possibly a special exit command defined by a derived object}
+        if (cwCmd in GetExitCommandPtr^) then begin
+          hwPushCurTopic;
+          shEvaluateCmd := True;
+        end;
+    end;
+  end;
+
+  procedure ScrollingHelpWindow.shInitMaxOfs;
+    {-Initialize variables used in tracking More markers}
+  var
+    WinRow : Word;
+    MaxRow : Word;
+    Line : shLineRec;
+    Next : shLineRec;
+  begin
+    WinRow := 1;
+    MaxRow := Height;
+    shInitFirst(Line);
+    shInitBotOfs := $FFFF;
+    repeat
+      if WinRow = MaxRow then
+        shInitBotOfs := Line.TextOfs;
+      shNextLine(Line, Next);
+      inc(WinRow);
+      if Next.TextOfs <> $FFFF then
+        Line := Next;
+    until Next.TextOfs = $FFFF;
+    shMaxBotOfs := Line.TextOfs;
+  end;
+
+  {$IFDEF UseScrollBars}
+  procedure ScrollingHelpWindow.hwSetupForScrollBars;
+    {-Set up scroll bars}
+  var
+    LoOfs : Word;
+    HiOfs : Word;
+  begin
+    if shInitBotOfs = $FFFF then begin {!!.03}
+      LoOfs := 0;
+      HiOfs := 0;
+    end else begin
+      LoOfs := shInitBotOfs;
+      HiOfs := shMaxBotOfs;
+    end;
+    ChangeAllScrollBars(1, shMaxCol, LoOfs, HiOfs);
+  end;
+
+  procedure ScrollingHelpWindow.hwUpdateScrollBars;
+    {-Update scroll bars}
+  var
+    CurOfs : Word;
+  begin
+    if shLast.TextOfs = $FFFF then
+      CurOfs := {0} shMaxBotOfs {!!.03}
+    else
+      CurOfs := shLast.TextOfs;
+    DrawAllSliders(shCurCol, CurOfs);
+  end;
+  {$ENDIF}
+
+  procedure ScrollingHelpWindow.hwNewTopic(Topic : Word);
+    {-Initialize for a new topic}
+  begin
+    hwCurTopic := Topic;
+
+    {Top line is known}
+    shInitFirst(shFirst);
+
+    {Bottom line in window may not exist}
+    shLast.TextOfs := $FFFF;
+
+    {No scrolling yet}
+    shCurCol := 1;
+    wCursorX := wXL+hwHelpPad;
+    wCursorY := wYL;
+
+    {Force complete redraw}
+    shPrvCol := 0;
+    shVertScr := 0;
+  end;
+
+  procedure ScrollingHelpWindow.hwPushNewTopic(Topic : Word);
+    {-Push new topic onto topic stack}
+  var
+    StackRec : shStackRec;
+  begin
+    with StackRec do begin
+      STopic := Topic;
+      shInitFirst(First);
+      Last.TextOfs := $FFFF;
+      HorOfs := 1;
+      CursX := hwHelpPad+1;
+      CursY := 1;
+    end;
+    hwStack.PushTail(StackRec);
+  end;
+
+  procedure ScrollingHelpWindow.hwPushCurTopic;
+    {-Push current topic onto topic stack}
+  var
+    StackRec : shStackRec;
+  begin
+    with StackRec do begin
+      STopic := hwCurTopic;
+      First := shFirst;
+      Last := shLast;
+      HorOfs := shCurCol;
+      CursX := wCursorX-wXL+1;
+      CursY := wCursorY-wYL+1;
+    end;
+    hwStack.PushTail(StackRec);
+  end;
+
+  procedure ScrollingHelpWindow.hwPopCurTopic;
+    {-Pop topic from stack into current}
+  var
+    StackRec : shStackRec;
+  begin
+    hwStack.PopTail(StackRec);
+    if hwStack.GetStatus = 0 then
+      with StackRec do begin
+        hwCurTopic := STopic;
+        shFirst := First;
+        shLast := Last;
+        shCurCol := HorOfs;
+        shPrvCol := 0;
+        if CursX > Width then
+          CursX := Width;
+        wCursorX := CursX+wXL-1;
+        if CursY > Height then
+          CursY := Height;
+        wCursorY := CursY+wYL-1;
+        hwCursorX := wCursorX;    {!!.01}
+        hwCursorY := wCursorY;    {!!.01}
+      end;
+  end;
+
+  procedure ScrollingHelpWindow.SetTopicAndPos(Topic, TOfs : Word; ShowLen : Byte); {!!.13}
+    {-Specify next topic to display. Page or cursor will display
+      specified text offset}
+  var
+    WinRow : Byte;
+    MaxRow : Byte;
+    MaxCol : Byte;
+    Found : Boolean;
+    BufCh : Char;
+    SaveL : shLineRec;
+    StackRec : shStackRec;
+  begin
+    {Load and decompress topic if needed}
+    if Topic <> hwCurTopic then begin
+      hwCurTopic := Topic;
+      if hwLoadTopic <> 0 then
+        Exit;
+    end;
+
+    with StackRec do begin
+      STopic := Topic;
+      shInitFirst(First);
+
+      Last := First;
+      WinRow := 1;
+      MaxRow := Height;
+      MaxCol := Width-hwHelpPad;
+      if MaxCol > hwHelpPad+ShowLen then
+        dec(MaxCol, ShowLen)
+      else
+        MaxCol := hwHelpPad+1;
+      Found := False;
+
+      repeat
+        SaveL := Last;
+        shNextLine(Last, Last);
+        if Last.TextOfs > TOfs then begin
+          Found := True;
+          Last.TextOfs := $FFFF;
+          CursY := WinRow;
+          HorOfs := 1;
+          CursX := hwHelpPad+1;
+          with SaveL do begin
+            while TextOfs < TOfs do begin
+              BufCh := hwBufP^[TextOfs];
+              case BufCh of
+                Attr1Toggle..Attr3Toggle, {Modifying video attribute}
+                XrefToggle :              {Marking a cross-reference}
+                  ;
+
+                IndexMarker :             {Cross-reference topic index}
+                  Inc(TextOfs, 2);
+
+                LineBrkMark,       {End of line}
+                PageBrkMark,       {End of page -- acts like end of line here}
+                SectEndMark :      {End of section}
+                  ;
+
+              else
+                {Visible character}
+                if CursX >= MaxCol then
+                  inc(HorOfs)
+                else
+                  inc(CursX);
+              end;
+
+              Inc(TextOfs);
+            end;
+          end;
+        end else if WinRow = MaxRow then
+          shNextLine(First, First)
+        else
+          inc(WinRow);
+      until Found;
+
+    end;
+    hwStack.PushTail(StackRec);
+  end;
+
+  procedure ScrollingHelpWindow.shUpdateHelpAsNeeded;
+    {-Update the current help display if called for}
+  var
+    Line : shLineRec;
+  begin
+    if shVertScr > 0 then begin
+      {Scroll down}
+      if shLast.TextOfs = $FFFF then
+        shVertScr := 0
+      else begin
+        shNextLine(shLast, Line);
+        if Line.TextOfs = $FFFF then
+          shVertScr := 0
+        else begin
+          {There is a next line}
+          shLast := Line;
+          shNextLine(shFirst, shFirst);
+        end;
+      end;
+    end else if shVertScr < 0 then begin
+      {Scroll up}
+      if shFirst.TextOfs <> 0 then begin
+        shPrevLine(shFirst, shFirst);
+        if shLast.TextOfs = $FFFF then
+          shFindLastLine
+        else
+          shPrevLine(shLast, shLast);
+      end else
+        shVertScr := 0;
+    end;
+
+    if shCurCol <> shPrvCol then begin
+      {Redraw entire page}
+      hwUpdateHelp;
+      {shPrvCol := shCurCol;} {!!.13}
+    end else if shVertScr > 0 then begin
+      {Scroll down}
+      ScrollVert(shVertScr);
+      shDrawLine(Height, Line);
+    end else if shVertScr < 0 then begin
+      {Scroll up}
+      ScrollVert(shVertScr);
+      Line := shFirst;
+      shDrawLine(1, Line);
+    end;
+    {shVertScr := 0;} {!!.13}
+  end;
+
+  procedure ScrollingHelpWindow.shDrawHighlight(Attr, X, Y : Byte;
+                                                O, LC : Word); {!!.13}
+    {-Draw highlight for one xref}
+  var
+    ScrnCol : Word;
+    MaxCol : Word;
+    ScrnRow : Word;
+    MaxRow : Word;
+    BufCh : Char;
+    Finished : Boolean;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    if FlagIsSet(hwFlags, hwBlockMark) and shBlockOn then
+      if (O >= shBlockBegin) and (O <= shBlockEnd) then
+        Exit;
+
+    ScrnCol := wXL+X;         {Screen output column}
+    MaxCol := wXH-hwHelpPad;  {Highest output column on screen}
+    ScrnRow := wYL+Y;         {Screen output row}
+    MaxRow := wYH;
+    if ScrnRow > MaxRow then
+      Exit;
+
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+
+    Finished := False;
+    repeat
+      BufCh := hwBufP^[O];
+
+      case BufCh of
+        Attr1Toggle..Attr3Toggle : {Modifying video attribute}
+          {ignore in xref} ;
+
+        LineBrkMark,              {End of line}
+        PageBrkMark :             {End of page}
+          begin
+            LC := 1;
+            ScrnCol := wXL+hwHelpPad;
+            inc(ScrnRow);
+            if ScrnRow > MaxRow then
+              Finished := True;
+          end;
+
+        IndexMarker,       {Index for cross-reference topic - shouldn't get}
+        XrefToggle,        {End of this xref}
+        SectEndMark :      {End of section}
+          Finished := True;
+
+      else
+        {Visible character?}
+        if LC >= shCurCol then
+          {In visible region of line}
+          if ScrnCol <= MaxCol then begin
+            FastWrite(BufCh, ScrnRow, ScrnCol, Attr);
+            Inc(ScrnCol);
+          end;
+        Inc(LC);
+      end;
+
+      Inc(O);
+    until Finished;
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+  end;
+
+  procedure ScrollingHelpWindow.shUpdateHighlight; {!!.13}
+    {-Update xref highlight bars}
+  var
+    WinX : Byte;
+    WinY : Byte;
+    CurXRX : Byte;
+    CurXRY : Byte;
+    CurXRO : Word;
+    CurLCo : Word;
+    CurTop : Word;
+    LineCol : Word;
+    ScrnCol : Word;
+    TOfs : Word;
+    ScrnRow : Byte;
+    BufCh : Char;
+    Finished : Boolean;
+    InXref : Boolean;
+    Line : shLineRec;
+  begin
+    Line := shFirst;
+
+    WinX := wCursorX-wXL;
+    WinY := wCursorY-wYL;
+    CurXRO := $FFFF;
+    CurTop := $FFFF;
+    ScrnRow := 0;
+    LineCol := 1;             {Visible position within line}
+    ScrnCol := hwHelpPad;     {Screen output column}
+
+    with Line do begin
+      {Starting in xref highlight?}
+      InXref := (FlexStk[FlexSP] = XrefToggle);
+      if InXref then begin
+        CurXRO := TextOfs;
+        CurXRX := ScrnCol;
+        CurXRY := ScrnRow;
+        CurLCo := LineCol;
+        CurTop := shPrvXRT;
+      end;
+
+      Finished := False;
+      repeat
+        BufCh := hwBufP^[TextOfs];
+
+        case BufCh of
+          Attr1Toggle..Attr3Toggle : {Modifying video attribute}
+            ;
+
+          XrefToggle :              {Marking a cross-reference}
+            begin
+              InXref := not InXref;
+              if InXref then begin
+                {Save start of xref position}
+                CurXRO := TextOfs+1;
+                CurXRX := ScrnCol;
+                CurXRY := ScrnRow;
+                CurLCo := LineCol;
+              end;
+            end;
+
+          IndexMarker :             {Cross-reference topic index}
+            begin
+              CurTop := TextOfs+1;
+              Inc(TextOfs, 2);
+            end;
+
+          LineBrkMark,       {End of line}
+          PageBrkMark :      {End of page -- acts like end of line here}
+            begin
+              inc(ScrnRow);
+              LineCol := 1;
+              ScrnCol := hwHelpPad;
+              Finished := (ScrnRow > WinY);
+              if Finished then
+                {This means the cursor was beyond the end of a line}
+                InXref := False;
+            end;
+
+          SectEndMark :      {End of section}
+            Finished := True;
+
+        else
+          {Visible character}
+          if LineCol >= shCurCol then begin
+            {In visible region of line}
+            if (ScrnRow = WinY) and (ScrnCol = WinX) then
+              {Reached location of cursor}
+              Finished := True;
+            Inc(ScrnCol);
+          end;
+          Inc(LineCol);
+        end;
+
+        Inc(TextOfs);
+      until Finished;
+    end;
+
+    if not InXref then begin
+      CurXRO := $FFFF;
+      CurTop := $FFFF;
+    end;
+
+    if CurXRO <> shPrvXRO then begin
+      {Cursor moved to a different xref}
+      if shPrvXRO <> $FFFF then
+        if (CurTop <> shPrvXRT) then
+          {Erase previous highlight}
+          shDrawHighlight(pkColorPtr^[pkPrivate][True][0],
+                          shPrvXRX, shPrvXRY, shPrvXRO, shPrvXRC);
+      if CurXRO <> $FFFF then begin
+        {Draw new highlight}
+        shDrawHighlight(pkColorPtr^[pkPrivate][True][1],
+                        CurXRX, CurXRY, CurXRO, CurLCo);
+        if CurTop = $FFFF then begin
+          {Find topic number}
+          TOfs := CurXRO;
+          repeat
+            dec(TOfs);
+          until hwBufP^[TOfs] = IndexMarker;
+          CurTop := TOfs+1;
+        end;
+      end;
+      {Save settings for next time}
+      shPrvXRO := CurXRO;
+    end;
+    shPrvXRX := CurXRX;
+    shPrvXRY := CurXRY;
+    shPrvXRC := CurLCo;
+    shPrvXRT := CurTop;
+  end;
+
+  procedure ScrollingHelpWindow.hwForceRedraw; {!!.13}
+    {-Reset variables to force redraw of topic}
+  begin
+    shPrvCol := 0;
+    shVertScr := 0; {!!.22}
+  end;
+
+  function ScrollingHelpWindow.hwShowCurTopic : Boolean; {!!.13}
+    {-Display current help topic}
+  var
+    Status : Word;
+    HdrStr : String;
+  begin
+    hwShowCurTopic := False;
+
+    {Load new topic if required}
+    if hwCurTopic <> hwPrvTopic then begin
+      Status := hwLoadTopic;
+      if Status <> 0 then begin
+        {Restore previous topic and exit with error}
+        hwCurTopic := hwPrvTopic;
+        hwPrvTopic := 0;
+        GotError(Status, emNullError);
+        Exit;
+      end;
+
+      {Always clear block on new topic}
+      shBlockBegin := 0;
+      shBlockEnd := 0;
+      shBlockOn := False;
+
+      {Find offsets needed for More record and scroll bars}
+      shInitMaxOfs;
+
+      {Update more header if appropriate}
+      if hwMoreRec.HdrNum <> 255 then
+        pkResetMoreRec(hwMoreRec, (shInitBotOfs < shMaxBotOfs));
+
+      {$IFDEF UseScrollBars}
+      {Set up for scroll bars}
+      hwSetupForScrollBars;
+      {$ENDIF}
+
+      {Get help header if needed}
+      if hwTopicHdr <> 255 then begin
+        Status := hwGetHeaderString(HdrStr);
+        if Status <> 0 then begin
+          GotError(Status, emNullError);
+          Exit;
+        end;
+        hwChangeHeader(hwTopicHdr, HdrStr);
+      end;
+
+      {Force complete screen redraw}
+      shPrvCol := 0;
+      shVertScr := 0;
+
+      hwPrvTopic := hwCurTopic;
+    end;
+
+    if (shCurCol <> shPrvCol) or (shVertScr <> 0) then begin
+      {Screen needs updating}
+      if IsCurrent then
+        {Redraw or scroll the page}
+        shUpdateHelpAsNeeded
+      else begin
+        {Activate the window as needed}
+        Draw;
+        if RawError <> 0 then begin {!!.01}
+          {GotError(epNonFatal+ecWinNotCurrent, emNullError);} {!!.01}
+          Exit;
+        end;
+        ClearFlag(hwFlags, hwModeChangePending);
+        {shPrvCol := shCurCol;}                                    {!!.13}
+        {shVertScr := 0;}                                          {!!.13}
+      end;
+
+      if (shVertScr <> 0) and (wCursorY = shPrvY) then begin       {!!.13}
+        {Update highlight position if vertical scroll}             {!!.13}
+        dec(shPrvY, shVertScr);                                    {!!.13}
+        dec(shPrvXRY, shVertScr);                                  {!!.13}
+      end;                                                         {!!.13}
+      shVertScr := 0;                                              {!!.13}
+      shPrvCol := shCurCol;                                        {!!.13}
+
+      {Update more marker if appropriate}
+      if hwMoreRec.HdrNum <> 255 then
+        pkUpdateMoreRec(hwMoreRec,
+                        (shFirst.TextOfs > 0),
+                        (shLast.TextOfs < shMaxBotOfs),
+                        (shInitBotOfs < shMaxBotOfs));
+
+      if FlagIsSet(hwFlags, hwModeChangePending) then begin
+        {Draw the new frame now}
+        {$IFDEF UseShadows}
+        hwFrame.EraseShadows;
+        {$ENDIF}
+        wFrame.Draw;
+        ClearFlag(hwFlags, hwModeChangePending);
+      end;
+
+      {$IFDEF UseScrollBars}
+      {Update scroll bars}
+      hwUpdateScrollBars;
+      {$ENDIF}
+    end;
+
+    {Update cursor}
+    GoToXYAbs(wCursorX, wCursorY);
+
+    {Update highlight bar}                                     {!!.13}
+    if (wCursorX <> shPrvX) or (wCursorY <> shPrvY) then begin {!!.13}
+      if FlagIsSet(hwFlags, hwHighlightXref) then              {!!.13}
+        shUpdateHighlight;                                     {!!.13}
+      shPrvX := wCursorX;                                      {!!.13}
+      shPrvY := wCursorY;                                      {!!.13}
+    end;                                                       {!!.13}
+
+    hwShowCurTopic := True;
+  end;
+
+  procedure ScrollingHelpWindow.hwShowTopTopic;
+    {-Display top help topic and accept commands}
+  label
+    ExitPoint;
+  var
+    Finished : Boolean;
+  begin
+    {Pop top topic from stack into current}
+    hwPopCurTopic;
+    if hwCurTopic = PickTopic then begin
+      {Really a pick request}
+      hwPickHelpTopic;
+      Exit;
+    end;
+
+    {Make sure we don't reenter}
+    if FlagIsSet(hwFlags, hwProcessingHelp) then
+      Exit;
+    SetFlag(hwFlags, hwProcessingHelp);
+
+    {$IFDEF UseMouse}
+    if cwCmdPtr^.MouseEnabled then
+      ShowMouse;
+    {$ENDIF}
+
+    {Set up color pointer used to draw help pages}
+    pkColorPtr := @pkColors[UseColor];
+
+    {Indicate we're in help, not pick, mode}
+    hwSetHelpMode(True);
+
+    {Force complete redraw first time through loop}
+    hwForceRedraw; {!!.13}
+
+    Finished := False;
+    repeat
+      {Display the current view on the current topic}
+      if not hwShowCurTopic then {!!.13}
+        goto ExitPoint;
+
+      {Call pre-move routine}
+      PreMove;
+
+      {Get next command}
+      GetNextCommand;
+
+      {Evaluate command}
+      Finished := shEvaluateCmd;
+    until Finished or (cwCmd = ccError);
+
+    {Clear stack if requested}
+    if FlagIsSet(hwFlags, hwClearStackAtExit) then
+      hwStack.Clear;
+
+ExitPoint:
+    ClearFlag(hwFlags, hwProcessingHelp);
+  end;
+
+  function ScrollingHelpWindow.CurrentXrefTopic : Word;
+    {-Return help topic of current cross reference, 0 if none}
+  begin
+    CurrentXrefTopic := shFindXrefTopic(wCursorX-wXL, wCursorY-wYL);
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor ScrollingHelpWindow.Load(var S : IdStream);
+    {-Load a help system from a stream}
+  var
+    Status : Word;
+  begin
+    {Initialize topic stack in case of error}
+    hwStack.Init(0, SizeOf(shStackRec), False);
+
+    {Load the underlying raw help window}
+    if not AbstractHelpWindow.Load(S) then
+      Fail;
+
+    {Finish the initialization}
+    Status := shFinalInit;
+    if Status <> 0 then begin
+      Done;
+      InitStatus := Status;
+      Fail;
+    end;
+
+    {Initialize block colors and block copy routine}
+    S.ReadRange(shBlockColor, shBlockBegin);
+    @shSend := S.ReadUserPointer(@NoCopyFunc);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure ScrollingHelpWindow.Store(var S : IdStream);
+    {-Store a help system in a stream}
+  begin
+    {Store the underlying raw help window}
+    AbstractHelpWindow.Store(S);
+
+    {Store block colors and block copy routine}
+    S.WriteRange(shBlockColor, shBlockBegin);
+    S.WriteUserPointer(@shSend, ptHelpNoCopyFunc);
+  end;
+
+  procedure ScrollingHelpWindowStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing scrolling help windows}
+  begin
+    AbstractHelpWindowStream(SPtr);
+    with SPtr^ do begin
+      RegisterType(otScrollingHelpWindow, veScrollingHelpWindow,
+                   TypeOf(ScrollingHelpWindow),
+                   @ScrollingHelpWindow.Store, @ScrollingHelpWindow.Load);
+    end;
+  end;
+
+{$ENDIF}

@@ -1,0 +1,1686 @@
+  {*********************************************************}
+  {*                    OPHELP.IN1 1.30                    *}
+  {*     Copyright (c) TurboPower Software 1987, 1992.     *}
+  {*                 All rights reserved.                  *}
+  {*********************************************************}
+
+  function DefaultTopicMatch(VaryingName, FixedName : String;
+                             HPtr : AbstractHelpWindowPtr) : Boolean;
+    {-Default match function}
+  begin
+    DefaultTopicMatch := (CompUCstring(VaryingName, FixedName) = Equal);
+  end;
+
+  function NoNestedAction(HPtr : AbstractHelpWindowPtr) : Boolean;
+    {-Default nested xref function that does nothing}
+  begin
+    NoNestedAction := False;
+  end;
+
+  constructor AbstractHelpWindow.Init(X1, Y1, X2, Y2 : Byte;
+                                      HelpFile : PathStr;
+                                      PickOrientation : pkGenlProc);
+    {-Initialize help window and open help file}
+  begin
+    if not AbstractHelpWindow.InitDeluxe(X1, Y1, X2, Y2,
+                                         DefaultColorSet, DefWindowOptions,
+                                         HelpFile, PickOrientation,
+                                         DefHelpOptions) then
+      Fail;
+  end;
+
+  constructor AbstractHelpWindow.InitMem(X1, Y1, X2, Y2 : Byte;
+                                    HelpAddr : Pointer;
+                                    PickOrientation : pkGenlProc);
+    {-Initialize help window using help bound into code}
+  begin
+    if not AbstractHelpWindow.InitMemDeluxe(X1, Y1, X2, Y2,
+                                            DefaultColorSet, DefWindowOptions,
+                                            HelpAddr, PickOrientation,
+                                            DefHelpOptions) then
+      Fail;
+  end;
+
+  {$IFDEF UseAdjustableWindows}
+  procedure AbstractHelpWindow.rwResizeAdjustCursor(oXL, oYL, oXH, oYH : Byte);
+    {-Assure cursor position tracks with a moved or resized window}
+  begin
+    {Adjust normal cursor position}
+    RawWindow.rwResizeAdjustCursor(oXL, oYL, oXH, oYH);
+
+    {Adjust help window cursor to window-relative}
+    Dec(hwCursorX, oXL-1);
+    Dec(hwCursorY, oYL-1);
+
+    {Limit to current width and height of window}
+    DoLower(hwCursorX, Width);
+    DoLower(hwCursorY, Height);
+
+    {Convert back to absolute}
+    Inc(hwCursorX, wXL-1);
+    Inc(hwCursorY, wYL-1);
+  end;
+
+  procedure AbstractHelpWindow.rwResizeFrames(FX1, FY1, FX2, FY2 : Byte);
+    {-Resize the frames when a window is resized}
+  var
+    Status : Word;
+  begin
+    {Adjust normal and alternate frames}
+    RawWindow.rwResizeFrames(FX1, FY1, FX2, FY2);
+    if RawError <> 0 then    {!!.01}
+      Exit;                  {!!.01}
+    {Adjust special help window frame}
+    hwFrame.AdjustFrame(FX1, FY1, FX2, FY2);
+    {Transfer error from frame to window}
+    Status := hwFrame.GetLastError;
+    if Status <> 0 then
+      Error(Status);
+  end;
+
+  procedure AbstractHelpWindow.rwUpdateWindowLimits(DX, DY : Integer); {!!.01}
+    {-Set new sizing limits for a window}
+  begin
+    {Adjust normal and alternate frames}
+    RawWindow.rwUpdateWindowLimits(DX, DY);
+
+    {Adjust special help window frame}
+    with hwFrame do
+      SetSizeLimits(frMinW, frMinH, frMaxW+DX, frMaxH+DY);
+  end;
+
+  procedure AbstractHelpWindow.SetPosLimits(MinX, MinY, MaxX, MaxY : Byte); {!!.12}
+    {-Override RawWindow method}
+  begin
+    PickList.SetPosLimits(MinX, MinY, MaxX, MaxY);
+    hwFrame.SetClipLimits(MinX, MinY, MaxX, MaxY);
+  end;
+
+  procedure AbstractHelpWindow.SetFrameLimits(MinW, MinH, MaxW, MaxH : Byte); {!!.12}
+    {-Override RawWindow method}
+  begin
+    PickList.SetFrameLimits(MinW, MinH, MaxW, MaxH);
+    hwFrame.SetSizeLimits(MinW, MinH, MaxW, MaxH);
+  end;
+  {$ENDIF}
+
+  procedure AbstractHelpWindow.hwRawInit;
+    {-Initialize fields in case of error}
+  begin
+    FillChar(hwHdrP, ofs(hwStack)-ofs(hwHdrP), 0);
+    hwHelpPad := 1;
+    hwPickPad := 1;
+    hwTopicHdr := 255;
+    pkClearMoreRec(hwMoreRec);
+    hwUserNested := NoNestedAction;
+  end;
+
+  procedure AbstractHelpWindow.hwSetHelpAttrs(var Colors : ColorSet);
+    {-Initialize special color settings for help window}
+  begin
+    with Colors do begin
+      pkColors[False][pkPrivate, False][0] := TextMono;
+      pkColors[False][pkPrivate, False][1] := FlexAHelpMono;
+      pkColors[False][pkPrivate, False][2] := FlexBHelpMono;
+      pkColors[False][pkPrivate, False][3] := FlexCHelpMono;
+      pkColors[False][pkPrivate, True][0] := UnselXrefMono;
+      pkColors[False][pkPrivate, True][1] := SelXrefMono;
+
+      pkColors[True][pkPrivate, False][0] := TextColor;
+      pkColors[True][pkPrivate, False][1] := FlexAHelpColor;
+      pkColors[True][pkPrivate, False][2] := FlexBHelpColor;
+      pkColors[True][pkPrivate, False][3] := FlexCHelpColor;
+      pkColors[True][pkPrivate, True][0] := UnselXrefColor;
+      pkColors[True][pkPrivate, True][1] := SelXrefColor;
+    end;
+  end;
+
+  procedure AbstractHelpWindow.hwInitPart2;
+    {-Perform guaranteed constructor initialization}
+  begin
+    {Override unit code and command processor}
+    cwCmdPtr := @HelpCommands;
+    cwUnitCode := ucHelp;
+
+    {Copy wFrame parameters onto hwFrame}
+    InitHelpFrame;
+
+    {Initialize help window cursor}
+    hwCursor := cuHidden;
+    hwCursorX := wXL+hwHelpPad;
+    hwCursorY := wYL;
+
+    {Disable picking if no topic names}
+    if pkItems = 0 then
+      ClearFlag(hwFlags, hwPickIndex);
+
+    {Set up special exit commands from the help pick index}
+    SetExitCommands(@HelpExitCommands);
+
+    {Set HelpFileOpenMode (typed constant = $20)}
+    if DosVersion < $0300 then
+      HelpFileOpenMode := $00; {Read only}
+  end;
+
+  procedure AbstractHelpWindow.hwSetWidth(Options : LongInt;
+                                     X1 : Byte; var X2 : Byte);
+    {-Set window width based on help file contents}
+  begin
+    if X2 = 0 then
+      with hwHdrP^ do begin
+        X2 := X1+WindowWidth+2*hwHelpPad-1;
+        if LongFlagIsSet(Options, wBordered) then begin
+          if X2 > ScreenWidth-1 then
+            X2 := ScreenWidth-1;
+        end else begin
+          if X2 > ScreenWidth then
+            X2 := ScreenWidth;
+        end;
+      end;
+  end;
+
+  function AbstractHelpWindow.hwOpenHelp(var HelpFile : PathStr) : Word;
+    {-Find, open, and load header from help file}
+  var
+    IO : Word;
+    SaveMode : Byte;
+  begin
+    {Assure the help file can be found}
+    if not ExistOnPath(HelpFile, HelpFile) then begin
+      hwOpenHelp := epFatal+ecFileNotFound;
+      Exit;
+    end;
+
+    {Allocate help header buffer}
+    if not GetMemCheck(hwHdrP, SizeOf(HelpHeader)) then begin
+      hwOpenHelp := epFatal+ecOutOfMemory;
+      Exit;
+    end;
+
+    {Allocate file variable}
+    if not GetMemCheck(hwFileP, SizeOf(File)) then begin
+      hwOpenHelp := epFatal+ecOutOfMemory;
+      Exit;
+    end;
+
+    {Open the help file}
+    SaveMode := FileMode;
+    FileMode := HelpFileOpenMode;
+    if DosVersion < $0300 then
+      FileMode := $00; {Read only}
+    Assign(hwFileP^, HelpFile);
+    Reset(hwFileP^, 1);
+    FileMode := SaveMode;
+    IO := IoResult;
+    if IO <> 0 then begin
+      hwOpenHelp := epFatal+IO;
+      Exit;
+    end;
+    {Note that help file is now open}
+    SetFlag(hwFlags, hwHelpFileOpen);
+
+    {Read help header}
+    BlockRead(hwFileP^, hwHdrP^, SizeOf(HelpHeader));
+    IO := IoResult;
+    if IO <> 0 then begin
+      hwOpenHelp := epFatal+IO;
+      Exit;
+    end;
+
+    {Success}
+    hwOpenHelp := 0;
+  end;
+
+  function AbstractHelpWindow.hwCheckHeader : Word;
+    {-Check header of help file and allocate decompression buffer}
+  begin
+    with hwHdrP^ do begin
+      {Assure valid help file}
+      if ID <> LongInt(HelpID) then begin
+        hwCheckHeader := epFatal+ecHelpInvalid;
+        Exit;
+      end;
+
+      {Get decompression buffer}
+      if not GetMemCheck(hwBufP, BiggestTopic) then begin
+        hwCheckHeader := epFatal+ecOutOfMemory;
+        Exit;
+      end;
+    end;
+
+    {Success}
+    hwCheckHeader := 0;
+  end;
+
+  constructor AbstractHelpWindow.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                            var Colors : ColorSet;
+                                            Options : LongInt;
+                                            HelpFile : PathStr;
+                                            PickOrientation : pkGenlProc);
+    {-Initialize help window and open help file}
+  begin
+    if not AbstractHelpWindow.InitDeluxe(X1, Y1, X2, Y2,
+                                         Colors, Options,
+                                         HelpFile, PickOrientation,
+                                         DefHelpOptions) then
+      Fail;
+  end;
+
+  constructor AbstractHelpWindow.InitDeluxe(X1, Y1, X2, Y2 : Byte;
+                                            var Colors : ColorSet;
+                                            Options : LongInt;
+                                            HelpFile : PathStr;
+                                            PickOrientation : pkGenlProc;
+                                            HelpOptions : Word);
+    {-Initialize help window and open help file}
+  label
+    FailPoint;
+  var
+    IO : Word;
+    PickItems : Word;
+    SavePickOptions : Word;
+    PickWidth : Byte;
+    SaveMode : Byte;
+    OK : Boolean;
+  begin
+    {Initialize fields in case of error}
+    hwRawInit;
+    hwFlags := HelpOptions;
+
+    {Find, open, and read header from help file}
+    IO := hwOpenHelp(HelpFile);
+    if IO <> 0 then begin
+      InitStatus := IO;
+      goto FailPoint;
+    end;
+
+    {Check header of help file and allocate decompression buffer}
+    IO := hwCheckHeader;
+    if IO <> 0 then begin
+      InitStatus := IO;
+      goto FailPoint;
+    end;
+
+    with hwHdrP^ do begin
+      {Initialize pick item width}
+      PickWidth := LongestPick+2*hwPickPad;
+      PickItems := PickTopics;
+    end;
+
+    {Adjust window width if requested}
+    hwSetWidth(Options, X1, X2);
+
+    {Don't let PickList constructor change window size}
+    SavePickOptions := DefPickOptions;
+    ClearFlag(DefPickOptions, pkMinHeight);
+
+    {Call pick window constructor}
+    OK := PickList.InitAbstract(X1, Y1, X2, Y2, Colors, Options,
+                                PickWidth, PickItems, PickOrientation,
+                                SingleChoice);
+    DefPickOptions := SavePickOptions;
+    if not OK then
+      goto FailPoint;
+    SetFlag(hwFlags, hwPickListInit);
+
+    {Override pick color settings for help display}
+    hwSetHelpAttrs(Colors);
+
+    {Perform guaranteed initialization}
+    hwInitPart2;
+
+    {Allocate and load name buffers if requested}
+    if FlagIsSet(hwFlags, hwStaticNameBuffer) then begin
+      IO := hwLoadTopicNames;
+      if IO <> 0 then begin
+        InitStatus := epFatal+IO;
+        goto FailPoint;
+      end;
+    end;
+
+    {Success}
+    Exit;
+
+FailPoint:
+    Done;
+    Fail;
+  end;
+
+  constructor AbstractHelpWindow.InitMemCustom(X1, Y1, X2, Y2 : Byte;
+                                               var Colors : ColorSet;
+                                               Options : LongInt;
+                                               HelpAddr : Pointer;
+                                               PickOrientation : pkGenlProc);
+    {-Initialize help window using help bound into code}
+  begin
+    if not AbstractHelpWindow.InitMemDeluxe(X1, Y1, X2, Y2,
+                                            Colors, Options,
+                                            HelpAddr, PickOrientation,
+                                            DefHelpOptions) then
+      Fail;
+  end;
+
+  constructor AbstractHelpWindow.InitMemDeluxe(X1, Y1, X2, Y2 : Byte;
+                                               var Colors : ColorSet;
+                                               Options : LongInt;
+                                               HelpAddr : Pointer;
+                                               PickOrientation : pkGenlProc;
+                                               HelpOptions : Word);
+    {-Initialize help window using help bound into code}
+  label
+    FailPoint;
+  var
+    IO : Word;
+    PickItems : Word;
+    SavePickOptions : Word;
+    PickWidth : Byte;
+    SaveMode : Byte;
+    OK : Boolean;
+  begin
+    {Initialize fields in case of error}
+    hwRawInit;
+    hwFlags := HelpOptions;
+    SetFlag(hwFlags, hwHelpInMem);
+
+    {Set help header pointer}
+    hwHdrP := HelpAddr;
+
+    {Check header of help file and allocate decompression buffer}
+    IO := hwCheckHeader;
+    if IO <> 0 then begin
+      InitStatus := IO;
+      goto FailPoint;
+    end;
+
+    with hwHdrP^ do begin
+      {Initialize pick item width}
+      PickWidth := LongestPick+2*hwPickPad;
+      PickItems := PickTopics;
+    end;
+
+    {Adjust window width if requested}
+    hwSetWidth(Options, X1, X2);
+
+    {Don't let PickList constructor change window size}
+    SavePickOptions := DefPickOptions;
+    ClearFlag(DefPickOptions, pkMinHeight);
+
+    {Call pick window constructor}
+    OK := PickList.InitAbstract(X1, Y1, X2, Y2, Colors, Options,
+                                PickWidth, PickItems, PickOrientation,
+                                SingleChoice);
+    DefPickOptions := SavePickOptions;
+    if not OK then
+      goto FailPoint;
+    SetFlag(hwFlags, hwPickListInit);
+
+    {Override pick color settings for help display}
+    hwSetHelpAttrs(Colors);
+
+    {Perform guaranteed initialization}
+    hwInitPart2;
+
+    {Set up name buffers and file index pointer. Won't fail}
+    IO := hwLoadTopicNames;
+    IO := hwLoadSection(hwFileIndex, hwIndP);
+
+    {Success}
+    Exit;
+
+FailPoint:
+    Done;
+    Fail;
+  end;
+
+  function AbstractHelpWindow.hwRealTopicName(TopicOfs : Word) : String;
+    {-Return inverted topic name}
+  var
+    I : Word;
+    P : ^Byte;
+    Len : Byte;
+  begin
+    P := @hwNamP^[TopicOfs];
+    Len := (not P^) and $7F;
+    hwRealTopicName[0] := Char(Len);
+    inc(OS(P).O);
+    for I := 1 to Len do begin
+      hwRealTopicName[I] := Char(not P^);
+      inc(OS(P).O);
+    end;
+  end;
+
+  procedure AbstractHelpWindow.ItemString(Item : Word; Mode : pkMode;
+                                          var IType : pkItemType;
+                                          var IString : String);
+    {-Pass each help topic name to pick unit}
+  var
+    I : Word;
+    NameOfs : Word;
+    PadStr : String;
+  begin
+    {All items are of default (pkNormal) type}
+    if Mode <> pkGetType then begin
+      {Map sort order, get offset into packed name buffer, return string}
+      IString := hwRealTopicName(hwOfsP^[hwTopP^[Item]].hnOfs);
+      if Mode = pkDisplay then
+        if hwPickPad <> 0 then begin
+          PadStr := CharStr(wBackChar, hwPickPad);
+          IString := PadStr+IString+PadStr;
+        end;
+    end;
+  end;
+
+  destructor AbstractHelpWindow.Done;
+    {-Close up and dispose of help window}
+  var
+    IO : Word;
+  begin
+    {Deallocate previous topic stack}
+    hwStack.Done;
+
+    {Get rid of More record if allocated}
+    pkDoneMoreRec(hwMoreRec);
+
+    {Get rid of help frame if allocated}
+    if FlagIsSet(hwFlags, hwHelpFrameInit) then
+      hwFrame.Done;
+
+    if hwFileP <> nil then begin
+      {File variable allocated}
+      if FlagIsSet(hwFlags, hwHelpFileOpen) then begin
+        Close(hwFileP^);
+        IO := IoResult;
+      end;
+      FreeMemCheck(hwFileP, SizeOf(File));
+    end;
+
+    {Free the topic name buffers}
+    hwFreeTopicNames;
+
+    {Free the decompression buffer}
+    if hwHdrP <> nil then
+      FreeMemCheck(hwBufP, hwHdrP^.BiggestTopic);
+
+    {Free the help header buffer}
+    if not FlagIsSet(hwFlags, hwHelpInMem) then
+      FreeMemCheck(hwHdrP, SizeOf(HelpHeader));
+
+    {Free the rest of the ancestral stuff}
+    if FlagIsSet(hwFlags, hwPickListInit) then
+      PickList.Done;
+  end;
+
+  procedure AbstractHelpWindow.PopAndDraw; {!!.13}
+    {-Pop last set topic and draw it}
+  var
+    Topic : Word;
+  begin
+    if hwStack.Elements = 0 then
+      Topic := PickTopic
+    else begin
+      hwPopCurTopic;
+      Topic := hwCurTopic;
+    end;
+    if Topic = PickTopic then begin
+      {A pick request}
+      hwSetHelpMode(False);
+      PickList.Draw;
+    end else begin
+      {A true help topic}
+      hwSetHelpMode(True);
+      pkColorPtr := @pkColors[UseColor];
+      hwForceRedraw;
+      if not hwShowCurTopic then ;
+    end;
+  end;
+
+  procedure AbstractHelpWindow.SetAndPrepTopic(Topic : Word); {!!.20}
+    {-Push and pop given topic, initializing all data structures}
+  var
+    Status : Word;
+    HdrStr : String;
+  begin
+    {Push the topic on the stack}
+    SetTopic(Topic);
+    if RawError <> 0 then
+      Exit;
+    {Pop it}
+    hwPopCurTopic;
+    {Push it back}
+    SetTopic(Topic);
+    if hwCurTopic = PickTopic then
+      {A pick request}
+      hwSetHelpMode(False)
+    else begin
+      {A true help topic}
+      hwSetHelpMode(True);
+      pkColorPtr := @pkColors[UseColor];
+      if hwCurTopic <> hwPrvTopic then begin
+        {Load topic from disk}
+        Status := hwLoadTopic;
+        if Status <> 0 then begin
+          {Restore previous topic and exit with error}
+          hwCurTopic := hwPrvTopic;
+          hwPrvTopic := 0;
+          GotError(Status, emNullError);
+          Exit;
+        end;
+
+        if hwTopicHdr <> 255 then begin
+          {Load help header from disk}
+          Status := hwGetHeaderString(HdrStr);
+          if Status <> 0 then begin
+            GotError(Status, emNullError);
+            Exit;
+          end;
+          SetFlag(hwFlags, hwModeChangePending);
+          hwChangeHeader(hwTopicHdr, HdrStr);
+        end;
+
+        hwPrvTopic := hwCurTopic;
+        hwForceRedraw;
+      end;
+    end;
+  end;
+
+  procedure AbstractHelpWindow.Draw;
+    {-Choose appropriate frame and draw help window or pick index}
+  begin
+    {Select appropriate frame}
+    hwSetHelpMode(FlagIsSet(hwFlags, hwHelpModeActive));
+
+    PickList.Draw;
+  end;
+
+  procedure AbstractHelpWindow.UpdateContents;
+    {-Redraw the help window in pick or help mode}
+  var
+    Status : Word;
+    HaveTopics : Boolean;
+  begin
+    if FlagisSet(hwFlags, hwHelpModeActive) then begin
+      {Help mode}
+      if hwCurTopic = 0 then
+        {No topic has been loaded}
+        Clear
+      else
+        {Update and draw current topic, more header, and scroll bars}
+        hwUpdateHelp;
+
+      {Update any child windows}  {!!.01}
+      StackWindow.UpdateContents; {!!.01}
+
+    end else begin
+      {Pick mode}
+
+      {Are the topic names loaded already?}
+      HaveTopics := (hwOfsP <> nil);
+      if not HaveTopics then begin
+        {Get topic name buffers}
+        Status := hwLoadTopicNames;
+        if Status <> 0 then begin
+          GotError(epNonFatal+Status, emNullError);
+          Exit;
+        end;
+      end;
+
+      PickList.UpdateContents;
+
+      {Deallocate topic name buffers}
+      if not HaveTopics then
+        hwFreeTopicNames;
+    end;
+  end;
+
+  procedure AbstractHelpWindow.hwPickHelpTopic;
+    {-Select a topic from the help index}
+  var
+    Status : Word;
+  begin
+    {!!.01}
+    {Removed checking of cwGetLastError}
+
+    {Get topic name buffers}
+    Status := hwLoadTopicNames;
+    if Status <> 0 then begin
+      GotError(epNonFatal+Status, emNullError);
+      Exit;
+    end;
+
+    {Set up for pick mode}
+    hwSetHelpMode(False);
+
+    {Pick from list}
+    PickList.ProcessSelf; {!!.01}
+
+    case cwCmd of
+      ccQuit, ccError : ; {Don't change the stored topic number}
+    else
+      {Store selected topic}
+      hwPckTopic := hwTopP^[GetLastChoice];
+    end;
+
+    {Deallocate topic name buffers}
+    if not FlagIsSet(hwFlags, hwStaticNameBuffer) then
+      hwFreeTopicNames;
+  end;
+
+  procedure AbstractHelpWindow.ProcessSelf; {!!.01}
+    {-Draw help index and get selection}
+  begin
+    if hwStack.Elements = 0 then
+      {Pick from list}
+      hwPickHelpTopic
+    else
+      {Pop and display the new topic}
+      hwShowTopTopic;
+  end;
+
+  function AbstractHelpWindow.GetTopicChoice : Word;
+    {-Return topic chosen by pick}
+  begin
+    GetTopicChoice := hwPckTopic;
+  end;
+
+  function AbstractHelpWindow.InHelpMode : Boolean;
+    {-Return True if window shows help, not pick list}
+  begin
+    InHelpMode := FlagIsSet(hwFlags, hwHelpModeActive);
+  end;
+
+  function AbstractHelpWindow.TopicStackPtr : StaticQueuePtr;
+    {-Return a pointer to the topic stack}
+  begin
+    TopicStackPtr := @hwStack;
+  end;
+
+  function AbstractHelpWindow.CurrentTopic : Word;
+    {-Return the topic number currently loaded into the help buffers}
+  begin
+    CurrentTopic := hwCurTopic;
+  end;
+
+  procedure AbstractHelpWindow.hwOptionsOn(OptionFlags : Word);
+    {-Activate multiple options}
+  var
+    Status : Word;
+  begin
+    if FlagIsSet(OptionFlags, hwStaticNameBuffer) then
+      if not FlagIsSet(hwFlags, hwStaticNameBuffer) then begin
+        {Load name buffers}
+        Status := hwLoadTopicNames;
+        if Status <> 0 then begin
+          GotError(epNonFatal+Status, emNullError);
+          Exit;
+        end;
+      end;
+    hwFlags := hwFlags or (OptionFlags and not BadHelpOptions);
+  end;
+
+  procedure AbstractHelpWindow.hwOptionsOff(OptionFlags : Word);
+    {-Deactivate multiple options}
+  begin
+    if FlagIsSet(OptionFlags, hwStaticNameBuffer) then
+      if FlagIsSet(hwFlags, hwStaticNameBuffer) then
+        {Deallocate name buffers}
+        hwFreeTopicNames;
+    hwFlags := hwFlags and not(OptionFlags and not BadHelpOptions);
+  end;
+
+  function AbstractHelpWindow.hwOptionsAreOn(OptionFlags : Word) : Boolean;
+    {-Return True if all specified options are on}
+  begin
+    hwOptionsAreOn := (hwFlags and OptionFlags = OptionFlags);
+  end;
+
+  procedure AbstractHelpWindow.SetPickPadSize(PadSize : Byte);
+    {-Set number of characters for padding of pick items}
+  begin
+    ChangeItemWidth(pkReqdWidth+2*Integer(PadSize-hwPickPad));
+    hwPickPad := PadSize;
+  end;
+
+  procedure AbstractHelpWindow.SetHelpPadSize(Pad : Byte);
+    {-Set number of blank characters at edges of help window}
+  begin
+    hwHelpPad := Pad;
+    hwCursorX := wXL+hwHelpPad;
+  end;
+
+  procedure AbstractHelpWindow.AddTopicHeader(PadSize : Byte; MaxLen : Byte;
+                                              Posn : HeaderPosType);
+    {-Add a header to display the topic name}
+  begin
+    hwFrame.AddHeader('', Posn);
+    if hwFrame.GetLastError <> 0 then begin
+      GotError(epFatal+ecOutOfMemory, emInsufficientMemory);
+      Exit;
+    end;
+    hwTopicHdr := hwFrame.GetLastHeaderIndex;
+    hwMaxHdrLen := MaxLen;
+    hwHdrPadSize := PadSize;
+  end;
+
+  procedure AbstractHelpWindow.AddMoreHelpHeader(PromptStr : String80;
+                                                 Posn : HeaderPosType;
+                                                 UpStr, DnStr, SepStr : String10;
+                                                 UpPos, DnPos, SepPos : Byte);
+    {-Add a specialized more header to indicate more help}
+  var
+    Status : Word;
+  begin
+    {Allocate and initialize the more record}
+    Status := pkInitMoreRec(hwMoreRec, hwFrame,
+                            PromptStr, Posn, UpStr, DnStr, SepStr,
+                            UpPos, DnPos, SepPos, ' ');
+    if Status <> 0 then
+      GotError(Status, emNullError);
+  end;
+
+  procedure AbstractHelpWindow.InitHelpFrame;
+    {-Make help frame look like wFrame}
+  begin
+    hwFrame.frInitFrom(wFrame);
+    SetFlag(hwFlags, hwHelpFrameInit);
+  end;
+
+  {$IFDEF UseHotSpots}
+  procedure AbstractHelpWindow.SetPrevTopicHotSpot(SpotNum : Byte;
+                                                   Posn : FrameCharType);
+    {-Activate a hot spot for previous topic command}
+  begin
+    hwPrevHotSpot := SpotNum;
+    hwPrevSpotPos := Posn;
+  end;
+  {$ENDIF}
+
+  procedure AbstractHelpWindow.SetNestedFunc(NF : hwNestedFunc);
+    {-Set function to call for nested xref commands}
+  begin
+    hwUserNested := NF;
+  end;
+
+  procedure AbstractHelpWindow.SetTopic(Topic : Word);
+    {-Specify which topic is displayed next}
+  begin
+    if Topic > hwHdrP^.HighestTopic then begin
+      {Invalid topic}
+      GotError(epNonFatal+ecNoHelpForTopic, emNullError);
+      Exit;
+    end;
+
+    {Put the new topic on topic stack}
+    hwPushNewTopic(Topic);
+  end;
+
+  function AbstractHelpWindow.HighestTopic : Word;
+    {-Return highest topic number in help system}
+  begin
+    if hwHdrP <> nil then
+      HighestTopic := hwHdrP^.HighestTopic
+    else
+      HighestTopic := 0;
+  end;
+
+  function AbstractHelpWindow.PickTopics : Word;
+    {-Return number of help index topics in help system}
+  begin
+    if hwHdrP <> nil then
+      PickTopics := hwHdrP^.PickTopics
+    else
+      PickTopics := 0;
+  end;
+
+  function AbstractHelpWindow.FindNextTopic(PrevMatch : Word;
+                                            Circular : Boolean;
+                                            var Name : String;
+                                            MatchFunc : hwMatchFunc) : Word;
+    {-Return Topic number with specified Name, starting past PrevMatch,
+      searching circularly if Circular is True}
+  label
+    ExitPoint;
+  var
+    Status : Word;
+    Topic : Word;
+    TopicOfs : Word;
+    Matched : Boolean;
+  begin
+    FindNextTopic := 0;
+
+    {Get topic name buffers}
+    Status := hwLoadTopicNames;
+    if Status <> 0 then begin
+      GotError(epNonFatal+Status, emNullError);
+      Exit;
+    end;
+
+    Topic := PrevMatch;
+    repeat
+      if Topic = hwHdrP^.HighestTopic then begin
+        Topic := 0;
+        if not Circular or (Topic = PrevMatch) then
+          goto ExitPoint;
+      end;
+      inc(Topic);
+      if Topic = PrevMatch then
+        goto ExitPoint;
+      TopicOfs := hwOfsP^[Topic].hnOfs;
+      if TopicOfs <> NoTopicName then
+        if ByteFlagIsSet(Byte(hwNamP^[TopicOfs]), $80) then begin
+          Matched := MatchFunc(hwRealTopicName(TopicOfs), Name, @Self);
+          if Matched then begin
+            FindNextTopic := Topic;
+            goto ExitPoint;
+          end;
+        end;
+    until False;
+
+ExitPoint:
+    {Deallocate topic name buffers}
+    if not FlagIsSet(hwFlags, hwStaticNameBuffer) then
+      hwFreeTopicNames;
+  end;
+
+  function AbstractHelpWindow.FindTopic(Name : String;
+                                        MatchFunc : hwMatchFunc) : Word;
+    {-Return Topic number of help with specified Name, 0 if not found}
+  begin
+    FindTopic := FindNextTopic(0, False, Name, MatchFunc);
+  end;
+
+  function WordChar(Ch : Char) : Boolean;
+    {-Return true if Ch is a character in a word}
+  begin
+    WordChar := (Pos(UpCase(Ch), WordChars) <> 0);
+  end;
+
+  function AbstractHelpWindow.ScreenWordXY(XPos, YPos : Byte;
+                                           ScanBack,
+                                           ScanForward : Boolean) : String;
+    {-Parse word from screen at (YPos, XPos)}
+  var
+    Bpos : Byte;
+    EPos : Byte;
+    SLine : string;
+
+  begin
+    {Assume failure}
+    ScreenWordXY := '';
+
+    {Read entire screen row at YPos}
+    FastRead(ScreenWidth, YPos, 1, SLine);
+
+    EPos := XPos;
+    if ScanBack then
+      {Back up until in a word}
+      while (EPos > 1) and not WordChar(SLine[EPos]) do
+        Dec(EPos);
+
+    if ScanForward and not WordChar(Sline[Epos]) then
+      while(Epos < Length(Sline)) and not WordChar(Sline[EPos]) do
+        Inc(EPos);
+
+    {Get out if no word available}
+    if not WordChar(SLine[EPos]) then
+      Exit;
+
+    {Find beginning of word}
+    Bpos := EPos;
+    while (Bpos > 0) and WordChar(SLine[Bpos]) do
+      Dec(Bpos);
+
+    {Find end of word}
+    while (EPos <= Length(SLine)) and WordChar(SLine[EPos]) do
+      Inc(EPos);
+
+    {Extract the word from the string}
+    ScreenWordXY := Copy(SLine, Bpos+1, EPos-Bpos-1);
+  end;
+
+  function AbstractHelpWindow.CurrentXrefTopic : Word;
+    {-Returns help topic of current cross reference, 0 if none}
+  begin
+    Abstract;
+  end;
+
+  procedure AbstractHelpWindow.hwHelpFileInfo(HFS : HelpFileSection;
+                                              var SeekOfs : LongInt;
+                                              var Length : Word);
+    {-Return file offset and length of specified section}
+  begin
+    with hwHdrP^ do begin
+      {Header}
+      SeekOfs := 0;
+      Length := SizeOf(HelpHeader);
+      if HFS = hwHeader then
+        Exit;
+
+      {Name index}
+      inc(SeekOfs, Length);
+      Length := HighestTopic*SizeOf(HelpNameRec);
+      if HFS = hwNameIndex then
+        Exit;
+
+      {Name buffer}
+      inc(SeekOfs, Length);
+      Length := SizeOfNames;
+      if HFS = hwNames then
+        Exit;
+
+      {Topic index}
+      inc(SeekOfs, Length);
+      Length := PickTopics*SizeOf(Word);
+      if HFS = hwTopicIndex then
+        Exit;
+
+      {File index}
+      inc(SeekOfs, Length);
+      Length := HighestTopic*SizeOf(HelpIndexRec);
+    end;
+  end;
+
+  function AbstractHelpWindow.hwLoadSection(HFS : HelpFileSection;
+                                            var hwP) : Word;
+    {-Allocate and load specified section of help file,
+      returning a pointer to it}
+  var
+    Pt : Pointer absolute hwP;
+    SeekOfs : LongInt;
+    Length : Word;
+    IO : Word;
+  begin
+    {Assume success}
+    hwLoadSection := 0;
+
+    {Get the offset and length of the section}
+    hwHelpFileInfo(HFS, SeekOfs, Length);
+
+    {Get the information}
+    if FlagIsSet(hwFlags, hwHelpInMem) then
+      {Information already in memory, just return pointer}
+{$IFDEF VIRTUALPASCAL}
+      Pt := Ptr( Word(hwHdrP)+Word(SeekOfs) )
+{$ELSE}
+      Pt := Ptr(OS(hwHdrP).S, OS(hwHdrP).O+Word(SeekOfs))
+{$ENDIF}
+
+    else if FlagIsSet(hwFlags, hwHelpFileOpen) then begin
+      {Help file is open}
+      if Pt = nil then begin
+        {Buffer not previously allocated}
+        if not GetMemCheck(Pt, Length) then begin
+          hwLoadSection := ecOutOfMemory;
+          Exit;
+        end;
+        {Load buffer}
+        Seek(hwFileP^, SeekOfs);
+        IO := IoResult;
+        if IO <> 0 then begin
+          hwLoadSection := IO;
+          Exit;
+        end;
+        BlockRead(hwFileP^, Pt^, Length);
+        IO := IoResult;
+        if IO <> 0 then begin
+          hwLoadSection := IO;
+          Exit;
+        end;
+      end;
+
+    end else
+      {Help file not open}
+      hwLoadSection := ecNotOpen;
+  end;
+
+  function AbstractHelpWindow.hwLoadTopicNames : Word;
+    {-Allocate space for and load the topic name tables}
+  label
+    ExitPoint;
+  var
+    Status : Word;
+  begin
+    with hwHdrP^ do begin
+      {Allocate and load name offset buffer}
+      Status := hwLoadSection(hwNameIndex, hwOfsP);
+      if Status <> 0 then
+        goto ExitPoint;
+      {Allocate and load the name buffer}
+      Status := hwLoadSection(hwNames, hwNamP);
+      if Status <> 0 then
+        goto ExitPoint;
+      {Allocate and load the topic index buffer}
+      Status := hwLoadSection(hwTopicIndex, hwTopP);
+    end;
+ExitPoint:
+    hwLoadTopicNames := Status;
+  end;
+
+  procedure AbstractHelpWindow.hwFreeTopicNames;
+    {-Deallocate space for the topic name tables}
+  begin
+    if not FlagIsSet(hwFlags, hwHelpInMem) then
+      if hwHdrP <> nil then
+        with hwHdrP^ do begin
+          FreeMemCheck(hwOfsP, HighestTopic*SizeOf(HelpNameRec));
+          FreeMemCheck(hwNamP, SizeOfNames);
+          FreeMemCheck(hwTopP, PickTopics*SizeOf(Word));
+        end;
+  end;
+
+  function AbstractHelpWindow.hwGetTopicName(Topic : Word;
+                                             var TopicName : String) : Word;
+    {-Return the name of the specified topic}
+  var
+    IO : Word;
+    TopicOfs : Word;
+  begin
+    hwGetTopicName := 0;
+    TopicName := '';
+
+    with hwHdrP^ do begin
+      if SizeOfNames = 0 then
+        {No names available}
+        Exit;
+
+      if hwOfsP <> nil then begin
+        {Topic name in memory already}
+        TopicOfs := hwOfsP^[Topic].hnOfs;
+        if TopicOfs <> NoTopicName then
+          TopicName:= hwRealTopicName(TopicOfs);
+        Exit;
+      end;
+
+      {Topic name on disk}
+      Seek(hwFileP^, LongInt(SizeOf(HelpHeader))+(Topic-1)*SizeOf(HelpNameRec));
+      BlockRead(hwFileP^, TopicOfs, SizeOf(SmallWord));
+      IO := IoResult;
+      if IO <> 0 then begin
+        hwGetTopicName := epNonFatal+IO;
+        Exit;
+      end;
+      if TopicOfs = NoTopicName then
+        Exit;
+      Seek(hwFileP^, LongInt(SizeOf(HelpHeader))+
+                     HighestTopic*SizeOf(HelpNameRec)+
+                     TopicOfs);
+      BlockRead(hwFileP^, TopicName[0], 1);
+      TopicName[0] := Char(not Byte(TopicName[0]) and $7F);
+      BlockRead(hwFileP^, TopicName[1], Byte(TopicName[0]));
+      for IO := 1 to Length(TopicName) do
+        TopicName[IO] := Char(not Byte(TopicName[IO]));
+      IO := IoResult;
+      if IO <> 0 then begin
+        hwGetTopicName := epNonFatal+IO;
+        Exit;
+      end;
+    end;
+  end;
+
+  function AbstractHelpWindow.hwGetHeaderString(var TopicName : String) : Word;
+    {-Return the window header string for the current topic}
+  var
+    Status : Word;
+    PadStr : String;
+  begin
+    Status := hwGetTopicName(hwCurTopic, TopicName);
+    hwGetHeaderString := Status;
+    if Status <> 0 then
+      Exit;
+    if Length(TopicName) <> 0 then begin
+      if Length(TopicName)+2*hwHdrPadSize > hwMaxHdrLen then
+        TopicName := Copy(TopicName, 1, hwMaxHdrLen-2*hwHdrPadSize);
+      if hwHdrPadSize <> 0 then begin
+        PadStr := CharStr(' ', hwHdrPadSize);
+        TopicName := PadStr+TopicName+PadStr;
+      end;
+    end;
+  end;
+
+  function AbstractHelpWindow.hwMaxPickLength : Byte;
+    {-Return the length of the longest pick topic string}
+  begin
+    if hwHdrP = nil then
+      hwMaxPickLength := 0
+    else
+      hwMaxPickLength := hwHdrP^.LongestPick;
+  end;
+
+var
+  {Globals used for decompression speed}
+  NibBuf  : Byte;           {Buffered nibble during decompression}
+  Nibble  : Boolean;        {True when nibble buffered}
+  SrcP    : BytePtr;        {Decompression buffer source pointer}
+  DesP    : BytePtr;        {Decompression buffer destination pointer}
+
+  function GetNibble : Byte;
+    {-Return next nibble from source}
+  begin
+    if Nibble then begin
+      {Buffered nibble available}
+      GetNibble := NibBuf shr 4;
+      Nibble := False;
+      Inc(OS(SrcP).O);
+    end else begin
+      {First nibble of byte}
+      NibBuf := SrcP^;
+      GetNibble := NibBuf and $0F;
+      Nibble := True;
+    end;
+  end;
+
+  procedure AbstractHelpWindow.hwDecompress(Len : Word; SP, DP : BytePtr);
+    {-Decompress the buffer at SP into the buffer at DP}
+  var
+    EndOfs : Word;
+    N : Byte;
+    T : Byte;
+    Xlat : XlateArray;
+  begin
+    {Use temporary global variables for speed}
+    Nibble := False;
+    SrcP := SP;
+    DesP := DP;
+    EndOfs := OS(SrcP).O+Len;
+    Xlat := hwHdrP^.XlateTable;
+
+    while OS(SrcP).O < EndOfs do begin
+      N := GetNibble;
+      if N < $0F then
+        {15 most frequent characters mapped into 4 bits}
+        T := Xlat[N]
+      else begin
+        {Remaining characters take 12 bits}
+        N := GetNibble;
+        T := (GetNibble shl 4) or N;
+      end;
+      DesP^ := T;
+      inc(OS(DesP).O);
+    end;
+
+    hwCurLen := OS(DesP).O-OS(DP).O; {!!.13}
+  end;
+
+  function AbstractHelpWindow.TopicExists(Topic : Word) : Boolean; {!!.02}
+    {-Return True if specified topic exists in help file}
+  var
+    SeekOfs : LongInt;
+    IO : Word;
+    Len : Word;
+    Frec : HelpIndexRec;
+  begin
+    TopicExists := False;
+    if (Topic = 0) or (Topic > hwHdrP^.HighestTopic) then
+      Exit;
+    if FlagIsSet(hwFlags, hwHelpInMem) then
+      {Help bound into code}
+      Frec := hwIndP^[Topic]
+    else begin
+      {Help on disk}
+      hwHelpFileInfo(hwFileIndex, SeekOfs, Len);
+      Seek(hwFileP^, SeekOfs+(Topic-1)*SizeOf(HelpIndexRec));
+      BlockRead(hwFileP^, Frec, SizeOf(HelpIndexRec));
+      IO := IoResult;
+      if IO <> 0 then
+        Exit;
+    end;
+    TopicExists := (Frec.Start <> NoHelpAvailable);
+  end;
+
+  function AbstractHelpWindow.hwLoadTopic : Word;
+    {-Load and decompress the current topic}
+  var
+    SP : BytePtr;
+    SeekOfs : LongInt;
+    Len : Word;
+    IO : Word;
+    Frec : HelpIndexRec;
+  begin
+    if FlagIsSet(hwFlags, hwHelpInMem) then begin
+      {Help bound into code, just set up a pointer}
+      Frec := hwIndP^[hwCurTopic];
+      {Is help available for this topic?}
+      if Frec.Start = NoHelpAvailable then begin
+        hwLoadTopic := epNonFatal+ecNoHelpForTopic;
+        Exit;
+      end;
+{$IFDEF VIRTUALPASCAL}
+      SP := Ptr( Word(hwHdrP) + Frec.Start );
+{$ELSE}
+      SP := Ptr(OS(hwHdrP).S, OS(hwHdrP).O+Frec.Start);
+{$ENDIF}
+
+    end else begin
+      {Help on disk}
+      hwHelpFileInfo(hwFileIndex, SeekOfs, Len);
+      Seek(hwFileP^, SeekOfs+(hwCurTopic-1)*SizeOf(HelpIndexRec));
+      BlockRead(hwFileP^, Frec, SizeOf(HelpIndexRec));
+      IO := IoResult;
+      if IO <> 0 then begin
+        hwLoadTopic := epNonFatal+IO;
+        Exit;
+      end;
+      if Frec.Start = NoHelpAvailable then begin
+        hwLoadTopic := epNonFatal+ecNoHelpForTopic;
+        Exit;
+      end;
+
+      {Read the help section into the top of the decompression buffer}
+      with hwHdrP^ do begin
+        SP := @hwBufP^[BiggestTopic-Frec.CompLen];
+        Seek(hwFileP^, Frec.Start);
+      end;
+      BlockRead(hwFileP^, SP^, Frec.CompLen);
+      IO := IoResult;
+      if IO <> 0 then begin
+        hwLoadTopic := epNonFatal+IO;
+        Exit;
+      end;
+    end;
+
+    {Decompress the text into the bottom of the buffer}
+    hwDecompress(Frec.CompLen, SP, BytePtr(hwBufP));
+
+    hwLoadTopic := 0;
+  end;
+
+  {$IFDEF UseScrollBars}
+  procedure AbstractHelpWindow.hwSetupForScrollBars;
+    {-Set boundaries for all scroll bars}
+  begin
+    Abstract;
+  end;
+
+  procedure AbstractHelpWindow.hwUpdateScrollBars;
+    {-Update scroll bars}
+  begin
+    Abstract;
+  end;
+  {$ENDIF}
+
+  function AbstractHelpWindow.hwFindTextOfs : Word; {!!.13}
+  begin
+    Abstract;
+  end;
+
+  procedure AbstractHelpWindow.hwNewTopic(Topic : Word);
+    {-Initialize instance variables for a new topic}
+  begin
+    Abstract;
+  end;
+
+  procedure AbstractHelpWindow.hwPushNewTopic(Topic : Word);
+    {-Push a new topic onto the topic stack}
+  begin
+    Abstract;
+  end;
+
+  procedure AbstractHelpWindow.hwPushCurTopic;
+    {-Push the current topic onto the topic stack}
+  begin
+    Abstract;
+  end;
+
+  procedure AbstractHelpWindow.hwPopCurTopic;
+    {-Pop the current topic from the topic stack}
+  begin
+    Abstract;
+  end;
+
+  procedure AbstractHelpWindow.hwUpdateHelp;
+    {-Update the window contents with current help info}
+  begin
+    Abstract;
+  end;
+
+  procedure AbstractHelpWindow.hwForceRedraw; {!!.13}
+    {-Reset variables to force redraw of topic}
+  begin
+    Abstract;
+  end;
+
+  function AbstractHelpWindow.hwShowCurTopic : Boolean; {!!.13}
+    {-Display current help topic}
+  begin
+    Abstract;
+  end;
+
+  procedure AbstractHelpWindow.hwShowTopTopic;
+    {-Pop and show the topic at the top of the topic stack}
+  begin
+    Abstract;
+  end;
+
+  function AbstractHelpWindow.hwSetAttr(AttrChar : Char) : Byte;
+    {-Return attribute for flex attribute code}
+  begin
+    if Byte(AttrChar) > 3 then
+      {Xref attribute}
+      hwSetAttr := pkColorPtr^[pkPrivate][True][(Byte(AttrChar)-4) xor 1]
+    else
+      {Non-xref attribute}
+      hwSetAttr := pkColorPtr^[pkPrivate][False][Byte(AttrChar)];
+  end;
+
+  procedure AbstractHelpWindow.hwSetHelpMode(HelpMode : Boolean);
+    {-Set up for appropriate mode of help window}
+  begin
+    if HelpMode <> FlagIsSet(hwFlags, hwHelpModeActive) then begin
+      {Wrong frame is in place, swap them}
+      ExchangeStructs(wFrame, hwFrame, SizeOf(Frame));
+      ExchangeBytes(Byte(wCursor), Byte(hwCursor));
+      ExchangeBytes(wCursorX, hwCursorX);
+      ExchangeBytes(wCursorY, hwCursorY);
+
+      if IsCurrent then begin
+        if HelpMode then
+          {Set flag indicating that update is pending}
+          SetFlag(hwFlags, hwModeChangePending)
+        else begin
+          {Update now if going to pick mode}
+          {$IFDEF UseShadows}
+          hwFrame.EraseShadows;
+          {$ENDIF}
+          wFrame.Draw;
+        end;
+        SetCursor(wCursor);
+        GotoXYAbs(wCursorX, wCursorY);
+      end;
+
+      {Update flag}
+      if HelpMode then
+        SetFlag(hwFlags, hwHelpModeActive)
+      else
+        ClearFlag(hwFlags, hwHelpModeActive);
+    end;
+  end;
+
+  function AbstractHelpWindow.hwHelpIndex : Boolean;
+    {-Display the help index inside of a help window and get a selection}
+  begin
+    {Assume we won't exit help window as a result of pick}
+    hwHelpIndex := False;
+
+    {Save the current topic}
+    hwPushCurTopic;
+
+    {Pick from the index}
+    SetTopic(PickTopic);
+    ProcessSelf; {!!.01}
+
+    case cwCmd of
+      ccSelect : {Select a new topic, stay in Process}
+        begin
+          hwSetHelpMode(True);
+          hwNewTopic(hwPckTopic);
+        end;
+      ccQuit, ccError : {Exit the help window}
+        hwHelpIndex := True;
+      ccPrevTopic :   {Return to previous topic}
+        begin
+          hwSetHelpMode(True);
+          hwPopCurTopic;
+        end;
+    else
+      {Must be an exit command, exit the help window (Process)}
+      hwHelpIndex := True;
+    end;
+  end;
+
+  procedure AbstractHelpWindow.hwChangeHeader(HdrNum : Byte; HdrStr : String);
+    {-Change a help window header string}
+  var
+    Redraw : Boolean;
+  begin
+    if rwValidMainHeader(HdrNum) then {!!.01}
+      if FlagIsSet(hwFlags, hwModeChangePending) then
+        {Change header but don't update screen}
+        wFrame.ChangeHeaderString(HdrNum, HdrStr, Redraw)
+      else
+        {Change header and update screen if window is current}
+        ChangeHeader(HdrNum, HdrStr);
+  end;
+
+  function AbstractHelpWindow.SearchTopic(Topic, StartOfs : Word;
+                                          TxtSt : String) : Word; {!!.13}
+    {-Start searching specific topic at StartOfs for TxtSt. Returns
+      match offset, or $FFFF if no match}
+  var
+    MOfs : Word;
+  begin
+    SearchTopic := $FFFF;
+
+    if Topic > hwHdrP^.HighestTopic then
+      {Invalid topic}
+      Exit;
+
+    if Length(TxtSt) = 0 then
+      {Nothing to search for}
+      Exit;
+
+    {Load and decompress topic if needed}
+    if Topic <> hwCurTopic then begin
+      hwCurTopic := Topic;
+      if hwLoadTopic <> 0 then
+        Exit;
+    end;
+
+    if hwCurLen <= StartOfs then
+      {Nothing to search}
+      Exit;
+
+    {Search for string}
+    MOfs := SearchUC(hwBufP^[StartOfs], hwCurLen-StartOfs,
+                     TxtSt[1], Length(TxtSt));
+    if MOfs <> $FFFF then
+      SearchTopic := MOfs+StartOfs;
+  end;
+
+  procedure AbstractHelpWindow.SetTopicAndPos(Topic, TOfs : Word; ShowLen : Byte); {!!.13}
+    {-Specify next topic to display. Page or cursor will display
+      specified text offset}
+  begin
+    Abstract;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor AbstractHelpWindow.Load(var S : IdStream);
+    {-Load a help system from a stream}
+  var
+    IO : Word;
+    HelpFile : PathStr;
+  begin
+    {Initialize fields in case of error}
+    hwRawInit;
+
+    {Load the underlying pick list}
+    if not PickList.Load(S) then
+      Fail;
+
+    {Set the command processor if necessary}
+    if cwCmdPtr = nil then
+      SetCommandProcessor(HelpCommands);
+    cwUnitCode := ucHelp;
+    {Set up special exit commands from the help pick index}
+    SetExitCommands(@HelpExitCommands);
+
+    {Read data specific to the raw help window}
+    S.Get(hwFrame);
+    S.ReadRange(hwFlags, hwMoreRec);
+    IO := pkLoadMoreRec(hwMoreRec, hwFrame, S);
+    if IO <> 0 then begin
+      Done;
+      InitStatus := IO;
+      Fail;
+    end;
+    S.ReadRange(hwCursor, hwFileP);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Read file name or address of help in memory}
+    if FlagIsSet(hwFlags, hwHelpInMem) then begin
+      {Read the code of the pointer}
+      hwHdrP := S.ReadPointer;
+      if S.PeekStatus <> 0 then begin
+        Done;
+        Fail;
+      end;
+      if hwHdrP = nil then begin
+        Done;
+        InitStatus := epFatal+ecNoBoundHelp;
+        Fail;
+      end;
+
+      {Check header of help file and allocate decompression buffer}
+      IO := hwCheckHeader;
+      if IO <> 0 then begin
+        Done;
+        InitStatus := IO;
+        Fail;
+      end;
+
+      {Set up name buffers and file index pointer. Won't fail}
+      IO := hwLoadTopicNames;
+      IO := hwLoadSection(hwFileIndex, hwIndP);
+
+    end else begin
+      {Read the filename}
+      HelpFile := S.ReadString;
+      if S.PeekStatus <> 0 then begin
+        Done;
+        Fail;
+      end;
+
+      {Find, open, and read header from help file}
+      IO := hwOpenHelp(HelpFile);
+      if IO <> 0 then begin
+        Done;
+        InitStatus := IO;
+        Fail;
+      end;
+
+      {Check header of help file and allocate decompression buffer}
+      IO := hwCheckHeader;
+      if IO <> 0 then begin
+        Done;
+        InitStatus := IO;
+        Fail;
+      end;
+
+      {Allocate and load name buffers if requested}
+      if FlagIsSet(hwFlags, hwStaticNameBuffer) then begin
+        IO := hwLoadTopicNames;
+        if IO <> 0 then begin
+          Done;
+          InitStatus := epFatal+IO;
+          Fail;
+        end;
+      end;
+    end;
+
+    {Read user routine pointer}
+    @hwUserNested := S.ReadUserPointer(@NoNestedAction);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure AbstractHelpWindow.Store(var S : IdStream);
+    {-Store a help system in a stream}
+  var
+    Fname : PathStr;
+    Flen : Byte absolute Fname;
+  begin
+    {Store the underlying pick list}
+    PickList.Store(S);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Write the data specific to the raw help window}
+    S.Put(hwFrame);
+    S.WriteRange(hwFlags, hwMoreRec);
+    pkStoreMoreRec(hwMoreRec, S);
+    S.WriteRange(hwCursor, hwFileP);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Write file name or address of help in memory}
+    if FlagIsSet(hwFlags, hwHelpInMem) then
+      {Write the code of the pointer}
+      S.WriteUserPointer(hwHdrP, ptNil)
+    else
+      {Write the filename}
+      with FileRec(hwFileP^) do begin
+        Flen := 0;
+        while Name[Flen] <> #0 do begin
+          inc(Flen);
+          Fname[Flen] := Name[Flen-1];
+        end;
+        Fname := JustFileName(Fname);
+        S.WriteString(Fname);
+      end;
+
+    {Write user routine pointer}
+    S.WriteUserPointer(@hwUserNested, ptHelpNoNestedAction);
+  end;
+
+{$ENDIF}
+
+  {-------------------------------------------------------------------}
+
+  function ScrollingHelpFile(HelpFile : PathStr) : Boolean;
+    {-Return True if HelpFile is designed for a scrolling help window}
+  var
+    IO : Word;
+    SaveMode : Byte;
+    Hdr : HelpHeader;
+    Fil : File;
+  begin
+    ScrollingHelpFile := False;
+
+    {Assure the help file can be found}
+    if not ExistOnPath(HelpFile, HelpFile) then
+      Exit;
+
+    {Open the help file}
+    SaveMode := FileMode;
+    FileMode := HelpFileOpenMode; {Read only, deny write by default}
+    if DosVersion < $0300 then
+      FileMode := $00; {Read only}
+    Assign(Fil, HelpFile);
+    Reset(Fil, 1);
+    FileMode := SaveMode;
+    if IoResult <> 0 then
+      Exit;
+
+    {Read help header and close help file}
+    BlockRead(Fil, Hdr, SizeOf(HelpHeader));
+    IO := IoResult;
+    Close(Fil);
+    if IoResult <> 0 then ;
+    if IO <> 0 then
+      Exit;
+
+    ScrollingHelpFile := Hdr.Scrolling;
+  end;
+
+{$IFDEF UseStreams}
+
+  procedure AbstractHelpWindowStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing raw help windows}
+  begin
+    with SPtr^ do begin
+      PickListStream(SPtr);
+      StaticQueueStream(SPtr);
+      RegisterType(otAbstractHelpWindow, veAbstractHelpWindow,
+                   TypeOf(AbstractHelpWindow),
+                   @AbstractHelpWindow.Store, @AbstractHelpWindow.Load);
+      RegisterPointer(ptPickSingleChoice, @SingleChoice);
+      RegisterPointer(ptHelpNoMoveAction, @NoMoveAction);
+      RegisterPointer(ptHelpNoNestedAction, @NoNestedAction);
+      RegisterPointer(ptHelpCommands, @HelpCommands);
+    end;
+  end;
+
+{$ENDIF}

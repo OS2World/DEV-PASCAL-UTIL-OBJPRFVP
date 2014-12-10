@@ -1,0 +1,1344 @@
+{*********************************************************}
+{*                   MMMAIN.IN1 1.30                     *}
+{*     Copyright (c) TurboPower Software 1989, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+{!!.20 Library was renamed to OpLibrary throughout}
+
+const
+  {Text strings used in more than one place}
+  SavePrompt : string[25] = 'Object modified. Save it?';
+  YesNoSt : array[Boolean] of array[1..3] of Char = ('No ', 'Yes');
+  ErrorLeadIn : string[6] = 'Error ';
+  NameInUse : string[22] = 'Name is already in use';
+  ModifyingFrame : string[16] = ' modifying frame';
+  ChangingOrient : string[21] = ' changing orientation';
+  MoveLeadIn : string[8] = #27#24#25#26' to ';
+
+
+  constructor MenuInfoWindow.Init(X1, Y1 : Byte);
+    {-Initialize the menu info window using default colors and options}
+  begin
+    if not MenuInfoWindow.InitCustom(
+      X1, Y1, DefaultColorSet, DefWindowOptions) then
+        Fail;
+  end;
+
+  constructor MenuInfoWindow.InitCustom(X1, Y1 : Byte;
+                                        var Colors : ColorSet;
+                                        Options : LongInt);
+    {-Initialize the menu info window with custom options, colors}
+  const
+    InfoMsg = ' Info: ';
+    PressAnyKey = ' Press any key... ';
+  var
+    X2 : Byte;
+    Y2 : Byte;
+  begin
+    {calculate remaining coordinates}
+    X2 := X1+33;
+    Y2 := Y1+13;
+
+    {initialize window}
+    Options := (Options or (wClear+wBordered+wUserContents))
+                and not (wResizeable+wSaveContents);
+    if not StackWindow.InitCustom(X1, Y1, X2, Y2, Colors, Options) then
+      Fail;
+
+    {add headers}
+    wFrame.AddHeader(InfoMsg+ObjName+' ', heTC);
+    if RawError <> 0 then begin {!!.01}
+      InitStatus := RawError;   {!!.01}
+      Done;
+      Fail;
+    end;
+    wFrame.AddHeader(PressAnyKey, heBC);
+    if RawError <> 0 then begin {!!.01}
+      InitStatus := RawError;   {!!.01}
+      Done;
+      Fail;
+    end;
+
+    {set attributes}
+    with Colors do begin
+      miBrightColor := HighlightColor;
+      miBrightMono  := HighlightMono;
+      miDimColor    := TextColor;
+      miDimMono     := TextMono;
+    end;
+
+    {hidden cursor in this window}
+    SetCursor(cuHidden);
+  end;
+
+type
+  ItemStatRec =
+    record
+      ItemCount : Word;
+      HighItem : LongInt;
+    end;
+
+  procedure UpdateItemStat(IPtr : MenuItemNodePtr; var D; MPtr : MenuPtr);
+    {-Increment the number of items and update the maximum key number}
+  begin
+    with ItemStatRec(D) do begin
+      inc(ItemCount);
+      if IPtr^.ItemKey > HighItem then
+        HighItem := IPtr^.ItemKey;
+    end;
+  end;
+
+  procedure UpdateSubMenuStat(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+    {-Increment the number of submenus}
+  begin
+    Inc(Word(D));
+  end;
+
+  procedure CollectUserStats(var ItemCount, SubMenuCount : Word;
+                             var HighItem : LongInt);
+    {-Collect statistics on user menu system}
+  var
+    ItemStats : ItemStatRec;
+  begin
+    ItemStats.ItemCount := 0;
+    ItemStats.HighItem := 0;
+    UserMenu.VisitAllItems(UpdateItemStat, ItemStats);
+    ItemCount := ItemStats.ItemCount;
+    HighItem := ItemStats.HighItem;
+
+    SubMenuCount := 0;
+    UserMenu.VisitAllWindows(UpdateSubMenuStat, SubMenuCount);
+  end;
+
+  function SizeLastSaved : string;
+    {-Return the size of the menu as last saved in the OpLibrary}
+  var
+    DEP : DirEntryPtr;
+  begin
+    DEP := Lib.FindAnyDirectoryEntry(ObjName);
+    if DEP = nil then
+      SizeLastSaved := 'n.a.'
+    else
+      SizeLastSaved := Long2Str(DEP^.deLength);
+  end;
+
+  procedure MenuInfoWindow.UpdateContents;
+    {-Redraw the menu info window}
+  var
+    ItemCount : Word;
+    SubMenuCount : Word;
+    HighItem : LongInt;
+    A1 : Byte;
+    A2 : Byte;
+  begin
+    A1 := ColorMono(miBrightColor, miBrightMono);
+    A2 := ColorMono(miDimColor, miDimMono);
+
+    wFastWrite('Object information',              02, 02, A1);
+      wFastWrite('Size when last saved',          03, 04, A2);
+        wFastWrite(SizeLastSaved,                 03, 28, A2);
+      wFastWrite('Needs saving',                  04, 04, A2);
+        wFastWrite(YesNoSt[Modified],             04, 28, A2);
+
+    CollectUserStats(ItemCount, SubMenuCount, HighItem);
+
+    wFastWrite('Menu information',                06, 02, A1);
+      wFastWrite('Menu items',                    07, 04, A2);
+        wFastWrite(Long2Str(ItemCount),           07, 28, A2);
+      wFastWrite('Highest item key',              08, 04, A2);
+        wFastWrite(Long2Str(HighItem),            08, 28, A2);
+      wFastWrite('Submenus',                      09, 04, A2);
+        wFastWrite(Long2Str(SubMenuCount),        09, 28, A2);
+
+    wFastWrite('Memory',                          11, 02, A1);
+      wFastWrite('In use',                        12, 04, A2);
+        wFastWrite(Long2Str(MemInUse),            12, 25, A2);   {!!.20}
+      wFastWrite('Available',                     13, 04, A2);
+        wFastWrite(Long2Str(MemAvail),            13, 25, A2);   {!!.20}
+
+    StackWindow.UpdateContents; {!!.01}
+  end;
+
+  procedure MenuInfoWindow.Process;
+    {-Display the menu info window and wait for a keypress}
+  var
+    I : Word;
+  begin
+    {display the info window}
+    ClearErrors; {!!.01}
+    Draw;
+    if RawError <> 0 then {!!.01}
+      Exit;
+
+    {wait for a key or button press}
+    {$IFDEF UseMouse}
+    I := ReadKeyOrButton;
+    {$ELSE}
+    I := ReadKeyWord;
+    {$ENDIF}
+  end;
+
+  procedure MainMenuCustom(var Name : String; Key : LongInt;
+                           Selected, Highlighted : Boolean;
+                           WPtr : RawWindowPtr);
+    {-String customization routine for MainMenu}
+  const
+    ShadowSt : array[ShadowDrawType] of array[1..5] of Char =
+      ('Big  ', 'Small', 'None ');
+    OrientSt : array[mnOrientation] of Char = ('V', 'H', ' ');
+  var
+    IPtr : MenuItemNodePtr;
+
+    procedure MergeString(Src : string; Col : Byte);
+      {-Merge Src into Dest at Dest[Col]}
+    begin
+      Move(Src[1], Name[Col], Length(Src));
+    end;
+
+    procedure MergeNumber(L : LongInt; Wid, Col : Byte);
+    var
+      S : string[20];
+    begin
+      MergeString(Pad(Long2Str(L), Wid), Col);
+    end;
+
+    procedure MergeYesNo(YN : Boolean; Col : Byte);
+    begin
+      Move(YesNoSt[YN], Name[Col], 3);
+    end;
+
+    procedure MergeAttrs(Color, Mono : Byte);
+    begin
+      MergeString(HexB(Color), 22);
+      MergeString(HexB(Mono), 25);
+    end;
+
+    procedure MergeMark(var S : String; Col : Byte);
+    begin
+      if Length(S) = 0 then
+        MergeString(#39#39' ', Col)
+      else
+        MergeString(#39+S[1]+#39, Col);
+    end;
+
+  begin
+    case Word(Key) of
+      mmTextDef :
+        MergeAttrs(DefColors.TextColor, DefColors.TextMono);
+      mmFrameDef :
+        MergeAttrs(DefColors.FrameColor, DefColors.FrameMono);
+      mmHeaderDef :
+        MergeAttrs(DefColors.HeaderColor, DefColors.HeaderMono);
+      mmShadowDef :
+        MergeAttrs(DefColors.ShadowColor, DefColors.ShadowMono);
+      mmHiliteDef :
+        MergeAttrs(DefColors.HighItemColor, DefColors.HighItemMono);
+      mmSelectedDef :
+        MergeAttrs(DefColors.SelItemColor, DefColors.SelItemMono);
+      mmProtectedDef :
+        MergeAttrs(DefColors.ProItemColor, DefColors.ProItemMono);
+      mmMouseDef :
+        MergeAttrs(DefColors.MouseColor, DefColors.MouseMono);
+      mmHelpLineDef :
+        MergeAttrs(DefHelpLineColor, DefHelpLineMono);
+
+      mmDelayDef :
+        MergeNumber(DefDelay, 3, 13);
+      mmExplosionsDef :
+        MergeYesNo(DefExplosions, 13);
+      mmShadowsDef :
+        MergeString(ShadowSt[DefShadow], 13);
+      mmSoundDef :
+        MergeYesNo(LongFlagIsSet(DefOptions, wSoundEffects), 13);
+      mmLeftMarkDef :
+        MergeMark(DefLeftMark, 15);
+      mmRightMarkDef :
+        MergeMark(DefRightMark, 15);
+
+      mmHelpActive :
+        MergeYesNo(DefHelpActive, 10);
+      mmHelpRow :
+        MergeNumber(DefHelpRow, 3, 10);
+
+      mmOrientDef :
+        MergeString(OrientSt[DefOrient], 14);
+
+      mmColorConstants :
+        MergeYesNo(GenColorNames, 19);
+      mmUserProcs :
+        MergeYesNo(DefUserProcs, 19);
+      mmCaseState :
+        MergeYesNo(DefCaseState, 19);
+      mmTypeConst :
+        MergeYesNo(DefTypeConst, 19);
+
+      mmAltMatch :                                          {!!.03}
+        MergeYesNo(FlagIsSet(DefMOptions, mnAltMatch), 22); {!!.03}
+      mmArrowPull :
+        MergeYesNo(FlagIsSet(DefMOptions, mnArrowSelect), 22);
+      mmCharMatch :
+        MergeYesNo(FlagIsSet(DefMOptions, mnAlphaMatch), 22);
+      mmCharSelect :
+        MergeYesNo(FlagIsSet(DefMOptions, mnSelectOnMatch), 22);
+      mmSelectErase :
+        MergeYesNo(FlagIsSet(DefMOptions, mnPopOnSelect), 22);
+      mmItemTopic :
+        MergeYesNo(FlagIsSet(DefMOptions, mnUseItemForTopic), 22);
+      mmMouseSupport :
+        MergeYesNo(FlagIsSet(DefMOptions, mnMouseSupport), 22);
+      mmRememberPull :
+        MergeYesNo(FlagIsSet(DefMOptions, mnAllowPending), 22);
+      mmSelectOnClick :
+        MergeYesNo(FlagIsSet(DefMOptions, mnSelectOnClick), 22);
+
+      mmTextSub :
+        with UserMenu.ActiveWinPtr^ do
+          MergeAttrs(wTextColor, wTextMono);
+      mmFrameSub :
+        with UserMenu.ActiveWinPtr^.wFrame do
+          MergeAttrs(frFrameColor, frFrameMono);
+      mmHeaderSub :
+        with UserMenu.ActiveWinPtr^.wFrame do
+          MergeAttrs(frHeaderColor, frHeaderMono);
+      mmShadowSub :
+        with UserMenu.ActiveWinPtr^.wFrame do
+          MergeAttrs(frShadowColor, frShadowMono);
+      mmHiliteSub :
+        with UserMenu.ActiveListPtr^ do
+          MergeAttrs(ilHighColor, ilHighMono);
+      mmSelectedSub :
+        with UserMenu.ActiveListPtr^ do
+          MergeAttrs(ilSelectColor, ilSelectMono);
+      mmProtectedSub :
+        with UserMenu.ActiveListPtr^ do
+          MergeAttrs(ilProtectColor, ilProtectMono);
+
+      mmDelaySub :
+        MergeNumber(UserMenu.ActiveWinPtr^.wStageDelay, 3, 13);
+      mmExplosionsSub :
+        MergeYesNo(UserMenu.ActiveWinPtr^.IsExploding, 13);
+      mmShadowsSub :
+        MergeString(ShadowSt[UserMenu.ActiveWinPtr^.ShadowType], 13);
+      mmSoundSub :
+        MergeYesNo(LongFlagIsSet(UserMenu.ActiveWinPtr^.wFlags, wSoundEffects), 13);
+      mmPadSub :
+        MergeNumber(UserMenu.ActiveListPtr^.ilPad, 1, 13);
+      mmLeftMarkSub :
+        MergeMark(UserMenu.ActiveListPtr^.ilLeftSel, 15);
+      mmRightMarkSub :
+        MergeMark(UserMenu.ActiveListPtr^.ilRightSel, 15);
+
+      mmOrientSub :
+        MergeString(OrientSt[UserMenu.ActiveListPtr^.Orientation], 14);
+
+      mmKeyItem :
+        begin
+          IPtr := UserMenu.ActiveItemPtr;
+          if IPtr <> nil then
+            MergeNumber(IPtr^.ItemKey, 5, 8)
+          else
+            MergeString('     ', 8);
+        end;
+    end;
+  end;
+
+  {.F-}
+  function InitMainMenu : Boolean;
+    {-Initialize the main menu system}
+  const
+    JointFrame : FrameArray = 'ÑÔÑ¾ÍÍ³³';
+  begin
+    InitMainMenu := False;
+
+    if not MainMenu.Init(3, 7, 76, 7, Horizontal) then
+      Exit;
+
+    with MainMenu, wFrame do begin
+      AddHeader(' Object Professional Menu Maker 1.30 ', heTC); {!!.20}
+
+      AddItem(' Defaults ', 4, 2, mmDefaults);
+        AddFramedSubMenu(6, 9, 20, 16, Vertical, JointFrame);
+        AddItem('bAckdrop',                      01, 2, mmBackDrop);
+        AddItem('Border',                        02, 1, mmFrameCharDef);
+        AddItem('Colors',                        03, 1, mmColorsDef);
+          AddFramedSubMenu(8, 12, 36, 23, Vertical, DefWindowFrame);
+          with ActiveSubPtr^, wFrame, MainColors do
+            AddCustomHeader(
+              ' Color Mono ', frTR, -12, 0, HighItemColor, HighItemMono);
+          AddItem('Text                ?? ??  ', 01, 1, mmTextDef);
+          AddItem('Border              ?? ??',   02, 1, mmFrameDef);
+          AddItem('Header              ?? ??',   03, 1, mmHeaderDef);
+          AddItem('Shadow              ?? ??',   04, 1, mmShadowDef);
+          AddItem('Highlight character ?? ??',   05, 1, mmHiliteDef);
+          AddItem('Selected item       ?? ??',   06, 1, mmSelectedDef);
+          AddItem('Protected item      ?? ??',   07, 1, mmProtectedDef);
+          AddItem('Mouse cursor        ?? ??',   08, 1, mmMouseDef);
+          AddItem('Help line           ?? ??',   09, 1, mmHelpLineDef);
+          AddSeparator('Æ', 'Í', 'µ',            10);                   {!!.03}
+          AddItem('Load color set',              11, 1, mmLoadColors);  {!!.03}
+          AddItem('Save color set',              12, 1, mmSaveColors);  {!!.03}
+          ItemsDone;
+        AddItem('Effects',                       04, 1, mmEffectsDef);
+          AddFramedSubMenu(8, 13, 25, 18, Vertical, DefWindowFrame);
+          AddItem('Delay      ???',              01, 1, mmDelayDef);
+          AddItem('Explosions Yes',              02, 1, mmExplosionsDef);
+          AddItem('Shadows    Small',            03, 1, mmShadowsDef);
+          AddItem('Sound      Yes',              04, 1, mmSoundDef);
+          AddItem('Left select  ''x''',          05, 1, mmLeftMarkDef);
+          AddItem('Right select ''x''',          06, 1, mmRightMarkDef);
+          ItemsDone;
+        AddItem('Help',                          05, 1, mmHelpDef);
+          AddFramedSubMenu(8, 15, 20, 16, Vertical, DefWindowFrame);
+          AddItem('Active  Yes',                 01, 1, mmHelpActive);
+          AddItem('Row     ???',                 02, 1, mmHelpRow);
+          ItemsDone;
+        AddItem('Orientation H',                 06, 1, mmOrientDef);
+        AddItem('Source',                        07, 1, mmSourceDef);
+          AddFramedSubMenu(17, 16, 38, 19, Vertical, DefWindowFrame);
+          AddItem('Color constants  Yes',        01, 1, mmColorConstants);
+          AddItem('User proc hooks  Yes',        02, 1, mmUserProcs);
+          AddItem('Case statement   Yes',        03, 1, mmCaseState);
+          AddItem('String constants Yes',        04, 1, mmTypeConst);
+          ItemsDone;
+        AddItem('Toggles',                       08, 1, mmTogglesDef);
+          AddFramedSubMenu(17, 15, 41, 23, Vertical, DefWindowFrame);    {!!.03}
+          AddItem('Alt-key select      No',      01, 1, mmAltMatch);     {!!.03}
+          AddItem('Arrow pulldown      Yes',     02, 1, mmArrowPull);    {!!.03}
+          AddItem('Character match     No',      03, 1, mmCharMatch);    {!!.03}
+          AddItem('Character select    No',      04, 1, mmCharSelect);   {!!.03}
+          AddItem('Erase after select  Yes',     05, 1, mmSelectErase);  {!!.03}
+          AddItem('Item key help topic Yes',     06, 1, mmItemTopic);    {!!.03}
+          AddItem('Mouse support       Yes',     07, 1, mmMouseSupport); {!!.03}
+          AddItem('Remember pulldown   No',      08, 1, mmRememberPull); {!!.03}
+          AddItem('Select on click     No',      09, 1, mmSelectOnClick);{!!.03}
+          ItemsDone;
+        ItemsDone;
+
+      AddItem(' Submenu ',                       19, 2, mmSubmenu);
+        AddFramedSubMenu(21, 9, 35, 14, Vertical, JointFrame);
+        AddItem('Add',                           01, 1, mmAddSub);
+        AddItem('Drag',                          02, 1, mmDragSub);
+        AddItem('Move   <AltM>',                 03, 1, mmMoveSub);
+        AddItem('Resize <AltR>',                 04, 1, mmResizeSub);
+        AddItem('Settings',                      05, 1, mmSettingsSub);
+          AddFramedSubMenu(23, 15, 37, 20, Vertical, DefWindowFrame);
+          AddItem('Border',                      01, 1, mmFrameCharSub);
+          AddItem('Colors',                      02, 1, mmColorsSub);
+            AddFramedSubMenu(25, 17, 53, 23, Vertical, DefWindowFrame);
+            with ActiveSubPtr^, wFrame, MainColors do
+              AddCustomHeader(
+                ' Color Mono ', frTR, -12, 0, HighItemColor, HighItemMono);
+            AddItem('Text                ?? ??', 01, 1, mmTextSub);
+            AddItem('Border              ?? ??', 02, 1, mmFrameSub);
+            AddItem('Header              ?? ??', 03, 1, mmHeaderSub);
+            AddItem('Shadow              ?? ??', 04, 1, mmShadowSub);
+            AddItem('Highlight character ?? ??', 05, 1, mmHiliteSub);
+            AddItem('Selected item       ?? ??', 06, 1, mmSelectedSub);
+            AddItem('Protected item      ?? ??', 07, 1, mmProtectedSub);
+            ItemsDone;
+          AddItem('Effects',                     03, 1, mmEffectsSub);
+            AddFramedSubMenu(34, 17, 51, 23, Vertical, DefWindowFrame);
+            AddItem('Delay      ???',            01, 1, mmDelaySub);
+            AddItem('Explosions Yes',            02, 1, mmExplosionsSub);
+            AddItem('Shadows    Small',          03, 1, mmShadowsSub);
+            AddItem('Sound      Yes',            04, 1, mmSoundSub);
+            AddItem('Left select  ''x''',        05, 1, mmLeftMarkSub);
+            AddItem('Right select ''x''',        06, 1, mmRightMarkSub);
+            AddItem('Padding    ?',              07, 1, mmPadSub);
+            ItemsDone;
+          AddItem('Headers',                     04, 1, mmHeadersSub);
+            AddFramedSubMenu(32, 20, 39, 22, Vertical, DefWindowFrame);
+            AddItem('Add',                       01, 1, mmHeaderAdd);
+            AddItem('Edit',                      02, 1, mmHeaderEdit);
+            AddItem('Remove',                    03, 1, mmHeaderKill);
+            ItemsDone;
+          AddItem('Orientation H',               05, 1, mmOrientSub);
+          AddItem('Spans',                       06, 1, mmSpanSub);
+            AddFramedSubMenu(32, 20, 39, 22, Vertical, DefWindowFrame);
+            AddItem('Add',                       01, 1, mmSpanAdd);
+            AddItem('Edit',                      02, 1, mmSpanEdit);
+            AddItem('Remove',                    03, 1, mmSpanKill);
+            ItemsDone;
+          ItemsDone;
+        AddItem('Kill',                          06, 1, mmKillSub);
+        ItemsDone;
+
+      AddItem(' Item ',                          35, 2, mmItem);
+        AddFramedSubMenu(37, 9, 49, 18, Vertical, JointFrame);
+        AddItem('Add',                           01, 1, mmAddItem);
+        AddItem('Name',                          02, 1, mmNameItem);
+        AddItem('Edit',                          03, 1, mmEditItem);
+        AddItem('Key   ?????',                   04, 1, mmKeyItem);
+        AddItem('Select char',                   05, 1, mmSelectChar);
+        AddItem('Help text',                     06, 1, mmHelpText);
+        AddItem('Move',                          07, 1, mmMoveItem);
+        AddItem('Reorder',                       08, 1, mmReorderItem);
+        AddItem('Drag',                          09, 1, mmDragItem);
+        AddItem('Kill',                          10, 1, mmKillItem);
+        ItemsDone;
+
+      AddItem(' Object ',                        48, 2, mmObject);
+        AddFramedSubMenu(50, 9, 63, 17, Vertical, JointFrame);
+        AddItem('Load',                          01, 1, mmObjLoad);
+        AddItem('Save    <F2>',                  02, 1, mmSave);
+        AddItem('Rename',                        03, 1, mmRename);
+        AddItem('save As',                       04, 6, mmSaveAs); {!!.02}
+        AddItem('Info  <AltI>',                  05, 1, mmObjInfo);
+        AddItem('Test   <F10>',                  06, 1, mmTest);
+        AddItem('Write source',                  07, 1, mmGenerate);
+        AddItem('Document',                      08, 1, mmDocument);
+        AddItem('Rekey',                         09, 1, mmRekey);
+        ItemsDone;
+
+      AddItem(' Library ',                       63, 2, mmLibrary);
+        AddFramedSubMenu(63, 9, 75, 14, Vertical, JointFrame);
+        AddItem('Load   <F3>',                   01, 1, mmLoad);
+        AddItem('New',                           02, 1, mmNew);
+        AddItem('Delete',                        03, 1, mmDelete);
+        AddItem('Info <AltI>',                   04, 1, mmInfo);
+        AddItem('Pack',                          05, 1, mmPack);
+        AddItem('Quit <AltX>',                   06, 1, mmQuit);
+        ItemsDone;
+
+      ItemsDone;
+
+      {add shadows to all submenus}
+      AddShadows(True, shBR, shSeeThru);
+
+      {install string customization routine}
+      SetCustomStringProc(MainMenuCustom);
+    end;
+
+    InitMainMenu := (MainMenu.RawError = 0);
+  end;
+{.F+}
+
+  procedure ClearScreen(Ch : Char; Attr : Byte);
+    {-Clear the screen to a specified attribute}
+  begin
+    ClearWindow(1, 1, ScreenWidth, ScreenHeight, Ch, Attr);
+  end;
+
+  procedure GridBackdrop;
+    {-Draw an informative grid on the screen}
+  var
+    r : Word;
+    c : Word;
+    ch : char;
+  begin
+    ClearScreen(' ', BackdropAttr);
+    for r := 1 to ScreenHeight do begin
+      FastText(Char(Byte('0')+(r div 10)), r, 1);
+      FastText(Char(Byte('0')+(r mod 10)), r, 2);
+      for c := 3 to ScreenWidth do begin
+        case c mod 10 of
+          0: if r mod 5 = 0 then
+               ch := Char(Byte('0')+((c div 10) mod 10))
+             else
+               ch := #7;
+          5: ch := 'ù';
+        else
+          ch := 'ú';
+        end;
+        FastText(ch, r, c);
+      end;
+    end;
+  end;
+
+  procedure DrawBackdrop;
+    {-Draw the backdrop on which menus are designed}
+  begin
+    case DefBackdrop of
+      bdPlain : ClearScreen(' ', BackdropAttr);
+      bdCanvas : ClearScreen(BackdropChar, BackdropAttr);
+      bdGrid : GridBackdrop;
+    end;
+  end;
+
+  procedure SetItemPointers(IPtr : MenuItemNodePtr; var D; MPtr : MenuPtr);
+    {-Initialize array of pointers to each menu item}
+  begin
+    mmItems[Word(IPtr^.ItemKey)] := IPtr;
+  end;
+
+  procedure Initialize;
+    {-Initialize main menu, set up keys, etc.}
+  const
+    OutOfMemMsg = 'Insufficient memory';
+  var
+    Dummy : Byte;
+  begin
+    {add hot keys}
+    MenuCommands.SetSecondaryKeyPtr(@HotKeySet, HotKeyMax);
+    MenuCommands.AddCommand(MainMenuCmd, 1, $ED00, 0);
+
+    {default to framed windows}
+    DefWindowOptions := DefWindowOptions or wBordered;
+
+    {default to covers buffers on demand}                    {!!.01}
+    DefWindowOptions := DefWindowOptions or wCoversOnDemand; {!!.01}
+
+    {default to our custom color set}
+    DefaultColorSet  := MainColors;
+
+    {initialize the main menu}
+    if not InitMainMenu then begin
+      WriteLn(OutOfMemMsg);
+      Halt(1);
+    end;
+
+    {allocate the helpline window}
+    if not HelpLine.InitCustom(1, DefHelpRow, ScreenWidth, DefHelpRow,
+                               DefColors,
+                               wClear+wSaveContents) then begin
+      WriteLn(OutOfMemMsg);
+      Halt(1);
+    end;
+
+    {set up pointers to menu items for fast protect capability}
+    MainMenu.VisitAllItems(SetItemPointers, Dummy);
+
+    {allocate constant name strings when reading menu streams}
+    inAllocConsPtr := True;
+
+    {create backdrop}
+    DrawBackdrop;
+
+    {$IFDEF UseMouse}
+    if MouseInstalled then begin
+      {activate mouse cursor}
+      with MainColors do
+        SoftMouseCursor($0000, (ColorMono(MouseColor, MouseMono) shl 8)+
+                               Byte(MouseChar));
+      ShowMouse;
+
+      {enable mouse support}
+      MenuCommands.cpOptionsOn(cpEnableMouse);
+      PickCommands.cpOptionsOn(cpEnableMouse);
+      SimpEditCommands.cpOptionsOn(cpEnableMouse);
+    end;
+    {$ENDIF}
+  end;
+
+  procedure DrawUserMenu;
+    {-Draw the user menu when it's not currently active}
+  var
+    HelpRow : Byte;
+  begin
+    with UserMenu do begin
+      {adjust and show the initial help line}
+      if DefHelpActive then begin
+        HelpRow := DefHelpRow;
+        if HelpRow < 1 then
+          HelpRow := 1
+        else if HelpRow > ScreenHeight then
+          HelpRow := ScreenHeight;
+        HelpLine.AdjustWindow(1, HelpRow, ScreenWidth, HelpRow);
+        HelpLine.SetTextAttr(DefHelpLineColor, DefHelpLineMono);
+        HelpLine.Draw;
+      end;
+      {show the initial window}
+      Draw;
+    end;
+  end;
+
+  procedure EraseUserMenu;
+    {-Erase the user menu and associated help window}
+  begin
+    UserMenu.EraseHidden;
+    if DefHelpActive then
+      HelpLine.Erase;
+  end;
+
+  procedure DisposeUserMenu;
+    {-Dispose of current user object}
+  begin
+    if HaveObj then begin
+      {erase and dispose it}
+      EraseUserMenu;
+      UserMenu.Done;
+      HaveObj := False;
+      Modified := False;
+    end;
+  end;
+
+  function DrawPromptLine(PromptMsg : String) : Boolean;
+    {-Initialize hidden prompt line}
+  begin
+    DrawPromptLine := False;
+
+    {initialize prompt window}
+    if not Prompt.InitCustom(1, ScreenHeight, ScreenWidth, ScreenHeight,
+                             MainColors, wClear) then
+      Exit;
+    with MainColors do
+      Prompt.SetTextAttr(HighlightColor, HighlightMono);
+
+     wStack.OptimizeTiled(False); {!!.11}
+    UserMenu.ActivateWrite;
+    EraseUserMenu;
+    Prompt.Draw;
+    with MainColors do
+      Prompt.wFastFlush(PromptMsg, 1,
+                        ColorMono(HighlightColor, HighlightMono));
+    DrawUserMenu;
+    UserMenu.DeactivateWrite;
+    wStack.OptimizeTiled(True);  {!!.11}
+
+    DrawPromptLine := True;
+  end;
+
+  procedure RemovePromptLine;
+    {-Erase and dispose of hidden prompt line}
+  begin
+    wStack.OptimizeTiled(False); {!!.11}
+    UserMenu.ActivateWrite;
+    EraseUserMenu;
+    Prompt.Done;
+    DrawUserMenu;
+    UserMenu.DeactivateWrite;
+    wStack.OptimizeTiled(True);  {!!.11}
+  end;
+
+  procedure RedrawUserObj(ShowEffects : Boolean);
+    {-Redraw the user menu, showing or avoiding update as specified}
+  begin
+    if HaveObj then
+      with UserMenu do begin
+        wStack.OptimizeTiled(False); {!!.13}
+        if ShowEffects then
+          MainMenu.Erase
+        else
+          ActivateWrite;
+
+        EraseUserMenu;
+        DrawUserMenu;
+
+        if not ShowEffects then
+          DeactivateWrite;
+        wStack.OptimizeTiled(True);  {!!.13}
+      end;
+  end;
+
+  procedure RedrawUserCurWin(ShowEffects : Boolean);
+    {-Redraw the current window, showing or avoiding update as specified}
+  begin
+    if HaveObj then
+      with UserMenu.ActiveWinPtr^ do begin
+        if ShowEffects then
+          MainMenu.Erase
+        else
+          UserMenu.ActivateWrite;
+        Erase;
+        Draw;
+        if not ShowEffects then
+          UserMenu.DeactivateWrite;
+      end;
+  end;
+
+  function CreateOpLibrary : Boolean;
+    {-Create a new library}
+  const
+    Prompt  = 'Number of entries in directory [5-100]: ';
+    ErrorMsg = 'Unable to create Library';
+  const
+    Entries : Word = DefLibEntries;
+  begin
+    CreateOpLibrary := False;
+
+    {get number of directory entries}
+    if not PopupGetWord(LibName, Prompt, Entries, 5, 100) then
+      Exit;
+
+    {try to create the library}
+    if Lib.Create(LibName, 4096, '', Entries) then
+      CreateOpLibrary := True
+    else
+      PopupErrorMessage(ErrorMsg);
+  end;
+
+  function OpenOpLibrary(Name : PathStr) : Boolean;
+    {-Open the library of the specified name, or create it if necessary}
+  const
+    Prompt = 'File does not exist. Create it?';
+    ErrorMsg = 'Unable to open Library';
+  var
+    Create, Esc : Boolean;
+  begin
+    HaveLib := False;
+
+    {apply default extension}
+    Name := StUpcase(Name);
+    LibName := DefaultExtension(Name, DefLibExt);
+
+    {try to open the file}
+    if not ExistFile(LibName) then begin
+      {not found--create it?}
+      Name := JustFileName(LibName);
+      Create := PopupYesNo(Name, Prompt, YesChar, Esc);
+      if Create and not Esc then
+        HaveLib := CreateOpLibrary;
+    end else if Lib.Init(LibName, SOpen, 4096, '') then
+      HaveLib := True
+    else
+      PopupErrorMessage(ErrorMsg);
+
+    if HaveLib then begin
+      {register all the object types needed}
+      Lib.RegisterHier(MenuStream);
+      Lib.RegisterHier(ExplodingWindowStream);
+      Lib.RegisterHier(LoadableColorSetStream);   {!!.03}
+    end;
+
+    OpenOpLibrary := HaveLib;
+  end;
+
+  procedure CloseOpLibrary;
+    {-Close the current library}
+  begin
+    if HaveLib then begin
+      {dispose of current user object}
+      DisposeUserMenu;
+
+      {close the library}
+      Lib.Done;
+
+      {reset status flags}
+      HaveLib := False;
+      HaveObj := False;
+      Modified := False;
+    end;
+  end;
+
+  procedure UpdateHelpLine(CurrentItem : MenuItemNodePtr; MPtr : MenuPtr);
+    {-Called by user menu system to draw help line for each item}
+  var
+    S : String;
+  begin
+    if CurrentItem = nil then
+      S := ''
+    else
+      S := CurrentItem^.HelpString;
+    with HelpLine do
+      wFastWrite(Pad(S, Width), 1, 1,
+                 ColorMono(DefHelpLineColor, DefHelpLineMono));
+  end;
+
+  procedure InitHelpLineProc;
+    {-Set up the help line procedure depending on DefHelpActive}
+  begin
+    with UserMenu do
+      if DefHelpActive then
+        SetCurrentItemProc(UpdateHelpLine)
+      else
+        SetCurrentItemProc(NoCurrItemAction);
+  end;
+
+  function CreateUserMenu : Boolean;
+    {-Return True after successfully creating a new menu system}
+  begin
+    CreateUserMenu := False;
+
+    with UserMenu do begin
+
+      {initialize a default window}
+      if not InitCustom(DefXL, DefYL, DefXH, DefYH,
+                        DefColors, DefOptions, DefOrient) then begin
+        InsufficientMemory;
+        Exit;
+      end;
+
+      {adjust other options to match defaults}
+      if LongFlagIsSet(DefOptions, wBordered) then {!!.12}
+        wFrame.SetFrameType(DefFrame);
+      if DefExplosions then
+        EnableExplosions(DefDelay);
+      if DefShadow <> shNone then
+        wFrame.AddShadow(shBR, DefShadow);
+      mnFlags := DefMOptions or mnMainSelect or mnMainHighlight;
+      if DefHelpActive then
+        mnHelpRow := DefHelpRow
+      else
+        mnHelpRow := 0;
+      mnHelpColor := DefHelpLineColor;
+      mnHelpMono := DefHelpLineMono;
+      mnItems.SetSelectMarker(DefLeftMark, DefRightMark);
+
+      {Set up the appropriate help line procedure}
+      InitHelpLineProc;
+
+      {Draw the user menu for the first time}
+      DrawUserMenu;
+
+      Modified := True;
+      CreateUserMenu := True;
+    end;
+  end;
+
+  function MergeUserMenu : Boolean;
+    {-Return True after loading a menu system from a library}
+  const
+    NotAMenu = 'Not a valid menu system';
+    ReadingFromLib = ' reading from Library';
+  var
+    Status : Word;
+    Code : SmallWord;
+    Ver : SmallWord;
+  begin
+    MergeUserMenu := False;
+    with Lib do begin
+      {get the type code for the object we're loading}
+      GetCodeAndVersion(ObjName, Code, Ver);
+      if Code <> otMenu then begin
+        PopupErrorMessage(NotAMenu);
+        Exit;
+      end;
+
+      {load the menu}
+      GetEntry(ObjName, UserMenu);
+      Status := GetStatus;
+      if Status = 0 then begin {!!.12}
+        MergeUserMenu := True; {!!.12}
+        UserMenu.ClearErrors;  {!!.12}
+      end else                 {!!.12}
+        PopupErrorMessage(ErrorLeadIn+Long2Str(Status)+ReadingFromLib);
+      {UserMenu.ClearErrors;}  {!!.12}
+    end;
+  end;
+
+  procedure SetUserDefaults;
+    {-Copy default settings from main level of user menu}
+  begin
+    {Colors}
+    with UserMenu do begin
+      with DefColors do begin
+        with mnItems do begin
+          TextColor := ilNormColor;
+          TextMono := ilNormMono;
+          SelItemColor := ilSelectColor;
+          SelItemMono := ilSelectMono;
+          HighItemColor := ilHighColor;
+          HighItemMono := ilHighMono;
+          ProItemColor := ilProtectColor;
+          ProItemMono := ilProtectMono;
+        end;
+        with wFrame do begin
+          FrameColor := frFrameColor;
+          FrameMono := frFrameMono;
+          HeaderColor := frHeaderColor;
+          HeaderMono := frHeaderMono;
+          {$IFDEF UseShadows}
+          ShadowColor := frShadowColor;
+          ShadowMono := frShadowMono;
+          {$ENDIF}
+        end;
+      end;
+
+      if HasFrame then begin
+        DefFrame := wFrame.frChars;
+        SetLongFlag(DefOptions, wBordered);
+      end else
+        ClearLongFlag(DefOptions, wBordered);
+
+      DefDelay := wStageDelay;
+      DefExplosions := IsExploding;
+      DefSound := wOptionsAreOn(wSoundEffects);
+      if DefSound then                               {!!.13}
+        SetLongFlag(DefOptions, wSoundEffects)       {!!.13}
+      else                                           {!!.13}
+        ClearLongFlag(DefOptions, wSoundEffects);    {!!.13}
+      DefShadow := ShadowType;
+      DefOrient := mnItems.Orientation;
+      DefMOptions := mnFlags;
+
+      DefHelpRow := mnHelpRow;
+      DefHelpActive := (DefHelpRow <> 0);
+      DefHelpLineColor := mnHelpColor;
+      DefHelpLineMono := mnHelpMono;
+
+      DefLeftMark := mnItems.ilLeftSel;
+      DefRightMark := mnItems.ilRightSel;
+
+      {Set up the appropriate help line procedure}
+      InitHelpLineProc;
+    end;
+  end;
+
+  procedure LoadUserMenuPrim;
+    {-Display a list of objects and load/create the one chosen}
+  const
+    DirIsFull = 'Library''s directory is full. Proceed?';
+    GetMenuName = 'Name of menu system: ';
+    Warning = 'Warning';
+    NewObject = 'New object';
+    ErrorMsg = 'Menu not compatible with screen dimensions';
+  const
+    TypeCodes = [otMenu];
+    MaxLen = SizeOf(DirEntryName)-1;
+  var
+    LS : OpLibrarySelector;
+    AllowNew : Boolean;
+    OK : Boolean;
+    Proceed : Boolean;
+    Esc : Boolean;
+    I : Word;
+    NewObjName : DirEntryName;
+
+    procedure DisposeLS;
+      {-Dispose of library selector}
+    begin
+      LS.Erase;
+      LS.Done;
+    end;
+
+  begin
+    if not HaveLib then
+      Exit;
+
+    {any room left in library's directory for new objects?}
+    AllowNew := (Lib.AvailableEntries > 0);
+    if not AllowNew then begin
+      Proceed := PopupYesNo(Warning, DirIsFull, YesChar, Esc);
+      if Esc or not Proceed then
+        Exit;
+    end;
+
+    {initialize the library selector}
+    if not LS.Init(30, 12, 51, 23, Lib, TypeCodes, AllowNew) then begin
+      InsufficientMemory;
+      Exit;
+    end;
+    LS.wFrame.AddShadow(shBR, shSeeThru);
+
+    {change the attribute of the column labels}
+    with MainColors do
+      LS.SetLabelAttr(HighItemColor, HighItemMono);
+
+    {make a selection}
+    LS.Process;
+    case LS.GetLastCommand of
+      ccQuit, ccError :
+        begin
+          DisposeLS;
+          Exit;
+        end;
+    end;
+
+    {is it an existing object or a new one?}
+    I := LS.GetLastObjectChoice;
+    DisposeLS;
+
+    if I = 0 then begin
+      {prompt for a name}
+      NewObjName := '';
+      repeat
+        if not PopupGetString(NewObject, GetMenuName, True, True,
+                              MaxLen, NewObjName) then
+          Exit;
+        if NewObjName = '' then
+          Exit;
+
+        {check for conflict with existing name}
+        OK := (Lib.FindAnyDirectoryIndex(NewObjName) = 0);
+        if not OK then
+          PopupErrorMessage(NameInUse);
+      until OK;
+
+      {dispose of current user object}
+      DisposeUserMenu;
+
+      {create the new object}
+      ObjName := NewObjName;
+      if MainMenu.IsActive then
+        MainMenu.Erase;
+      HaveObj := CreateUserMenu;
+
+    end else begin
+      {dispose of current user object}
+      DisposeUserMenu;
+
+      {find the name of the new object}
+      ObjName := Lib.FindEntryByIndex(I)^.GetEntryName;
+
+      {load new object into memory}
+      HaveObj := MergeUserMenu;
+      if HaveObj then begin
+        {adjust window to fit current screen size}
+        UserMenu.UpdateScreenSize;
+        if UserMenu.RawError <> 0 then begin {!!.01}
+          PopupErrorMessage(ErrorMsg);
+          UserMenu.Done;
+          HaveObj := False;
+          Modified := False;
+          Exit;
+        end;
+        UserMenu.wOptionsOn(wCoversOnDemand); {!!.01}
+        if MainMenu.IsActive then
+          MainMenu.Erase;
+        SetUserDefaults;
+        DrawUserMenu;
+      end;
+    end;
+  end;
+
+  procedure SaveUserMenu;
+    {-Write user menu out to library}
+  const
+    NotChanged = 'Object does not need to be saved...';
+    SuccessMsg = 'Object saved successfully...';
+    WritingToLib = ' writing to Library';
+  var
+    I : Word;
+  begin
+    if not Modified then
+      PopupDelayMessage(NotChanged)
+    else
+      with Lib do begin
+        {store the object}
+        PutEntry(ObjName, UserMenu);
+        I := GetStatus;
+        if I = 0 then begin
+          PopupDelayMessage(SuccessMsg);
+          Modified := False;
+          if FlushDosBuffers(Handle) then {};  {!!.03};
+        end else
+          PopupErrorMessage(ErrorLeadIn+Long2Str(I)+WritingToLib);
+      end;
+  end;
+
+  function SafeToLoad : Boolean;
+    {-Check for modified user object and save it if needed}
+  var
+    Save : Boolean;
+    Esc : Boolean;
+  begin
+    SafeToLoad := False;
+    {if library is already open then save it}
+    if Modified then begin
+      Save := PopupYesNo(ObjName, SavePrompt, YesChar, Esc);
+      if Esc then
+        Exit;
+      if Save then
+        SaveUserMenu;
+    end;
+    SafeToLoad := True;
+  end;
+
+  procedure LoadUserMenu;
+    {-Load a menu from the current library}
+  begin
+    if SafeToLoad then
+      {get the new object}
+      LoadUserMenuPrim;
+  end;
+
+  procedure NewOpLibrary;
+    {-Create a new library and prompt for an object to create}
+  const
+    NewOpLibrary = 'New Library';
+    FilePrompt = 'Filename [.'+DefLibExt+']: ';
+    FileExistsMsg = 'File exists. Overwrite it?';
+  var
+    Save : Boolean;
+    Esc : Boolean;
+    NewLib : PathStr;
+  begin
+    {if library is already open then save it}
+    if not SafeToLoad then
+      Exit;
+
+    {get the name of the library}
+    NewLib := '';
+    if not PopupGetString(NewOpLibrary, FilePrompt, True, True, PathLen, NewLib)
+    then
+      Exit;
+    if NewLib = '' then
+      Exit;
+
+    LibName := DefaultExtension(NewLib, DefLibExt);
+    if ExistFile(LibName) then begin
+      if not PopupYesNo(JustFilename(LibName), FileExistsMsg, NoChar, Esc) then
+        Exit;
+      if Esc then
+        Exit;
+    end;
+
+    {close the current library}
+    CloseOpLibrary;
+
+    {open the new one}
+    HaveLib := CreateOpLibrary;
+    if HaveLib then begin
+      {register everything}
+      Lib.RegisterHier(MenuStream);
+      Lib.RegisterHier(ExplodingWindowStream);    {!!.03}
+      Lib.RegisterHier(LoadableColorSetStream);   {!!.03}
+
+      {get the new object}
+      LoadUserMenuPrim;
+    end;
+  end;
+
+  procedure LoadOpLibrary;
+    {-Load a new library and/or entry screen}
+  const
+    LoadOpLibrary = 'Load Library';
+    FilePrompt = 'Filename [.'+DefLibExt+']: ';
+  var
+    Save : Boolean;
+    Esc : Boolean;
+    NewLib : PathStr;
+  begin
+    {if library is already open then save it}
+    if not SafeToLoad then
+      Exit;
+
+    {get the name of the library}
+    NewLib := LibName;
+    if not PopupGetFileName(LoadOpLibrary, FilePrompt, PathLen,
+                            DefLibExt, NewLib) then
+      Exit;
+
+    if NewLib <> LibName then begin
+      {close the current library}
+      CloseOpLibrary;
+
+      {open the new one}
+      if not OpenOpLibrary(NewLib) then
+        Exit;
+    end;
+
+    {get the new object}
+    LoadUserMenuPrim;
+  end;
+
+  procedure RenameObject(MakeNewObj : Boolean);
+    {-Rename an existing object in the current library}
+  const
+    DirIsFull = 'Library''s directory is full';
+    SaveAsMsg = 'Save As';
+    RenameMsg = 'Rename';
+    NewNameMsg = 'New name: ';
+  const
+    MaxLen = SizeOf(DirEntryName)-1;
+  var
+    NewName : DirEntryName;
+    OK : Boolean;
+    DEP : DirEntryPtr;
+    Header : string[30];
+  begin
+    {See if current object exists}
+    MakeNewObj := MakeNewObj or (Lib.FindAnyDirectoryIndex(ObjName) = 0);
+    if MakeNewObj and (Lib.AvailableEntries = 0) then begin
+      PopupErrorMessage(DirIsFull);
+      Exit;
+    end;
+
+    if MakeNewObj then
+      Header := SaveAsMsg
+    else
+      Header := RenameMsg;
+
+    NewName := ObjName;
+    repeat
+      {prompt for a name}
+      if not PopupGetString(Header, NewNameMsg, True, True,
+                            MaxLen, NewName) or
+         (NewName = '') or (NewName = ObjName) then
+           Exit;
+
+      {check for conflict with existing name}
+      OK := Lib.FindAnyDirectoryIndex(NewName) = 0;
+      if not OK then
+        PopupErrorMessage(NameInUse);
+    until OK;
+
+    if not MakeNewObj then begin
+      DEP := Lib.FindAnyDirectoryEntry(ObjName);
+      if DEP <> nil then
+        DEP^.Rename(NewName);
+    end;
+
+    ObjName := NewName;
+    Modified := True;
+    SaveUserMenu;
+  end;
+
+  procedure ShowOpLibraryInfo;
+    {-Show information about the current library}
+  var
+    LI : OpLibraryInfo;
+  begin
+    if HaveLib then
+      with LI do
+        if not Init(24, 7, Lib, LibName) then
+          InsufficientMemory
+        else begin
+          wFrame.AddShadow(shBR, shSeeThru);
+          Process;
+          Erase;
+          Done;
+        end;
+  end;
+
+  procedure PackOpLibrary;
+    {-Pack the current library}
+  const
+    SuccessMsg = 'Library packed successfully...';
+    NoPackMsg = 'Library does not need packing...';
+    PackingLib = ' packing Library';
+  var
+    Status : Word;
+  begin
+    if HaveLib then
+      if Lib.FileNeedsPacking then begin
+        Lib.Pack;
+        Status := Lib.GetStatus;
+        if Status = 0 then
+          PopupDelayMessage(SuccessMsg)
+        else
+          PopupErrorMessage(ErrorLeadIn+Long2Str(Status)+PackingLib);
+      end else
+        PopupDelayMessage(NoPackMsg);
+  end;
+
+  procedure DeleteObjects;
+    {-Display a list of objects and delete/undelete the one chosen}
+  const
+    ErrorMsg = 'Library''s directory is empty';
+  var
+    LS : OpLibrarySelector;
+    DEP : DirEntryPtr;
+    I : Word;
+  begin
+    if not HaveLib then
+      Exit;
+
+    {check for empty directory}
+    if (Lib.AvailableEntries = Lib.MaxEntries) then begin
+      PopupErrorMessage(ErrorMsg);
+      Exit;
+    end;
+
+    {initialize the library selector}
+    if not LS.InitMulti(30, 12, 51, 23, Lib, [], False) then begin
+      InsufficientMemory;
+      Exit;
+    end;
+    LS.wFrame.AddShadow(shBR, shSeeThru);
+    LS.wFrame.AddHeader(' <Esc> Exit ', heBC);
+
+    {change the attribute of the column labels}
+    with MainColors do
+      LS.SetLabelAttr(HighItemColor, HighItemMono);
+
+    {mark deletions}
+    LS.Process;
+
+    {do the deletions}
+    LS.DeleteMarkedItems;
+
+    LS.Erase;
+    LS.Done;
+  end;

@@ -1,0 +1,653 @@
+{*********************************************************}
+{*                    OPDOS.IN1 1.30                     *}
+{*     Copyright (c) TurboPower Software 1987, 1992.     *}
+{* Portions Copyright (c) Sunny Hill Software 1985, 1986 *}
+{*     and used under license to TurboPower Software     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  procedure ClearEnvRec(var Env : EnvRec);
+    {-Initialize an environment record}
+  begin
+    FillChar(Env, SizeOf(Env), 0);
+  end;
+
+  {!!.12} {Routines to find environments substantially rewritten}
+const
+  IdOfs = 0;       {Offset within Mcb of the Id character}
+  PspOfs = 1;      {Offset within Mcb of the Psp segment}
+  LenOfs = 3;      {Offset within Mcb of the Length word}
+  ParOfs = $16;    {Offset within Psp of the Parent segment}
+  EnvOfs = $2C;    {Offset within Psp of the Environment segment}
+
+  {$IFDEF VIRTUALPASCAL}
+  Function Os2GetEnvLen( Env : Pointer ) : Word;
+    {-Scans the OS/2 environment pointer to find total length}
+    Var
+      x,Len : Word;
+    begin
+      Len := 0;
+      While pChar(Env)[0] <> #0 do
+        begin
+          x := StrLen( pChar(Env) );
+          Inc( Len, x+1 );
+          Inc( pChar(Env), x+1 );
+        end;
+      Os2GetEnvLen := Len;
+    end;
+
+  {$ELSE}
+  function CommandPsp(First : Boolean) : Word;
+  {-Return segment of COMMAND.COM PSP.
+    If First is True, return first one, else return last one}
+  var
+    CommandSeg : Word;
+    PspSeg : Word;
+    McbSeg : Word;
+
+    function GetStartMCBSeg : Word;
+      {-Return segment of first system MCB}
+    inline(
+      $B4/$52/                    {mov ah,$52}
+      $CD/$21/                    {int $21}
+      $26/                        {es:}
+      $8B/$47/$FE);               {mov ax,[bx-2]}
+
+  begin
+    CommandSeg := 0;
+    McbSeg := GetStartMCBSeg;
+    repeat
+      PspSeg := MemW[McbSeg:PspOfs];
+      if (MemW[PspSeg:ParOfs] = PspSeg) and (McbSeg+1 = PspSeg) then
+        {Found a COMMAND.COM}
+        if First then begin
+          CommandPsp := PspSeg;
+          Exit;
+        end else
+          CommandSeg := PspSeg;
+      inc(McbSeg, MemW[McbSeg:LenOfs]+1);
+    until Mem[McbSeg:IdOfs] = Byte('Z');
+    CommandPsp := CommandSeg;
+  end;
+
+  function ValidPspMcb(Mcb, Psp : Word) : Boolean;
+    {-Return True if McbSeg is the Mcb of a Psp (except for very last Psp)}
+  begin
+    ValidPspMcb := (Mem[Mcb:IdOfs] = Byte('M')) and (MemW[Mcb:PspOfs] = Psp);
+  end;
+
+  procedure FindCommandEnv(Psp : Word; var Env : EnvRec);
+    {-Initialize environment record for the Psp of a COMMAND.COM}
+  var
+    Mcb : Word;
+    Eseg : Word;
+  begin
+    with Env do begin
+      ClearEnvRec(Env);
+
+      {Mcb points to memory control block for COMMAND}
+      Mcb := Psp-1;
+      if not ValidPspMcb(Mcb, Psp) then
+        Exit;
+
+      {Read segment of environment from PSP of COMMAND}
+      Eseg := MemW[Psp:EnvOfs];
+
+      {Early versions of DOS don't store environment segment there}
+      if Eseg = 0 then begin
+        {Master environment is next block past COMMAND}
+        Mcb := Psp+MemW[Mcb:LenOfs];
+        if not ValidPspMcb(Mcb, Psp) then
+          Exit;
+        Eseg := Mcb+1;
+      end else
+        Mcb := Eseg-1;
+
+      {Return segment and length of environment}
+      EnvSeg := Eseg;
+      EnvLen := MemW[Mcb:LenOfs] shl 4;
+    end;
+  end;
+  {$ENDIF}
+
+  procedure MasterEnv(var Env : EnvRec);
+    {-Initialize environment record for first copy of COMMAND.COM in memory}
+  begin
+    {$IFDEF VIRTUALPASCAL}
+    ClearEnvRec(Env);
+    Env.EnvSeg := Word( SysGetEnvironment );
+    Env.EnvLen := Os2GetEnvLen( Ptr( Env.EnvSeg ) );
+    {$ELSE}
+    FindCommandEnv(CommandPsp(True), Env);
+    {$ENDIF}
+  end;
+
+  procedure CommandEnv(var Env : EnvRec);
+    {-Initialize environment record for last copy of COMMAND.COM in memory}
+  begin
+    {$IFDEF VIRTUALPASCAL}
+    ClearEnvRec(Env);
+    Env.EnvSeg := Word( SysGetEnvironment );
+    Env.EnvLen := Os2GetEnvLen( Ptr( Env.EnvSeg ) );
+    {$ELSE}
+    FindCommandEnv(CommandPsp(False), Env);
+    {$ENDIF}
+  end;
+
+  {$IFNDEF VIRTUALPASCAL}
+  procedure InitEnv(Mcb, Eseg : Word; var Env : EnvRec);
+    {-Initialize environment record given environment's segment}
+  begin
+    if Eseg = 0 then
+      MasterEnv(Env)
+    else begin
+      Env.EnvSeg := Eseg;
+      Env.EnvLen := MemW[Mcb:LenOfs] shl 4;
+    end;
+  end;
+  {$ENDIF}
+
+  procedure CurrentEnv(var Env : EnvRec);
+    {-Return current environment record}
+  {$IFDEF VIRTUALPASCAL}
+    begin
+      MasterEnv( Env );
+    end;
+  {$ELSE}
+  var
+    Eseg : Word;
+    Mcb : Word;
+  begin
+    ClearEnvRec(Env);
+    Eseg := MemW[PrefixSeg:EnvOfs];
+    Mcb := Eseg-1;
+    if ValidPspMcb(Mcb, PrefixSeg) then
+      InitEnv(Mcb, Eseg, Env);
+  end;
+  {$ENDIF}
+
+  procedure ParentEnv(var Env : EnvRec);
+    {-Return environment record of program's parent}
+  {$IFDEF VIRTUALPASCAL}
+    begin
+      MasterEnv( Env );
+    end;
+  {$ELSE}
+  var
+    PSeg : Word;
+    Eseg : Word;
+    Mcb : Word;
+  begin
+    ClearEnvRec(Env);
+    {Get segment of parent}
+    PSeg := MemW[PrefixSeg:ParOfs];
+    Eseg := MemW[PSeg:EnvOfs];
+    Mcb := Eseg-1;
+    if ValidPspMcb(Mcb, PSeg) then
+      InitEnv(Mcb, Eseg, Env);
+  end;
+  {$ENDIF}
+
+  procedure NewEnv(var Env : EnvRec; Size : Word);
+    {-Allocate a new environment (on the heap)}
+  {$IFDEF VIRTUALPASCAL}
+    begin
+      ClearEnvRec( Env );
+      With Env do
+        begin
+          GetMem( EnvPtr, Size );
+          EnvLen := Size;
+          FillChar( EnvPtr^, Size, 0 );
+          EnvSeg := LongInt( EnvPtr );
+        end;
+    end;
+  {$ELSE}
+  var
+    Mcb : Word;
+  begin
+    with Env do
+      if MaxAvail < Size+31 then
+        {Insufficient space}
+        ClearEnvRec(Env)
+      else begin
+        {31 extra bytes for paragraph alignment, fake MCB}
+        GetMem(EnvPtr, Size+31);
+        EnvSeg := SegOfs(EnvPtr).S+1;
+        if SegOfs(EnvPtr).O <> 0 then
+          Inc(EnvSeg);
+        EnvLen := Size;
+        {Fill it with nulls}
+        FillChar(EnvPtr^, Size+31, 0);
+        {Make a fake MCB below it}
+        Mcb := EnvSeg-1;
+        Mem[Mcb:0] := Byte('M');
+        MemW[Mcb:1] := PrefixSeg;
+        MemW[Mcb:3] := (Size+15) shr 4;
+      end;
+  end;
+  {$ENDIF}
+
+  procedure DisposeEnv(var Env : EnvRec);
+    {-Deallocate an environment previously allocated on heap}
+  begin
+    with Env do
+      if EnvPtr <> nil then begin
+        {$IFDEF VIRTUALPASCAL}
+        FreeMem(EnvPtr, EnvLen);
+        {$ELSE}
+        FreeMem(EnvPtr, EnvLen+31);
+        {$ENDIF}
+        ClearEnvRec(Env);
+      end;
+  end;
+
+  procedure SetCurrentEnv(Env : EnvRec);
+    {-Specify a different environment for the current program}
+  begin
+    {$IFNDEF VIRTUALPASCAL}
+    with Env do
+      if EnvSeg <> 0 then
+        MemW[PrefixSeg:$2C] := EnvSeg;
+    {$ENDIF}
+  end;
+
+  procedure CopyEnv(Src, Dest : EnvRec);
+    {-Copy contents of Src environment to Dest environment}
+  var
+    Size : Word;
+    SPtr : EnvArrayPtr;
+    DPtr : EnvArrayPtr;
+  begin
+    if (Src.EnvSeg = 0) or (Dest.EnvSeg = 0) then
+      Exit;
+
+    if Src.EnvLen <= Dest.EnvLen then
+      {Space for the whole thing}
+      Size := Src.EnvLen
+    else
+      {Take what fits}
+      Size := Dest.EnvLen-2;
+
+    {$IFDEF VIRTUALPASCAL}
+    SPtr := Ptr( Src.EnvSeg );
+    DPtr := Ptr( Dest.EnvSeg);
+    {$ELSE}
+    SPtr := Ptr(Src.EnvSeg, 0);
+    DPtr := Ptr(Dest.EnvSeg, 0);
+    {$ENDIF}
+    Move(SPtr^, DPtr^, Size);
+    FillChar(DPtr^[Size], Dest.EnvLen-Size, 0);
+  end;
+
+  procedure SkipAsciiZ(EPtr : EnvArrayPtr; var EOfs : Word);
+    {-Skip to end of current AsciiZ string}
+  begin
+    while EPtr^[EOfs] <> #0 do
+      Inc(EOfs);
+  end;
+
+  function EnvNext(EPtr : EnvArrayPtr) : Word;
+    {-Return the next available location in environment at EPtr^}
+  var
+    EOfs : Word;
+  begin
+    EOfs := 0;
+    if EPtr <> nil then begin
+      while EPtr^[EOfs] <> #0 do begin
+        SkipAsciiZ(EPtr, EOfs);
+        Inc(EOfs);
+      end;
+    end;
+    EnvNext := EOfs;
+  end;
+
+  function EnvFree(Env : EnvRec) : Word;
+    {-Return bytes free in environment}
+  begin
+    with Env do
+      if EnvSeg <> 0 then
+        {$IFDEF VIRTUALPASCAL}
+        EnvFree := EnvLen-EnvNext( Ptr(EnvSeg ) )-1
+        {$ELSE}
+        EnvFree := EnvLen-EnvNext(Ptr(EnvSeg, 0))-1
+        {$ENDIF}
+      else
+        EnvFree := 0;
+  end;
+
+  function SearchEnv(EPtr : EnvArrayPtr; var Search : string) : Word;
+    {-Return the position of Search in environment, or $FFFF if not found.
+      Prior to calling SearchEnv, assure that
+        EPtr is not nil,
+        Search is not empty
+    }
+  var
+    SLen : Byte absolute Search;
+    EOfs : Word;
+    MOfs : Word;
+    SOfs : Word;
+    Match : Boolean;
+  begin
+    {Force upper case search}
+    Search := StUpcase(Search);
+
+    {Assure search string ends in =}
+    if Search[SLen] <> '=' then begin
+      Inc(SLen);
+      Search[SLen] := '=';
+    end;
+
+    EOfs := 0;
+    while EPtr^[EOfs] <> #0 do begin
+      {At the start of a new environment element}
+      SOfs := 1;
+      MOfs := EOfs;
+      repeat
+        Match := (EPtr^[EOfs] = Search[SOfs]);
+        if Match then begin
+          Inc(EOfs);
+          Inc(SOfs);
+        end;
+      until not Match or (SOfs > SLen);
+
+      if Match then begin
+        {Found a match, return index of start of match}
+        SearchEnv := MOfs;
+        Exit;
+      end;
+
+      {Skip to end of this environment string}
+      SkipAsciiZ(EPtr, EOfs);
+
+      {Skip to start of next environment string}
+      Inc(EOfs);
+    end;
+
+    {No match}
+    SearchEnv := $FFFF;
+  end;
+
+  procedure GetAsciiZ(EPtr : EnvArrayPtr; var EOfs : Word; var EStr : string);
+    {-Collect AsciiZ string starting at EPtr^[EOfs]}
+  var
+    ELen : Byte absolute EStr;
+  begin
+    ELen := 0;
+    while (EPtr^[EOfs] <> #0) and (ELen < 255) do begin
+      Inc(ELen);
+      EStr[ELen] := EPtr^[EOfs];
+      Inc(EOfs);
+    end;
+  end;
+
+  function GetEnvStr(Env : EnvRec; Search : string) : string;
+    {-Return a string from the environment}
+  var
+    SLen : Byte absolute Search;
+    EPtr : EnvArrayPtr;
+    EOfs : Word;
+    EStr : string;
+    ELen : Byte absolute EStr;
+  begin
+    with Env do begin
+      ELen := 0;
+      if (EnvSeg <> 0) and (SLen <> 0) then begin
+        {Find the search string}
+        {$IFDEF VIRTUALPASCAL}
+        EPtr := Ptr( EnvSeg );
+        {$ELSE}
+        EPtr := Ptr(EnvSeg, 0);
+        {$ENDIF}
+        EOfs := SearchEnv(EPtr, Search);
+        if EOfs <> $FFFF then begin
+          {Skip over the search string}
+          Inc(EOfs, SLen);
+          {Build the result string}
+          GetAsciiZ(EPtr, EOfs, EStr);
+        end;
+      end;
+      GetEnvStr := EStr;
+    end;
+  end;
+
+  function SetEnvStr(Env : EnvRec; Search, Value : string) : Boolean;
+    {-Set environment string, returning true if successful}
+  var
+    SLen : Byte absolute Search;
+    VLen : Byte absolute Value;
+    EPtr : EnvArrayPtr;
+    ENext : Word;
+    EOfs : Word;
+    MOfs : Word;
+    OldLen : Word;
+    NewLen : Word;
+    NulLen : Word;
+  begin
+    with Env do begin
+      SetEnvStr := False;
+      if (EnvSeg = 0) or (SLen = 0) then
+        Exit;
+      {$IFDEF VIRTUALPASCAL}
+      EPtr := Ptr( EnvSeg );
+      {$ELSE}
+      EPtr := Ptr(EnvSeg, 0);
+      {$ENDIF}
+
+      {Find the search string}
+      EOfs := SearchEnv(EPtr, Search);
+
+      {Get the index of the next available environment location}
+      ENext := EnvNext(EPtr);
+
+      {Get total length of new environment string}
+      NewLen := SLen+VLen;
+
+      if EOfs <> $FFFF then begin
+        {Search string exists}
+        MOfs := EOfs+SLen;
+        {Scan to end of string}
+        SkipAsciiZ(EPtr, MOfs);
+        OldLen := MOfs-EOfs;
+        {No extra nulls to add}
+        NulLen := 0;
+      end else begin
+        OldLen := 0;
+        {One extra null to add}
+        NulLen := 1;
+      end;
+
+      if VLen <> 0 then
+        {Not a pure deletion}
+        if ENext+NewLen+NulLen >= EnvLen+OldLen then
+          {New string won't fit}
+          Exit;
+
+      if OldLen <> 0 then begin
+        {Overwrite previous environment string}
+        Move(EPtr^[MOfs+1], EPtr^[EOfs], ENext-MOfs-1);
+        {More space free now}
+        Dec(ENext, OldLen+1);
+      end;
+
+      {Append new string}
+      if VLen <> 0 then begin
+        Move(Search[1], EPtr^[ENext], SLen);
+        Inc(ENext, SLen);
+        Move(Value[1], EPtr^[ENext], VLen);
+        Inc(ENext, VLen);
+      end;
+
+      {Clear out the rest of the environment}
+      FillChar(EPtr^[ENext], EnvLen-ENext, 0);
+
+      SetEnvStr := True;
+    end;
+  end;
+
+  procedure DumpEnv(Env : EnvRec);
+    {-Dump the environment to the screen}
+  var
+    EOfs : Word;
+    EPtr : EnvArrayPtr;
+  begin
+    with Env do begin
+      if EnvSeg = 0 then
+        Exit;
+      {$IFDEF VIRTUALPASCAL}
+      EPtr := Ptr( EnvSeg );
+      {$ELSE}
+      EPtr := Ptr(EnvSeg, 0);
+      {$ENDIF}
+      EOfs := 0;
+      WriteLn;
+      while EPtr^[EOfs] <> #0 do begin
+        while EPtr^[EOfs] <> #0 do begin
+          Write(EPtr^[EOfs]);
+          Inc(EOfs);
+        end;
+        WriteLn;
+        Inc(EOfs);
+      end;
+      WriteLn('Bytes free: ', EnvFree(Env));
+    end;
+  end;
+
+  function GetProgramStr(Env : EnvRec) : string;
+    {-Return the name of the program that owns Env, '' if DOS < 3.0 or unknown}
+  var
+    EOfs : Word;
+    EPtr : EnvArrayPtr;
+    PStr : string;
+  begin
+    GetProgramStr := '';
+    {$IFNDEF VIRTUALPASCAL}
+    if DosVersion < $0300 then
+      Exit;
+    if Env.EnvSeg = 0 then
+      Exit;
+    {Find the end of the current environment}
+    EPtr := Ptr(Env.EnvSeg, 0);
+    EOfs := EnvNext(EPtr);
+    if Mem[Env.EnvSeg:EOfs+1] = 1 then begin {!!.02}
+      {Skip to start of path name}
+      Inc(EOfs, 3);
+      {Collect the path name}
+      GetAsciiZ(EPtr, EOfs, PStr);
+      GetProgramStr := PStr;
+    end;
+    {$ENDIF}
+  end;
+
+  function SetProgramStr(Env : EnvRec; Path : string) : Boolean;
+    {-Add a program name to the end of an environment if sufficient space}
+  var
+    PLen : Byte absolute Path;
+    EOfs : Word;
+    Numb : Word;
+    EPtr : EnvArrayPtr;
+  begin
+    SetProgramStr := False;
+    {$IFDEF VIRTUALPASCAL}
+    Exit;
+    {$ELSE}
+    with Env do begin
+      if EnvSeg = 0 then
+        Exit;
+      {Find the end of the current environment}
+      EPtr := Ptr(EnvSeg, 0);
+      EOfs := EnvNext(EPtr);
+      {Assure space for path}
+      if EnvLen < PLen+EOfs+4 then
+        Exit;
+      {Put in the count field}
+      Inc(EOfs);
+      Numb := 1;
+      Move(Numb, EPtr^[EOfs], 2);
+      {Skip to start of path name}
+      Inc(EOfs, 2);
+      {Move the path into place}
+      Path := StUpcase(Path);
+      Move(Path[1], EPtr^[EOfs], PLen);
+      {Null terminate}
+      Inc(EOfs, PLen);
+      EPtr^[EOfs] := #0;
+      SetProgramStr := True;
+    end;
+    {$ENDIF}
+  end;
+
+  function ShellWithPrompt(Prompt : string; EDP : ExecDosProc) : Integer;
+    {-Shell to DOS with a new prompt}
+  const
+    PromptStr : string[6] = 'PROMPT';
+  var
+  {$IFDEF VIRTUALPASCAL}
+    PathZ:     array [0..SizeOf(PathStr)-1] of Char;
+  {$ENDIF}
+    PLen : Byte absolute Prompt;
+    NSize : Word;
+    Status : Integer;
+    CE : EnvRec;
+    NE : EnvRec;
+    OldP : string;
+    OldPLen : Byte absolute OldP;
+  begin
+    {Point to current environment}
+    CurrentEnv(CE);
+    if CE.EnvSeg = 0 then begin
+      {Error getting environment}
+      ShellWithPrompt := -5;
+      Exit;
+    end;
+
+    {Compute size of new environment}
+    OldP := Dos.GetEnv(PromptStr);
+    NSize := CE.EnvLen;
+    if OldPLen < PLen then
+      Inc(NSize, PLen-OldPLen+1);
+
+    {Allocate and initialize a new environment}
+    NewEnv(NE, NSize);
+    if NE.EnvSeg = 0 then begin
+      {Insufficient memory for new environment}
+      ShellWithPrompt := -6;
+      Exit;
+    end;
+    CopyEnv(CE, NE);
+
+    {Get the program name from the current environment}
+    OldP := ParamStr(0);
+
+    {Set the new prompt string}
+    if not SetEnvStr(NE, PromptStr, Prompt) then begin
+      {Program error, should have enough space}
+      ShellWithPrompt := -7;
+      Exit;
+    end;
+
+    {$IFDEF VIRTUALPASCAL}
+    StrPCopy( PathZ, GetEnv('COMSPEC') );
+    SysExecute(PathZ, nil, NE.EnvPtr, False, nil, -1, -1, -1);
+    {$ELSE}
+    {Transfer program name to new environment if possible}
+    if not SetProgramStr(NE, OldP) then
+      ;
+
+    {Point to new environment}
+    SetCurrentEnv(NE);
+
+    {Shell to DOS with new prompt in place}
+    Status := ExecDos('', True, EDP);
+
+    {Restore previous environment}
+    SetCurrentEnv(CE);
+    {$ENDIF}
+
+    {Release the heap space}
+    if Status >= 0 then
+      DisposeEnv(NE);
+
+    {Return exec status}
+    ShellWithPrompt := Status;
+  end;
+

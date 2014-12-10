@@ -1,0 +1,828 @@
+{*********************************************************}
+{*                   OPMEMO.IN1 1.30                     *}
+{*     Copyright (c) TurboPower Software 1988, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {$IFDEF UseMouse}
+  function Memo.meProcessMouseCommand(Cmd : Word) : Boolean; {!!.03}
+    {-Process ccMouseSel command. Returns True to return control to user.}
+  var
+    L : LongInt;
+    FramePos : FramePosType;
+    HotCode : Byte;
+    Dragging : Boolean; {!!.03}
+
+    procedure MouseSelect;
+      {-Move cursor to position of mouse}
+    var
+      CurRow, TargetLine : Integer;
+      TargetRow, TargetCol, I : Integer;
+    begin
+      {convert mouse X and Y coordinates to absolute row and col}
+      TargetRow := MouseKeyWordY+MouseYLo;
+      TargetCol := MouseKeyWordX+MouseXLo;
+
+      {calculate current screen row}
+      CurRow := Word(wYL)+(meCurLine-meLineAtTop);
+
+      {calculate target line number}
+      TargetLine := meCurLine+(TargetRow-CurRow);
+      I := TargetCol-Pred(wXL)+meColDelta;
+
+      if (TargetLine <= meTotalLines) and (I <= 255) then begin
+        {move cursor to desired location}
+        meCurCol := I;
+        meGotoLine(TargetLine, True);
+      end;
+    end;
+
+    procedure AdjustCursor;
+      {-Adjust the cursor}
+    begin
+      meForceRedraw := True;
+      if meCurCol > meWinWidth+meColDelta then
+        meCurCol := meWinWidth+meColDelta
+      else if meCurCol <= meColDelta then
+        meCurCol := Succ(meColDelta);
+    end;
+
+  begin
+    meProcessMouseCommand := False;
+
+    {determine position of mouse}
+    L := cwMouseResults(Cmd, FramePos, HotCode);    {!!.03} {!!.13}
+
+    {Should mouse event be ignored?}                             {!!.03}
+    if cwIgnoreMouseEvent(Dragging, Cmd, FramePos, HotCode) then {!!.03}
+      Exit;                                                      {!!.03}
+
+    case HotCode of
+      hsNone :           {not a hot spot}
+        case FramePos of
+          frInsideActive :       {inside window}
+            MouseSelect;
+
+          frTL..frRR,            {on the frame}
+          frInsideFrame,         {inside window frame but not in window boundaries}
+          frOutsideFrame :       {outside window frame}
+            meProcessMouseCommand := LongFlagIsSet(wFlags, wAllMouseEvents);
+        end;
+
+      {$IFDEF UseScrollBars}
+      hsDecV :            {the decrement fixture of a vertical scroll bar}
+        if LongFlagIsSet(meOptions, meMousePage) then
+          mePageUp
+        else if (meLineAtTop = 1) and (meCurLine > 1) then
+          meGotoLine(meCurLine-1, True)
+        else
+          meScrollUp;
+      hsDecH :           {the decrement fixture of a horizontal scroll bar}
+        if meColDelta > 0 then begin
+          {scroll window left by one column}
+          Dec(meColDelta);
+          AdjustCursor;
+        end;
+      hsIncV :           {the increment fixture of a vertical scroll bar}
+        if LongFlagIsSet(meOptions, meMousePage) then
+          mePageDown
+        else
+          meScrollDown;
+      hsIncH :           {the increment fixture of a horizontal scroll bar}
+        if meColDelta < (meMaxLength+1-meWinWidth) then begin
+          {scroll window right by one column}
+          Inc(meColDelta);
+          AdjustCursor;
+        end;
+      hsBar :            {the slider portion of a scroll bar}
+        case FramePos of
+          frLL, frRR :   {vertical scroll bar}
+            begin
+              L := TweakSlider(FramePos, MouseKeyWordY+MouseYLo, L, 1);
+              if L <= 1 then
+                {goto top of file}
+                meTopOfFile
+              else begin
+                if L >= meTotalLines then
+                  {goto end of file}
+                  meEndOfFile
+                else
+                  {goto specified line}
+                  meGotoLine(L, True);
+              end;
+            end;
+          else begin     {horizontal scroll bar}
+            meColDelta := TweakSlider(FramePos, MouseKeyWordX+MouseXLo, L, 1);
+            AdjustCursor;
+          end;
+        end;
+      {$ENDIF}
+
+      hsSpot,            {a single character hot spot}
+      hsRegion0..255 :   {a user-defined region relative to a frame}
+        meProcessMouseCommand := (Cmd <> ccMouseAuto); {!!.03}
+    end;
+
+  end;
+  {$ENDIF}
+
+  function Memo.meWordWrapPrim : Byte;
+    {-Calculate place to wrap current line}
+  var
+    StLen : Byte absolute meSt;
+    EOS, BOS : Word;
+  begin
+    if StLen <= meMargin then begin
+      meWordWrapPrim := 0;
+      Exit;
+    end;
+
+    {find the end of the word at the margin, if any}
+    EOS := meMargin;
+    while (EOS <= StLen) and (meSt[EOS] <> ' ') do
+      Inc(EOS);
+    if EOS > StLen then
+      EOS := StLen;
+
+    {trim trailing blanks}
+    while (meSt[EOS] = ' ') and (EOS > 0) do
+      Dec(EOS);
+
+    if EOS > meMargin then begin
+      {look for the space before the current word}
+      while (EOS > 0) and (meSt[EOS] <> ' ') do
+        Dec(EOS);
+
+      {if EOS = 0 then we can't wrap it}
+      if EOS = 0 then
+        EOS := meMargin
+      else
+        {trim trailing blanks}
+        while (meSt[EOS] = ' ') and (EOS > 0) do
+          Dec(EOS);
+    end;
+
+    {find the start of the next word in the line}
+    BOS := EOS+1;
+    while (BOS <= StLen) and (meSt[BOS] = ' ') do
+      Inc(BOS);
+
+    {is break point beyond end of string?}
+    if BOS > StLen then
+      meWordWrapPrim := 0
+    else
+      meWordWrapPrim := BOS;
+  end;
+
+  procedure Memo.meWrapLine(Trim : Boolean);
+    {-Word wrap the current line}
+  var
+    I, J, K : Integer;
+    IndentLevel : Byte;
+    BreakPt : Byte;
+    StLen : Byte absolute meSt;
+  begin
+    {save the line}
+    meSaveCurrentLine(True);
+
+    {find place to break the line}
+    BreakPt := meWordWrapPrim;
+    if BreakPt = 0 then
+      {no need to break}
+      Exit;
+
+    {get the indent level for the new line}
+    if LongFlagIsSet(meOptions, meIndent) then
+      IndentLevel := meGetIndent(meSt)
+    else
+      IndentLevel := 0;
+
+    {try to break the line}
+    meInsLinePrim(meCurLine, BreakPt);
+    if not meOK then
+      Exit;
+
+    {go to the next line}
+    Inc(meCurLine);
+    meLoadLine(meCurLine, Trim);
+
+    {indent the line}
+    if (IndentLevel <> 0) and meInsertOK(IndentLevel) and (BreakPt > IndentLevel+1) then begin
+      Insert(CharStr(' ', IndentLevel), meSt, 1);
+      meCharsInserted(meCurLine, 1, IndentLevel);
+      meSaveCurrentLine(True);
+    end
+    else
+      IndentLevel := 0;
+
+    {fix the cursor}
+    if meCurCol >= BreakPt then
+      Dec(meCurCol, BreakPt-1)
+    else
+      meCurCol := 1;
+    Inc(meCurCol, IndentLevel);
+    meOldCol := meCurCol;
+    meColDelta := 0;
+
+    {force screen to be redrawn}
+    meForceRedraw := True;
+  end;
+
+  procedure Memo.meReformatParagraph;
+    {-Reformat a paragraph starting at the current line}
+  label                  {!!.03}
+    ExitLoop1,           {!!.11}
+    ExitLoop2,           {!!.11}
+    SkipLine;            {!!.03}
+  var
+    SaveTotal : Integer; {!!.03}
+    SaveStLen : Byte;    {!!.03}
+    SaveMax : Integer;
+    Spaces : Word;
+    StLen : Byte absolute meSt;
+    NextLine : Boolean;
+    SaveFormatting : Boolean;
+
+    function NeedToCombine(var Spaces : Word; var NextLine : Boolean) : Boolean;
+      {-See if we need to combine two lines} {!!.13} {*many* changes}
+    var
+      PC, PC2 : ^Char;
+      I, IndentLevel : Word;
+    begin
+      NeedToCombine := False;
+      NextLine := False;
+      if meCurLine = meTotalLines then
+        Exit;
+
+      {point to beginning of next line}
+      PC := @meBufPtr^[meFindLineIndex(meCurLine+1)];
+
+      {get indent level for current and next lines}
+      IndentLevel := meGetIndent(meSt);
+      I := 0;
+      PC2 := PC;
+      while PC2^ = ' ' do begin
+        Inc(I);
+        Inc(OS(PC2).O);
+      end;
+      Spaces := I;
+
+      {stop if next line is empty}
+      if (PC^ = ^M) or (PC^ = ^Z) then
+        Exit
+      {if line is all spaces, treat it as empty}
+      else if (PC2^ = ^M) or (PC2^ = ^Z) then
+        Exit
+      {is next line indented?}
+      else if (I > 0) then begin
+        {stop if indent marks a new paragraph}
+        if LongFlagIsSet(meOptions, meIndentIsPara) then
+          Exit
+        {otherwise, combine}
+        else begin
+          NextLine := True;
+          NeedToCombine := True;
+        end
+      end
+      else begin
+        NextLine := True;
+
+        {combine if current line indented and autoindent is on}
+        if (IndentLevel > 0) and LongFlagIsSet(meOptions, meIndent) then
+          NeedToCombine := True
+        else begin
+          {combine if first word on next line will fit on this one}
+          I := 0;
+          while (PC^ > ' ') do begin
+            Inc(I);
+            Inc(OS(PC).O);
+          end;
+
+          NeedToCombine := (I+StLen <= meMargin);
+        end;
+      end;
+    end;
+
+    procedure CallStatusRoutine;
+      {-Call the status routine}
+    begin
+      if SaveFormatting and (meCurLine and $0F = 0) then
+        meShowStatus;            {!!.20}
+    end;
+
+    procedure WrapLoop;
+      {-Wrap as many times as necessary}
+    begin
+      while (StLen > meMargin) and meOK do begin
+        {call status routine if this is a global reformat}
+        CallStatusRoutine;
+
+        {wrap and move down}
+        meWrapLine(False);
+      end;
+    end;
+
+  begin
+    {get state of formatting flag}
+    SaveFormatting := LongFlagIsSet(meOptions, meReformatting);
+
+    {skip to next line if current line is empty}
+    if StLen = 0 then begin
+      {call status routine if this is a global reformat}
+      CallStatusRoutine;
+
+      meGotoLine(meCurLine+1, True);
+      Exit;
+    end;
+
+    {turn off screen updates while reformatting}
+    meSetOption(meReformatting, True);
+
+    {ignore line limit when reformatting}
+    SaveMax := meMaxLines;
+    meMaxLines := MaxInt;
+
+    while (meCurLine < meTotalLines) do begin              {!!.11}
+      {wrap and move down}
+      WrapLoop;
+      if not meOK then                                     {!!.11}
+        goto ExitLoop2;                                    {!!.11}
+
+      if NeedToCombine(Spaces, NextLine) then begin        {!!.11}
+        if Spaces = 0 then begin
+          {next line has no spaces at beginning--add one here before joining}
+          Inc(StLen);
+          meSt[StLen] := ' ';
+          meSaveCurrentLine(False);
+        end
+        else if Spaces > 1 then begin
+          {delete extra spaces at beginning of next line}
+          Dec(Spaces);
+          meMakeHole(meKnownOfs, -Spaces);
+          meCharsInserted(meCurLine+1, 1, -Spaces);
+        end;
+
+        {join the lines and reload}
+        SaveTotal := meTotalLines;                                 {!!.03}
+        SaveStLen := StLen;                                        {!!.03}
+        meJoinLinePrim(meCurLine+1);
+        meLoadLine(meCurLine, False);
+        meTrimSpaces;
+        if (meTotalLines = SaveTotal) and (StLen = SaveStLen) then {!!.03}
+          if NextLine then                                         {!!.03}
+            goto SkipLine                                          {!!.03}
+          else                                                     {!!.03}
+            meOK := False;                                         {!!.03}
+      end
+      else if NextLine then begin
+SkipLine:                                                          {!!.03}
+        {call status routine if this is a global reformat}
+        CallStatusRoutine;
+
+        {move to the beginning of the next line}
+        meCurCol := 1;
+        meGotoLine(meCurLine+1, False);
+      end
+      else
+        {terminate the loop}
+        goto ExitLoop1;                                {!!.11}
+    end;
+
+ExitLoop1:                                             {!!.11}
+    meOK := True;
+    WrapLoop;
+
+    {call status routine if this is a global reformat}
+    CallStatusRoutine;
+
+    if meCurLine < meTotalLines then begin
+      meGotoLine(meCurLine+1, True);
+      meTrimSpaces;
+      if meSt <> meOldSt then
+        meIsModified(True);
+    end;
+
+ExitLoop2:                                             {!!.11}
+    if meCurLine < meTotalLines then                   {!!.12}
+      meCurCol := 1                                    {!!.12}
+    else                                               {!!.12}
+      meCurCol := Succ(StLen);
+    meOldCol := meCurCol;
+    meColDelta := 0;
+    meForceRedraw := True;
+
+    meMaxLines := SaveMax;
+
+    meSetOption(meReformatting, SaveFormatting);
+  end;
+
+  procedure Memo.meReformatGlobally;
+    {-Reformat entire file}
+  var
+    StLen : Byte absolute meSt;
+  begin
+    {skip all this if the file is empty}
+    if meTotalBytes = 1 then
+      Exit;
+
+    {turn off screen updates while reformatting}
+    meSetOption(meReformatting, True);
+
+    {go to top of file}
+    meTopOfFile;
+
+    {while not at last line, reformat paragraphs}
+    while (meCurLine < meTotalLines) and meOK do  {!!.11}
+      meReformatParagraph;
+
+    {move cursor to end of line}
+    meCurCol := Succ(StLen);
+    meOldCol := meCurCol;
+
+    {turn on screen updates}
+    meSetOption(meReformatting, False);
+
+    {redraw the screen}
+    meRedraw;
+  end;
+
+  constructor MemoFile.Init(X1, Y1, X2, Y2 : Byte;
+                            BufferSize : Word;
+                            BufPtr : Pointer);
+    {-Create a memo window for editing text files}
+  begin
+    {initialize fields unique to MemoFile}
+    mfFileName := '';
+
+    {initialize using default window options}
+    if not Memo.Init(X1, Y1, X2, Y2, BufferSize, BufPtr) then
+      Fail;
+  end;
+
+  constructor MemoFile.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                  var Colors : ColorSet;
+                                  Options : LongInt;
+                                  BufferSize : Word;
+                                  BufPtr : Pointer);
+    {-Create a memo window for editing text files}
+  begin
+    {initialize fields unique to MemoFile}
+    mfFileName := '';
+
+    {do the rest of the intialization}
+    if not Memo.InitCustom(X1, Y1, X2, Y2, Colors, Options, BufferSize, BufPtr) then
+      Fail;
+  end;
+
+  constructor MemoFile.InitAndAlloc(X1, Y1, X2, Y2 : Byte; BufferSize : Word);
+    {-Create a memo window for editing text files}
+  begin
+    {initialize using default window options}
+    if not MemoFile.InitCustomAndAlloc(X1, Y1, X2, Y2, DefaultColorSet, DefWindowOptions, BufferSize) then
+      Fail;
+  end;
+
+  constructor MemoFile.InitCustomAndAlloc(X1, Y1, X2, Y2 : Byte;
+                                          var Colors : ColorSet;
+                                          Options : LongInt;
+                                          BufferSize : Word);
+    {-Create a memo window for editing text files}
+  var               {!!.12}
+    P : MemoBufPtr; {!!.12}
+  begin
+    {initialize fields unique to MemoFile}
+    mfFileName := '';
+
+    {try to allocate the edit buffer}
+    if not GetMemCheck(P, BufferSize) then begin  {!!.12}
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+
+    {initialize the buffer}
+    P^[1] := ^Z;            {!!.12}
+
+    {do the rest of the intialization}
+    if not Memo.InitCustom(X1, Y1, X2, Y2, Colors, Options, BufferSize, P) then begin {!!.12}
+      FreeMemCheck(P, BufferSize); {!!.12}
+      Fail;
+    end;
+
+    {indicate that we're responsible for deallocating the buffer}
+    meSetOption(meDeallocate, True);
+  end;
+
+
+
+  procedure MemoFile.mfReadFilePrim(FName : string; var FSize : LongInt;
+                                    ErrorPrefix : Word);
+    {-Read a file into Buffer, returning a status code}
+  var
+    I : Word;
+    BytesToRead : Word;
+    MaxSize : LongInt;
+    F : file;
+  begin
+    if cwGetLastError <> 0 then
+      Exit;
+
+    I := 0;
+    BytesToRead := 0;
+    MaxSize := 0;
+
+    {try to open file}
+    Assign(F, FName);
+    Reset(F, 1);
+    I := IoResult;
+    if I = ecFileNotFound then
+      {not found--a new file}
+      FSize := 0
+    else begin
+      if I = ecPathNotFound then
+        GotError(ErrorPrefix+I, emPathNotFound)
+      else if I <> 0 then
+        GotError(ErrorPrefix+I, emOpenError);
+      if I <> 0 then
+        Exit;
+
+      {check the file size}
+      FSize := FileSize(F);
+    end;
+
+    MaxSize := LongInt(meBufSize)-Succ(SafetyMargin);
+    if (FSize <= MaxSize) then
+      BytesToRead := FSize
+    else if LongFlagIsSet(meOptions, meAllowTrunc) then
+      BytesToRead := MaxSize
+    else begin
+      {file too big}
+      GotError(ErrorPrefix+ecFileTooLarge, emFileTooLarge);
+      Close(F);
+      I := IoResult;
+      Exit;
+    end;
+
+    {read the file into the buffer}
+    if FSize = 0 then
+      I := 0
+    else begin
+      BlockRead(F, meBufPtr^, BytesToRead);
+      I := IoResult;
+    end;
+
+    if (I <> 0) then begin
+      {a read error at this point is fatal--buffer has been overwritten}
+      GotError(epFatal+I, emReadError);
+      Close(F);
+      I := IoResult;
+      Exit;
+    end
+    else begin
+      Close(F);
+      I := IoResult;
+      if (FSize > MaxSize) then
+        GotError(epWarning+ecFileTruncated, emFileTruncated)
+      else if (I <> 0) and (FSize <> 0) then
+        {a close error is never fatal}
+        GotError(epNonFatal+I, emCloseError);
+    end;
+
+    if cwGetLastError = 0 then begin
+      {save the filename}
+      mfFileName := FName;
+
+      {make sure there's a ^Z at the end of the buffer}
+      if (BytesToRead > 0) then begin                                   {!!.20}
+        if (meBufPtr^[BytesToRead] <> ^Z) then                          {!!.20}
+          meBufPtr^[BytesToRead+1] := ^Z;                               {!!.20}
+      end                                                               {!!.20}
+      else                                                              {!!.20}
+        meBufPtr^[1] := ^Z;                                             {!!.20}
+
+      meInitBufferState(meBufPtr^);
+      meSetOption(meNewFile, True);
+    end;
+  end;
+
+  procedure MemoFile.ReadFile(FName : string; var FSize : LongInt);
+    {-Read a file into Buffer, returning a status code}
+  begin
+    mfReadFilePrim(FName, FSize, epFatal);
+  end;
+
+  procedure MemoFile.SaveFile;
+    {-Save the current file}
+  var
+    F : file;
+    I : Word;
+
+    function Exist(FName : string; var F : file) : Boolean;
+      {-Return true if file exists}
+    var
+      I : Word;
+    begin
+      Assign(F, FName);
+      Reset(F);
+      Exist := (IoResult = 0);
+      Close(F);
+      I := IoResult;
+    end;
+
+    procedure MakeBakFile(NewName : string);
+      {-Make a backup file}
+    var
+      NF, BF : file;
+      BakName : string;
+    begin
+      if Exist(NewName, NF) then begin
+        BakName := ForceExtension(NewName, 'BAK');
+        if NewName = BakName then                  {!!.03}
+          Exit;                                    {!!.03}
+        if Exist(BakName, BF) then
+          System.Erase(BF);
+        Rename(NF, BakName);
+      end;
+    end;
+
+  begin
+    if mfFileName = '' then
+      Exit;
+
+    {make a BAK file?}
+    if LongFlagIsSet(meOptions, meMakeBackups) then begin {!!.03}
+      MakeBakFile(mfFileName);
+      I := IoResult;                                      {!!.03}
+      if I <> 0 then begin                                {!!.03}
+        GotError(epNonFatal+I, emOpenError);              {!!.03}
+        Exit;                                             {!!.03}
+      end;                                                {!!.03}
+    end;                                                  {!!.03}
+
+    {open the file}
+    Assign(F, mfFileName);
+    Rewrite(F, 1);
+    I := IoResult;
+    if I <> 0 then begin
+      GotError(epNonFatal+I, emOpenError);
+      Close(F);
+      I := IoResult;
+      Exit;
+    end;
+
+    {write the buffer to disk}
+    I := meTotalBytes;
+    if LongFlagIsSet(meOptions, meNoCtrlZ) then
+      Dec(I);
+    BlockWrite(F, meBufPtr^, I);
+    I := IoResult;
+    if (I <> 0) then begin
+      GotError(epNonFatal+I, emWriteError);
+      Close(F);
+      I := IoResult;
+      Exit;
+    end;
+
+    {close the file}
+    Close(F);
+    I := IoResult;
+    if I <> 0 then
+      GotError(epNonFatal+I, emCloseError)
+    else begin
+      {reset modified flag}
+      meSetOption(meModified, False);
+      meOldModified := False;
+    end;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor Memo.Load(var S : IdStream);
+    {-Load a memo from a stream}
+  begin
+    {initialize fields not stored to 0}
+    meBufPtr := nil;
+    FillChar(meTotalBytes,
+      Ofs(meSaveTotalLines)-Ofs(meTotalBytes)+SizeOf(meSaveTotalLines), 0);
+
+    {Load the underlying command window}
+    if not CommandWindow.Load(S) then
+      Fail;
+
+    {set the command processor if necessary}
+    if cwCmdPtr = nil then
+      SetCommandProcessor(MemoCommands);
+
+    {Read data specific to the memo}
+    meBufPtr := S.ReadPointer;
+    S.ReadRange(meBufSize, meStatusProc);
+    @meStatusProc := S.ReadPointer;
+
+    {check for read errors}
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {allocate buffer if necessary}
+    if meBufPtr = nil then
+      if not LongFlagIsSet(meOptions, meDeallocate) then begin
+        InitStatus := epFatal+ecIdNotRegistered;
+        Done;
+        Fail;
+      end
+      else if GetMemCheck(meBufPtr, meBufSize) then
+        meBufPtr^[1] := ^Z
+      else begin
+        InitStatus := epFatal+ecOutOfMemory;
+        Done;
+        Fail;
+      end;
+
+    {initialize buffer state}
+    meInitBufferState(meBufPtr^);
+  end;
+
+  procedure Memo.Store(var S : IdStream);
+    {-Store a memo in a stream}
+  begin
+    {Store the underlying command window}
+    CommandWindow.Store(S);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Write data specific to the memo}
+    if LongFlagIsSet(meOptions, meDeallocate) then  {!!.10}
+      S.WriteUserPointer(meBufPtr, ptNil)
+    else                                            {!!.10}
+      S.WritePointer(meBufPtr);                     {!!.10}
+    S.WriteRange(meBufSize, meStatusProc);
+    S.WriteUserPointer(@meStatusProc, ptNil);
+  end;
+
+  procedure MemoStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing memos}
+  begin
+    {register the command window}
+    CommandWindowStream(SPtr);
+
+    {register the memo}
+    with SPtr^ do begin
+      RegisterType(otMemo, veMemo, TypeOf(Memo), @Memo.Store, @Memo.Load);
+      RegisterPointer(ptMemoCommands, @MemoCommands);
+    end;
+  end;
+
+  constructor MemoFile.Load(var S : IdStream);
+    {-Load a memofile from a stream}
+  var
+    FName : String;
+    FSize : LongInt;
+  begin
+    mfFileName := '';
+
+    {Load the underlying memo}
+    if not Memo.Load(S) then
+      Fail;
+
+    {read in the old file if desired}
+    FName := S.ReadString;
+    if FName <> '' then begin
+      ReadFile(FName, FSize);
+      if cwGetLastError <> 0 then begin
+        InitStatus := cwGetLastError;
+        Done;
+        Fail;
+      end;
+    end;
+  end;
+
+  procedure MemoFile.Store(var S : IdStream);
+    {-Store a memofile in a stream}
+  var
+    FName : String;
+  begin
+    {Store the memo}
+    Memo.Store(S);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {save the current filename if desired}
+    if LongFlagIsSet(meOptions, meStreamReload) then
+      FName := mfFileName
+    else
+      FName := '';
+    S.WriteString(FName);
+  end;
+
+  procedure MemoFileStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing memofiles}
+  begin
+    {register the memo}
+    MemoStream(SPtr);
+
+    {register the memofile}
+    SPtr^.RegisterType(otMemoFile, veMemoFile, TypeOf(MemoFile),
+                       @MemoFile.Store, @MemoFile.Load);
+  end;
+
+{$ENDIF}

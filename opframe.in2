@@ -1,0 +1,1460 @@
+{*********************************************************}
+{*                   OPFRAME.IN2 1.30                    *}
+{*     Copyright (c) TurboPower Software 1987, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+{------------------- Frame object type ------------------}
+
+  function Frame.IsFramed : Boolean;
+    {-Return True if any of the FrameChars are not NoFrameChar}
+  var
+    FP : FramePosType;
+  begin
+    for FP := frTL to frRR do
+      if frChars[FP] <> NoFrameChar then begin
+         IsFramed := True;
+         Exit;
+      end;
+    IsFramed := False;
+  end;
+
+  procedure Frame.Coordinates(var X1, Y1, X2, Y2 : Byte);
+    {-Return the coordinates of the frame}
+  begin
+    X1 := frXL;
+    Y1 := frYL;
+    X2 := frXH;
+    Y2 := frYH;
+  end;
+
+  procedure Frame.WithinFrameCoords(var X1, Y1, X2, Y2 : Byte);
+    {-Return the coordinates of region within, not including, the frame}
+  begin
+    {Compute largest rectangle that doesn't overwrite frame characters}
+    X1 := frXL;
+    if frChars[frLL] <> NoFrameChar then
+      inc(X1);
+    Y1 := frYL;
+    if frChars[frTT] <> NoFrameChar then
+      inc(Y1);
+    X2 := frXH;
+    if frChars[frRR] <> NoFrameChar then
+      dec(X2);
+    Y2 := frYH;
+    if frChars[frBB] <> NoFrameChar then
+      dec(Y2);
+  end;
+
+  constructor Frame.frZeroOut;
+    {-Clear out the dynamic data fields of a frame}
+  begin
+    {Init header, shadow, and hotspot lists to empty. Can't fail}
+    frHeaders.Init;
+
+    {$IFDEF UseShadows}
+    frShadows.Init;
+    {$ENDIF}
+
+    {$IFDEF UseHotSpots}
+    frHotSpots.Init;
+    {$ENDIF}
+
+    {$IFDEF UseScrollBars}
+    {Init the scrollbar array -- no scroll bars}
+    frBars[frTT] := nil;
+    frBars[frBB] := nil;
+    frBars[frLL] := nil;
+    frBars[frRR] := nil;
+    {$ENDIF}
+
+    frRes := 0;
+  end;
+
+  constructor Frame.Init(X1, Y1, X2, Y2 : Byte;
+                         FA : FrameArray;
+                         var Colors : ColorSet);
+    {-Initialize frame coordinates and all fields}
+  var
+    MinW : Byte;
+    MinH : Byte;
+  begin
+    Frame.frZeroOut;
+    if not AbstractFrame.Init(X1, Y1, X2, Y2) then
+      Fail;
+
+    {Store frame colors}
+    with Colors do begin
+      frFrameColor := FrameColor;
+      frFrameMono := FrameMono;
+      frHeaderColor := HeaderColor;
+      frHeaderMono := HeaderMono;
+      {$IFDEF UseShadows}
+      frShadowColor := ShadowColor;
+      frShadowMono := ShadowMono;
+      {$ENDIF}
+    end;
+
+    {Store frame characters}
+    frChars := FA;
+    frFramed := IsFramed;
+
+    {Store frame size limits}
+    {$IFDEF UseAdjustableWindows}
+    if frFramed then begin
+      MinW := 2;
+      MinH := 2;
+    end else begin
+      MinW := 1;
+      MinH := 1;
+    end;
+    SetSizeLimits(MinW, MinH, ScreenWidth, ScreenHeight);
+    {$ENDIF}
+    SetClipLimits(1, 1, ScreenWidth, ScreenHeight);
+  end;
+
+  constructor Frame.frInitFrom(var F : Frame);
+    {-Initialize a frame from another one}
+  begin
+    Frame.frZeroOut;
+    if not Root.Init then
+      Fail;
+    Self := F;
+    Frame.frZeroOut;
+  end;
+
+  constructor Frame.fCopy(var F : Frame);
+    {-Initialize a frame from another, making a unique copy of all dynamic
+      structures}
+  var
+    He : HeaderPtr;
+    NewHe : HeaderPtr;
+    {$IFDEF UseShadows}
+    Sh : ShadowPtr;
+    {$ENDIF}
+    {$IFDEF UseHotSpots}
+    Hs : HotSpotPtr;
+    {$ENDIF}
+    Posn : FrameEdgeType;
+    Colors : ColorSet;
+  begin
+    {Make a direct copy, setting lists to nil}
+    if not Frame.frInitFrom(F) then
+      Fail;
+
+    {Make unique copies of any dynamically allocated fields}
+
+    {Headers}
+    He := HeaderPtr(F.frHeaders.Head);
+    while He <> nil do begin
+      with He^ do begin
+        New(NewHe, Init(heName^, heAttrColor, heAttrMono, heDX, heDY,
+                        heType, hePosn));
+        if NewHe = nil then begin
+          Done;
+          InitStatus := epFatal+ecOutOfMemory;
+          Fail;
+        end;
+        frHeaders.Append(NewHe);
+      end;
+      He := HeaderPtr(F.frHeaders.Next(He));
+    end;
+
+    {$IFDEF UseShadows}
+    {Shadows}
+    Sh := ShadowPtr(F.frShadows.Head);
+    while Sh <> nil do begin
+      with Sh^ do
+        AddCustomShadow(shChar, shPosn, shDX, shDY, shWidth, shHeight,
+                        shAttrColor, shAttrMono);
+      if frRes <> 0 then begin
+        Done;
+        InitStatus := frRes;
+        Fail;
+      end;
+      Sh := ShadowPtr(F.frShadows.Next(Sh));
+    end;
+    {$ENDIF}
+
+    {$IFDEF UseHotSpots}
+    {Hot spots}
+    Hs := HotSpotPtr(F.frHotSpots.Head);
+    while Hs <> nil do begin
+      with Hs^ do
+        if hnType = heCustom then
+          AddHotRegion(hnPosn, hnUser, hnDX, hnDY, hnWidth, hnHeight)
+        else
+          AddHotHeader(hnType, hnUser, hnWidth);
+      if frRes <> 0 then begin
+        Done;
+        InitStatus := frRes;
+        Fail;
+      end;
+      Hs := HotSpotPtr(F.frHotSpots.Next(Hs));
+    end;
+    {$ENDIF}
+
+    {$IFDEF UseScrollBars}
+    {Scroll bars}
+    for Posn := frTT to frRR do
+      if F.frBars[Posn] <> nil then begin
+        with F.frBars[Posn]^ do begin
+          with Colors do begin
+            SliderColor := sbSliColor;
+            SliderMono := sbSliMono;
+            ScrollBarColor := sbBarColor;
+            ScrollBarMono := sbBarMono;
+            HotSpotColor := sbArrowColor;
+            HotSpotMono := sbArrowMono;
+          end;
+          New(frBars[Posn],
+              Init(ByteFlagIsSet(sbFlags, sbVertical),
+                   sbFixPos, sbMinPos, sbMaxPos,
+                   sbMinUser, sbMaxUser,
+                   sbSliChar, sbBarChar, sbDecChar, sbIncChar,
+                   Colors));
+        end;
+        if frBars[Posn] = nil then begin
+          Done;
+          InitStatus := epFatal+ecOutOfMemory;
+          Fail;
+        end;
+      end;
+    {$ENDIF}
+  end;
+
+  destructor Frame.Done;
+    {-Destroy a frame}
+  var
+    Posn : FrameEdgeType;
+  begin
+    {Destroy header, shadow, and hot spot lists}
+    frHeaders.Done;
+
+    {$IFDEF UseShadows}
+    frShadows.Done;
+    {$ENDIF}
+
+    {$IFDEF UseHotSpots}
+    frHotSpots.Done;
+    {$ENDIF}
+
+    {$IFDEF UseScrollBars}
+    {Destroy scroll bars}
+    for Posn := frTT to frRR do
+      if frBars[Posn] <> nil then
+        Dispose(frBars[Posn]);
+    {$ENDIF}
+
+    AbstractFrame.Done;
+  end;
+
+  procedure Frame.SetFrameType(FA : FrameArray);
+    {-Change the frame type}
+  begin
+    frChars := FA;
+    frFramed := IsFramed;
+  end;
+
+  procedure Frame.SetFrameAttr(Color, Mono : Byte);
+    {-Set attributes for frame characters}
+  begin
+    frFrameColor := Color;
+    frFrameMono := MapMono(Color, Mono);
+  end;
+
+  procedure Frame.SetHeaderAttr(Color, Mono : Byte; ChangeAll : Boolean);
+    {-Set attributes for header characters}
+  var
+    HP : HeaderPtr;
+  begin
+    frHeaderColor := Color;
+    frHeaderMono := MapMono(Color, Mono);
+    if not ChangeAll then
+      Exit;
+    HP := HeaderPtr(frHeaders.Head);
+    while HP <> nil do
+      with HP^ do begin
+        if heType <> heSpan then begin {!!.22}
+          heAttrColor := frHeaderColor;
+          heAttrMono  := frHeaderMono;
+        end;                           {!!.22}
+        HP := HeaderPtr(dlNext);
+      end;
+  end;
+
+  procedure Frame.SetSpanAttr(Color, Mono : Byte); {!!.22}
+    {-Set attributes for all existing span headers}
+  var
+    HP : HeaderPtr;
+  begin
+    Mono := MapMono(Color, Mono);
+    HP := HeaderPtr(frHeaders.Head);
+    while HP <> nil do
+      with HP^ do begin
+        if heType = heSpan then begin
+          heAttrColor := Color;
+          heAttrMono  := Mono;
+        end;
+        HP := HeaderPtr(dlNext);
+      end;
+  end;
+
+  {$IFDEF UseShadows}
+  procedure Frame.SetShadowAttr(Color, Mono : Byte; ChangeAll : Boolean);
+    {-Set attributes for shadow characters}
+  var
+    SP : ShadowPtr;
+  begin
+    frShadowColor := Color;
+    frShadowMono := MapMono(Color, Mono);
+    if not ChangeAll then
+      Exit;
+    SP := ShadowPtr(frShadows.dlHead);
+    while SP <> nil do
+      with SP^ do begin
+        shAttrColor := frShadowColor;
+        shAttrMono  := frShadowMono;
+        SP := ShadowPtr(dlNext);
+      end;
+  end;
+  {$ENDIF}
+
+  procedure Frame.frComputeSpanHeader(var S : string;
+                                      FirstChar, SpanChar, LastChar : Char;
+                                      DPos : Integer;
+                                      Posn : FrameEdgeType;
+                                      var DX, DY : Integer);
+    {-Compute string and position for a span header}
+  begin
+    case Posn of
+      frLL, frRR : DY := 0;
+      frTT : DY := DPos;
+      frBB : DY := frYH-frYL+DPos;
+    end;
+    case Posn of
+      frLL, frRR :
+        begin
+          S := CharStr(SpanChar, frYH-frYL+1);
+          case Posn of
+            frLL : DX := DPos;
+            frRR : DX := frXH-frXL+DPos;
+          end;
+        end;
+      frTT, frBB :
+        begin
+          S := CharStr(SpanChar, frXH-frXL+1);
+          DX := 0;
+        end;
+    end;
+    if Length(S) > 2 then begin
+      S[1] := FirstChar;
+      S[Length(S)] := LastChar;
+    end;
+  end;
+
+  procedure Frame.AddCustomHeader(S : string;
+                                  Posn : FrameCornerType;
+                                  DX, DY : Integer;
+                                  AttrColor, AttrMono : Byte);
+    {-Add a custom header}
+  var
+    He : HeaderPtr;
+  begin
+    New(He, Init(S, AttrColor, MapMono(AttrColor, AttrMono),
+                 DX, DY, heCustom, Posn));
+    AddAnyHeader(He);
+  end;
+
+  procedure Frame.AddHeader(S : string; Posn : HeaderPosType);
+    {-Add a standard header}
+  begin
+    AddHeaderColor(S, Posn, frHeaderColor, frHeaderMono);
+  end;
+
+  procedure Frame.AddHeaderColor(S : string; Posn : HeaderPosType;
+                                 AttrColor, AttrMono : Byte);
+    {-Add a standard header with custom color}
+  var
+    He : HeaderPtr;
+  begin
+    New(He, Init(S, AttrColor, AttrMono, 0, 0, Posn, frTL));
+    if He <> nil then
+      He^.Update(frXL, frYL, frXH, frYH, frFramed);
+    AddAnyHeader(He);
+  end;
+
+  procedure Frame.AddSpanHeader(FirstChar, SpanChar, LastChar : Char;
+                                Dpos : Integer; Posn : FrameEdgeType);
+    {-Add a header spanning the frame}
+  begin
+    AddSpanHeaderColor(FirstChar, SpanChar, LastChar,
+                       Dpos, Posn, frFrameColor, frFrameMono);
+  end;
+
+  procedure Frame.AddSpanHeaderColor(FirstChar, SpanChar, LastChar : Char;
+                                     Dpos : Integer; Posn : FrameEdgeType;
+                                     AttrColor, AttrMono : Byte);
+    {-Add a header spanning the frame with custom color}
+  var
+    DX : Integer;
+    DY : Integer;
+    He : HeaderPtr;
+    S : String;
+  begin
+    frComputeSpanHeader(S, FirstChar, SpanChar, LastChar,
+                        DPos, Posn, DX, DY);
+    New(He, Init(S, AttrColor, AttrMono, DX, DY, heSpan, Posn));
+    if He = nil then begin
+      Error(epFatal+ecOutOfMemory);
+      Exit;
+    end;
+    AddAnyHeader(He);
+  end;
+
+  procedure Frame.AddAnyHeader(HPtr : HeaderNodePtr); {!!.01}
+    {-Add a header of any type derived from HeaderNode}
+  begin
+    if HPtr = nil then begin
+      Error(epFatal+ecOutOfMemory);
+      Exit;
+    end;
+    frHeaders.Append(HPtr);
+  end;
+
+  function Frame.frFindHeader(Index : Byte) : HeaderPtr;
+    {-Return a pointer to a header}
+  var
+    I : Byte;
+    He : HeaderPtr;
+  begin
+    if Index >= frHeaders.Size then
+      frFindHeader := nil
+    else begin
+      He := HeaderPtr(frHeaders.Head);
+      for I := 1 to Index do
+        He := HeaderPtr(frHeaders.Next(He));
+      frFindHeader := He;
+    end;
+  end;
+
+  function Frame.GetLastHeaderIndex : Byte;
+    {-Return index of last header}
+  begin
+    if frHeaders.Size = 0 then
+      GetLastHeaderIndex := 255
+    else
+      GetLastHeaderIndex := frHeaders.Size-1;
+  end;
+
+  procedure Frame.ChangeHeaderString(Index : Byte; S : string;
+                                     var Redraw : Boolean);
+    {-Change existing header string, adjusting position as needed}
+  begin
+    frChangeHeaderString(frFindHeader(Index), S, Redraw);
+  end;
+
+  procedure Frame.frChangeHeaderString(He : HeaderPtr; S : string;
+                                       var Redraw : Boolean);
+    {-Change existing header string, adjusting position as needed}
+  var
+    oXL : Byte;
+    oXH : Byte;
+    oYL : Byte;
+    oYH : Byte;
+    nXL : Byte;
+    nXH : Byte;
+    nYL : Byte;
+    nYH : Byte;
+  begin             {!!.01}
+    if He = nil then begin
+      Error(epNonFatal+ecWinBadIndex);
+      Exit;
+    end;
+    with He^ do begin
+      {Save the existing coordinates}
+      Coordinates(frXL, frYL, frXH, frYH, oXL, oYL, oXH, oYH);
+      {Change the string}
+      if not Modify(S, heDX, heDY) then begin
+        Error(epFatal+ecOutOfMemory);
+        Exit;
+      end;
+      {Update the position}
+      Update(frXL, frYL, frXH, frYH, frFramed);
+      {Does entire frame need to be redrawn?}
+      Coordinates(frXL, frYL, frXH, frYH, nXL, nYL, nXH, nYH);
+      Redraw := (oYL <> nYL) or (nXL > oXL) or (nXH < oXH);
+    end;
+  end;
+
+  procedure Frame.frGetColors(var Colors : ColorSet);
+    {-Define a colorset from the current colors that matter}
+  begin
+    with Colors do begin
+      FrameColor := frFrameColor;
+      FrameMono := frFrameMono;
+      HeaderColor := frHeaderColor;
+      HeaderMono := frHeaderMono;
+      {$IFDEF UseShadows}
+      ShadowColor := frShadowColor;
+      ShadowMono := frShadowMono;
+      {$ENDIF}
+    end;
+  end;
+
+  procedure Frame.ChangeHeaderAttr(Index : Byte; Color, Mono : Byte);
+    {-Change existing header colors}
+  var
+    He : HeaderPtr;
+  begin
+    He := frFindHeader(Index);
+    if He = nil then
+      Error(epNonFatal+ecWinBadIndex)
+    else
+      He^.ChangeAttr(Color, MapMono(Color, Mono));
+  end;
+
+  procedure Frame.DrawHeader(Index : Byte);
+    {-Draw header with given Index}
+  var
+    He : HeaderPtr;
+  begin
+    He := frFindHeader(Index);
+    if He = nil then
+      Error(epNonFatal+ecWinBadIndex)
+    else
+      He^.Draw(frXL, frYL, frXH, frYH, frFramed);
+  end;
+
+  procedure Frame.DisableHeader(Index : Byte; IsOn : Boolean);
+    {-Disable specified header}
+  var
+    He : HeaderPtr;
+  begin
+    He := frFindHeader(Index);
+    if He = nil then
+      Error(epNonFatal+ecWinBadIndex)
+    else
+      He^.Disable(IsOn);
+  end;
+
+  {$IFDEF UseShadows}
+  procedure Frame.AddCustomShadow(ShChar : Char;
+                                  Edge : FrameEdgeType;
+                                  DX, DY : Integer;
+                                  W, H : Byte;
+                                  AttrColor, AttrMono : Byte);
+    {-Add a custom shadow rectangle}
+  var
+    Sh : ShadowPtr;
+  begin
+    if (W = 0) or (H = 0) then {!!.11}
+      Exit;                    {!!.11}
+    New(Sh, Init(ShChar, AttrColor, MapMono(AttrColor, AttrMono),
+                 Edge, DX, DY, W, H));
+    if Sh = nil then begin
+      Error(epFatal+ecOutOfMemory);
+      Exit;
+    end;
+    frShadows.Append(Sh);
+  end;
+
+  procedure Frame.AddShadow(Posn : ShadowPosType; DrawType : ShadowDrawType);
+    {-Add a standard shadow}
+  begin
+    AddShadowColor(Posn, DrawType, frShadowColor, frShadowMono);
+  end;
+
+  procedure Frame.AddShadowColor(Posn : ShadowPosType;
+                                 DrawType : ShadowDrawType;
+                                 AttrColor, AttrMono : Byte);
+    {-Add a standard shadow with custom color}
+  var
+    DX : Integer;
+    DY : Integer;
+    W : Byte;
+    H : Byte;
+    FW : Byte;
+    FH : Byte;
+    ShChar : Char;
+    Edge : FrameEdgeType;
+  begin
+    FW := frXH-frXL+1;
+    FH := frYH-frYL+1;
+
+    {Left or right edge}
+    if DrawType = shOverWrite then begin
+      ShChar := DefShadowCharV;
+      W := 1;
+    end else begin
+      ShChar := SeeThruChar;
+      W := 2;
+    end;
+    case Posn of
+      shBR :
+        begin
+          Edge := frRR;
+          DX := 1;
+        end;
+      shBL :
+        begin
+          Edge := frLL;
+          DX := -W;
+        end;
+    end;
+    AddCustomShadow(ShChar, Edge, DX, 1, W, FH-1, AttrColor, AttrMono);
+    if frRes <> 0 then
+      Exit;
+
+    {Bottom edge}
+    if DrawType = shOverWrite then begin
+      ShChar := DefShadowCharH;
+      DX := 1;
+    end else begin
+      ShChar := SeeThruChar;
+      DX := 2;
+    end;
+    case Posn of
+      shBL : DX := -DX;
+    end;
+    AddCustomShadow(ShChar, frBB, DX, 1, FW, 1, AttrColor, AttrMono);
+  end;
+
+  procedure Frame.RemoveShadows;
+    {-Remove shadows if any}
+  begin
+    frShadows.Done;
+  end;
+  {$ENDIF}
+
+  {$IFDEF UseAdjustableWindows}
+  procedure Frame.SetSizeLimits(MinW, MinH, MaxW, MaxH : Byte);
+    {-Set limits for sizing of frame}
+  begin
+    AbstractFrame.SetSizeLimits(MinW, MinH, MaxW, MaxH);
+  end;
+  {$ENDIF}
+
+  procedure Frame.SetClipLimits(MinXL, MinYL, MaxXH, MaxYH : Byte);
+    {-Set limits for drawing frame (shadows get clipped)}
+  begin
+    AbstractFrame.SetClipLimits(MinXL, MinYL, MaxXH, MaxYH);
+  end;
+
+  procedure Frame.DrawBorder;
+    {-Draw just the border part of the frame}
+  var
+    Ch : Char;
+    FW : Byte;
+    FH : Byte;
+    A : Byte;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    FW := frXH-frXL+1;
+    FH := frYH-frYL+1;
+    A := ColorMono(frFrameColor, frFrameMono);
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+
+    {Top part of frame}
+    Ch := frChars[frTT];
+    if Ch <> NoFrameChar then
+      FastWrite(CharStr(Ch, FW-2), frYL, frXL+1, A);
+
+    {Bottom part of frame}
+    Ch := frChars[frBB];
+    if Ch <> NoFrameChar then
+      FastWrite(CharStr(Ch, FW-2), frYH, frXL+1, A);
+
+    {Left part of frame}
+    Ch := frChars[frLL];
+    if Ch <> NoFrameChar then
+      FastVert(CharStr(Ch, FH-2), frYL+1, frXL, A);
+
+    {Right part of frame}
+    Ch := frChars[frRR];
+    if Ch <> NoFrameChar then
+      FastVert(CharStr(Ch, FH-2), frYL+1, frXH, A);
+
+    {Corners}
+    Ch := frChars[frTL];
+    if Ch <> NoFrameChar then
+      FastWrite(Ch, frYL, frXL, A);
+    Ch := frChars[frTR];
+    if Ch <> NoFrameChar then
+      FastWrite(Ch, frYL, frXH, A);
+    Ch := frChars[frBL];
+    if Ch <> NoFrameChar then
+      FastWrite(Ch, frYH, frXL, A);
+    Ch := frChars[frBR];
+    if Ch <> NoFrameChar then
+      FastWrite(Ch, frYH, frXH, A);
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+  end;
+
+  {$IFDEF UseShadows}
+  procedure Frame.DrawShadows;
+    {-Draw just the shadow part}
+  var
+    Sh : ShadowPtr;
+  begin
+    Sh := ShadowPtr(frShadows.Head);
+    while Sh <> nil do begin
+      Sh^.Draw(frXL, frYL, frXH, frYH, frMinXL, frMinYL, frMaxXH, frMaxYH);
+      Sh := ShadowPtr(frShadows.Next(Sh));
+    end;
+  end;
+
+  procedure Frame.EraseShadows;
+    {-Erase (restore) just the shadow part}
+  var
+    Sh : ShadowPtr;
+  begin
+    Sh := ShadowPtr(frShadows.Tail);
+    while Sh <> nil do begin
+      Sh^.Erase(frXL, frYL, frXH, frYH, frMinXL, frMinYL, frMaxXH, frMaxYH);
+      Sh := ShadowPtr(frShadows.Prev(Sh));
+    end;
+  end;
+  {$ENDIF}
+
+  procedure Frame.DrawHeaders;
+    {-Draw just the header part}
+  var
+    He : HeaderPtr;
+  begin
+    He := HeaderPtr(frHeaders.Head);
+    while He <> nil do begin
+      He^.Draw(frXL, frYL, frXH, frYH, frFramed);
+      He := HeaderPtr(frHeaders.Next(He));
+    end;
+  end;
+
+  {$IFDEF UseScrollBars}
+  procedure Frame.DrawSlider(Posn : FrameEdgeType; UserVal : LongInt);
+    {-Draw or update the slider}
+  var
+    frBar : ScrollBarPtr;
+  begin
+    frBar := frBars[Posn];
+    if frBar <> nil then
+      frBar^.DrawSlider(UserVal);
+  end;
+
+  procedure Frame.SetSliderValue(Posn : FrameEdgeType; UserVal : LongInt);
+    {-Change the user value without drawing it}
+  var
+    frBar : ScrollBarPtr;
+  begin
+    frBar := frBars[Posn];
+    if frBar <> nil then
+      frBar^.SetUserValue(UserVal);
+  end;
+
+  procedure Frame.EraseSlider(Posn : FrameEdgeType);
+    {-Erase the slider}
+  var
+    frBar : ScrollBarPtr;
+  begin
+    frBar := frBars[Posn];
+    if frBar <> nil then
+      with frBar^ do
+        if SliderVisible then
+          EraseSlider;
+  end;
+
+  procedure Frame.DrawScrollBars;
+    {-Draw just the scroll bars}
+  var
+    Posn : FrameEdgeType;
+    frBar : ScrollBarPtr;
+  begin
+    for Posn := frTT to frRR do begin
+      frBar := frBars[Posn];
+      if frBar <> nil then
+        with frBar^ do begin
+          Draw;
+          if SliderInitialized then
+            DrawCurrentSlider;
+        end;
+    end;
+  end;
+
+  procedure Frame.EraseSliders;
+    {-Erase all visible sliders}
+  var
+    Posn : FrameEdgeType;
+  begin
+    for Posn := frTT to frRR do
+      EraseSlider(Posn);
+  end;
+
+  procedure Frame.ClearSlider(Posn : FrameEdgeType);
+    {-Mark a slider as not visible}
+  var
+    frBar : ScrollBarPtr;
+  begin
+    frBar := frBars[Posn];
+    if frBar <> nil then
+      frBar^.ClearSlider;
+  end;
+
+  procedure Frame.ClearSliders;
+    {-Mark all sliders as not visible}
+  var
+    Posn : FrameEdgeType;
+  begin
+    for Posn := frTT to frRR do
+      ClearSlider(Posn);
+  end;
+
+  function Frame.CurUserValue(Posn : FrameEdgeType) : LongInt;
+    {-Return the current user value for specified scroll bar}
+  var
+    frBar : ScrollBarPtr;
+  begin
+    frBar := frBars[Posn];
+    if frBar <> nil then
+      CurUserValue := frBar^.sbCurUser
+    else
+      CurUserValue := 0;
+  end;
+  {$ENDIF}
+
+  procedure Frame.Draw;
+    {-Draw the frame, scroll bars, shadows, and headers}
+  begin
+    UpdateFrame;
+    {$IFDEF UseShadows}
+    DrawShadows;
+    {$ENDIF}
+  end;
+
+  procedure Frame.UpdateFrame;
+    {-Draw the frame, scrollbars, and headers (no shadows)}
+  begin
+    DrawBorder;
+    DrawHeaders;
+    {$IFDEF UseScrollBars}
+    DrawScrollBars;
+    {$ENDIF}
+  end;
+
+  procedure Frame.Error(Code : Word);
+    {-Report that an error occurred}
+  begin
+    frRes := Code;
+  end;
+
+  function Frame.GetLastError : Word;
+    {-Return and clear the last error code, 0 if none}
+  begin
+    GetLastError := frRes;
+    frRes := 0;
+  end;
+
+  function Frame.PeekLastError : Word;
+    {-Return the last error code, 0 if none}
+  begin
+    PeekLastError := frRes;
+  end;
+
+  {$IFDEF UseAdjustableWindows}
+  procedure Frame.AdjustFrame(X1, Y1, X2, Y2 : Byte);
+    {-Change the coordinates associated with frame}
+  var
+    oXL : Byte;
+    oYL : Byte;
+    oXH : Byte;
+    oYH : Byte;
+    oWid : Byte;
+    oHgt : Byte;
+    nWid : Byte;
+    nHgt : Byte;
+    oshWid : Byte;
+    oshHgt : Byte;
+    DX : Byte;
+    DY : Byte;
+    Width : Byte;
+    Height : Byte;
+    IDX : Integer;
+    IDY : Integer;
+    DPos : Integer;
+    He : HeaderPtr;
+    {$IFDEF UseShadows}
+    Sh : ShadowPtr;
+    {$ENDIF}
+    {$IFDEF UseScrollBars}
+    FrB : ScrollBarPtr;
+    {$ENDIF}
+    {$IFDEF UseHotSpots}
+    Hs : HotSpotPtr;
+    {$ENDIF}
+    Posn : FrameEdgeType;
+    S : String;
+  begin
+    {Save old coordinates and set new ones}
+    oXL := frXL;
+    oYL := frYL;
+    oXH := frXH;
+    oYH := frYH;
+    frXL := X1;
+    frYL := Y1;
+    frXH := X2;
+    frYH := Y2;
+
+    {Update headers}
+    He := HeaderPtr(frHeaders.Head);
+    while He <> nil do begin
+      with He^ do
+        case heType of
+          heCustom :
+            ;
+          heSpan :
+            begin
+              case hePosn of
+                frTT : DPos := heDY;
+                frBB : DPos := heDY+oYL-oYH;
+                frLL : DPos := heDX;
+                frRR : DPos := heDX+oXL-oXH;
+              end;
+              S := heName^;
+              frComputeSpanHeader(S, S[1],
+                                  S[MinWord(2, Length(S))],
+                                  S[Length(S)],
+                                  DPos, hePosn, IDX, IDY);
+              if not Modify(S, IDX, IDY) then begin
+                Error(epFatal+ecOutOfMemory);
+                Exit;
+              end;
+            end;
+        else
+          Update(frXL, frYL, frXH, frYH, frFramed);
+        end;
+      He := HeaderPtr(frHeaders.Next(He));
+    end;
+
+    oWid := oXH-oXL+1;
+    oHgt := oYH-oYL+1;
+    nWid := X2-X1+1;
+    nHgt := Y2-Y1+1;
+
+    {$IFDEF UseShadows}
+    {Update shadows}
+    Sh := ShadowPtr(frShadows.Head);
+    while Sh <> nil do begin
+      with Sh^ do begin
+        oshWid := shWidth;
+        oshHgt := shHeight;
+        case shPosn of
+          frTT, frBB : inc(shWidth, nWid-oWid);
+          frLL, frRR : inc(shHeight, nHgt-oHgt);
+        end;
+        if (shWidth <> oshWid) or (shHeight <> oshHgt) then begin
+          {Reallocate covers buffer}
+          FreeMemCheck(shBufPtr, Word(2)*oshWid*oshHgt);
+          if not GetMemCheck(shBufPtr, Word(2)*shWidth*shHeight) then begin
+            Error(epFatal+ecOutOfMemory);
+            Exit;
+          end;
+        end;
+      end;
+      Sh := ShadowPtr(frShadows.Next(Sh));
+    end;
+    {$ENDIF}
+
+    {$IFDEF UseScrollBars}
+    {Update scroll bars}
+    for Posn := frTT to frRR do begin
+      FrB := frBars[Posn];
+      if FrB <> nil then
+        with FrB^ do
+          case Posn of
+            frTT : sbAdjust(Integer(Y1)-oYL, Integer(X1)-oXL, Integer(X2)-oXH);
+            frBB : sbAdjust(Integer(Y2)-oYH, Integer(X1)-oXL, Integer(X2)-oXH);
+            frLL : sbAdjust(Integer(X1)-oXL, Integer(Y1)-oYL, Integer(Y2)-oYH);
+            frRR : sbAdjust(Integer(X2)-oXH, Integer(Y1)-oYL, Integer(Y2)-oYH);
+          end;
+    end;
+    {$ENDIF}
+
+    {$IFDEF UseHotSpots}
+    {Update hot spots}
+    Hs := HotSpotPtr(frHotSpots.Head);
+    while Hs <> nil do begin
+      with Hs^ do
+        if hnType = heCustom then
+          case hnPosn of
+            frTT, frBB :
+              Modify(hnDX, hnDY, hnWidth+(nWid-oWid), hnHeight);
+            frLL, frRR :
+              Modify(hnDX, hnDY, hnWidth, hnHeight+(nHgt-oHgt));
+          end
+        else begin
+          S[0] := Char(hnWidth);
+          New(He, Init(S, 0, 0, 0, 0, hnType, frTL));
+          if He = nil then begin
+            Error(epFatal+ecOutOfMemory);
+            Exit;
+          end;
+          with He^ do begin
+            Update(frXL, frYL, frXH, frYH, frFramed);
+            IDX := heDX;
+            IDY := heDY;
+          end;
+          Dispose(He, Done);
+          Modify(IDX, IDY, hnWidth, 1);
+        end;
+      Hs := HotSpotPtr(frHotSpots.Next(Hs));
+    end;
+    {$ENDIF}
+  end;
+  {$ENDIF}
+
+  {$IFDEF UseHotSpots}
+  procedure Frame.AddHotRegion(Posn : FrameCharType;
+                               Code : Byte;
+                               DX, DY : Integer;
+                               Width, Height : Byte);
+    {-Add a hot region relative to the frame corner}
+  var
+    Hs : HotSpotPtr;
+  begin
+    {Add to hot spot list}
+    New(Hs, Init(heCustom, Posn, DX, DY, Width, Height, Code));
+    if Hs = nil then begin
+      Error(epFatal+ecOutOfMemory);
+      Exit;
+    end;
+    frHotSpots.Append(Hs);
+  end;
+
+  procedure Frame.AddHotSpot(Posn : FrameCornerType;
+                             HotChar : Char;
+                             var Colors : ColorSet);
+    {-Add a hot spot in a frame corner}
+  begin
+    {Add to hot spot list}
+    AddHotRegion(Posn, hsSpot, 0, 0, 1, 1);
+    if frRes <> 0 then
+      Exit;
+
+    {Add to header list}
+    AddCustomHeader(HotChar, Posn, 0, 0,
+                    Colors.HotSpotColor, Colors.HotSpotMono);
+  end;
+
+  procedure Frame.AddHotBar(Posn : FrameEdgeType; Code : Byte);
+    {-Add a hot region covering an entire frame edge}
+  var
+    Width : Byte;
+    Height : Byte;
+    DX : Byte;
+    DY : Byte;
+    Hs : HotSpotPtr;
+  begin
+    {Compute Width and Height}
+    DX := 0;
+    DY := 0;
+    case Posn of
+      frTT, frBB :
+        begin
+          Height := 1;
+          Width := frXH-frXL+1;
+          if frFramed then begin
+            DX := 1;
+            dec(Width, 2);
+          end;
+        end;
+      frLL, frRR :
+        begin
+          Width := 1;
+          Height := frYH-frYL+1;
+          if frFramed then begin
+            DY := 1;
+            dec(Height, 2);
+          end;
+        end;
+    end;
+
+    New(Hs, Init(heCustom, Posn, DX, DY, Width, Height, Code));
+    if Hs = nil then begin
+      Error(epFatal+ecOutOfMemory);
+      Exit;
+    end;
+    frHotSpots.Append(Hs);
+  end;
+
+  procedure Frame.AddHotHeader(hType : HeaderPosType; Code : Byte; Len : Byte);
+    {-Add a hot region to coincide with a header}
+  var
+    Hs : HotSpotPtr;
+    He : HeaderPtr;
+    DX : Integer;
+    DY : Integer;
+    S : String;
+  begin
+    {Allocate a temporary header to match against}
+    S[0] := Char(Len);
+    New(He, Init(S, 0, 0, 0, 0, hType, frTL));
+    if He = nil then begin
+      Error(epFatal+ecOutOfMemory);
+      Exit;
+    end;
+    with He^ do begin
+      Update(frXL, frYL, frXH, frYH, frFramed);
+      DX := heDX;
+      DY := heDY;
+    end;
+    Dispose(He, Done);
+
+    {Add to hot spot list}
+    New(Hs, Init(hType, frTL, DX, DY, Len, 1, Code));
+    if Hs = nil then begin
+      Error(epFatal+ecOutOfMemory);
+      Exit;
+    end;
+    frHotSpots.Append(Hs);
+  end;
+
+  function Frame.GetLastHotIndex : Byte;
+    {-Return index of last hot region}
+  begin
+    if frHotSpots.Size = 0 then
+      GetLastHotIndex := 255
+    else
+      GetLastHotIndex := frHotSpots.Size-1;
+  end;
+
+  function Frame.frFindHotSpot(Index : Byte) : HotSpotPtr;
+    {-Return a pointer to a hot spot}
+  var
+    I : Byte;
+    Hs : HotSpotPtr;
+  begin
+    if Index >= frHotSpots.Size then
+      frFindHotSpot := nil
+    else begin
+      Hs := HotSpotPtr(frHotSpots.Head);
+      for I := 1 to Index do
+        Hs := HotSpotPtr(frHotSpots.Next(Hs));
+      frFindHotSpot := Hs;
+    end;
+  end;
+
+  procedure Frame.ChangeHotHeader(Index : Byte; Len : Byte);
+    {-Change the length (and position) of a hot header}
+  var
+    Hs : HotSpotPtr;
+    He : HeaderPtr;
+    DX : Integer;
+    DY : Integer;
+    S : String;
+  begin
+    Hs := frFindHotSpot(Index);
+    if Hs = nil then begin
+      Error(epNonFatal+ecWinBadIndex);
+      Exit;
+    end;
+    with Hs^ do begin
+      {Only length of string is important}
+      S[0] := Char(Len);
+      New(He, Init(S, 0, 0, 0, 0, hnType, frTL));
+      if He = nil then begin
+        Error(epFatal+ecOutOfMemory);
+        Exit;
+      end;
+      with He^ do begin
+        Update(frXL, frYL, frXH, frYH, frFramed);
+        DX := heDX;
+        DY := heDY;
+      end;
+      Dispose(He, Done);
+      Modify(DX, DY, Len, 1);
+    end;
+  end;
+  {$ENDIF}
+
+  {$IFDEF UseScrollBars}
+  procedure Frame.AddCustomScrollBar(Posn : FrameEdgeType;
+                                     MinUser, MaxUser : LongInt;
+                                     DecOffset, IncOffset : Byte;
+                                     SliChar, BarChar : Char;
+                                     var Colors : ColorSet);
+    {-Add a custom scroll bar}
+  const
+    DecSpotMap : array[FrameEdgeType] of FrameCornerType =
+      {TT    BB    LL    RR}
+      (frTL, frBL, frTL, frTR);
+    DecSpotCode : array[FrameEdgeType] of Byte =
+      (hsDecH, hsDecH, hsDecV, hsDecV);
+    IncSpotMap : array[FrameEdgeType] of FrameCornerType =
+      {TT    BB    LL    RR}
+      (frTR, frBR, frBL, frBR);
+    IncSpotCode : array[FrameEdgeType] of Byte =
+      (hsIncH, hsIncH, hsIncV, hsIncV);
+  var
+    FixPos : Byte;
+    MinPos : Byte;
+    MaxPos : Byte;
+    {$IFDEF UseAdjustableWindows}
+    MinDim : Byte;
+    {$ENDIF}
+    Vertical : Boolean;
+    DecChar : Char;
+    IncChar : Char;
+    SpotDecDX : Integer;
+    SpotDecDY : Integer;
+    SpotIncDX : Integer;
+    SpotIncDY : Integer;
+    SpotBarDX : Integer;
+    SpotBarDY : Integer;
+    SpotBarW : Byte;
+    SpotBarH : Byte;
+  begin
+    {Compute position and extent of scroll bar}
+    case Posn of
+      frTT :
+        begin
+          FixPos := frYL;
+          Vertical := False;
+        end;
+      frBB :
+        begin
+          FixPos := frYH;
+          Vertical := False;
+        end;
+      frLL :
+        begin
+          FixPos := frXL;
+          Vertical := True;
+        end;
+      frRR :
+        begin
+          FixPos := frXH;
+          Vertical := True;
+        end;
+    end;
+
+    {$IFDEF UseAdjustableWindows}
+    {Minimum frame size as a result of scroll bar}
+    MinDim := IncOffset+DecOffset+3;
+    {$ENDIF}
+
+    if Vertical then begin
+      MinPos := frYL+DecOffset;
+      MaxPos := frYH-IncOffset;
+      DecChar := DefArrows[arrowUp];
+      IncChar := DefArrows[arrowDown];
+      {$IFDEF UseAdjustableWindows}
+      if frMinH < MinDim then
+        frMinH := MinDim;
+      {$ENDIF}
+    end else begin
+      MinPos := frXL+DecOffset;
+      MaxPos := frXH-IncOffset;
+      DecChar := DefArrows[arrowLeft];
+      IncChar := DefArrows[arrowRight];
+      {$IFDEF UseAdjustableWindows}
+      if frMinW < MinDim then
+        frMinW := MinDim;
+      {$ENDIF}
+    end;
+
+    {Assure room for at least two arrows and a one character bar}
+    if MaxPos <= MinPos+1 then begin
+      Error(epNonFatal+ecWinCoordsBad);
+      Exit;
+    end;
+
+    {Deallocate previous scroll bar, if any}
+    if frBars[Posn] <> nil then
+      Dispose(frBars[Posn], Done);
+
+    {Allocate new scroll bar}
+    New(frBars[Posn],
+        Init(Vertical, FixPos, MinPos, MaxPos, MinUser, MaxUser,
+             SliChar, BarChar, DecChar, IncChar, Colors));
+    if frBars[Posn] = nil then begin
+      Error(epFatal+ecOutOfMemory);
+      Exit;
+    end;
+
+    {$IFDEF UseHotSpots}
+    {Add implied hot spots}
+    if Vertical then begin
+      SpotDecDX := 0;
+      SpotDecDY := DecOffset;
+      SpotIncDX := 0;
+      SpotIncDY := -Integer(IncOffset);
+      SpotBarDX := 0;
+      SpotBarDY := DecOffset+1;
+      SpotBarW := 1;
+      SpotBarH := MaxPos-MinPos-1;
+    end else begin
+      SpotDecDX := DecOffset;
+      SpotDecDY := 0;
+      SpotIncDX := -Integer(IncOffset);
+      SpotIncDY := 0;
+      SpotBarDX := DecOffset+1;
+      SpotBarDY := 0;
+      SpotBarW := MaxPos-MinPos-1;
+      SpotBarH := 1;
+    end;
+    AddHotRegion(DecSpotMap[Posn], DecSpotCode[Posn], SpotDecDX, SpotDecDY, 1, 1);
+    if frRes <> 0 then
+      Exit;
+    AddHotRegion(IncSpotMap[Posn], IncSpotCode[Posn], SpotIncDX, SpotIncDY, 1, 1);
+    if frRes <> 0 then
+      Exit;
+    if MaxPos > MinPos+1 then begin
+      AddHotRegion(Posn, hsBar, SpotBarDX, SpotBarDY,
+                   SpotBarW, SpotBarH);
+      if frRes <> 0 then
+        Exit;
+    end;
+    {$ENDIF}
+  end;
+
+  procedure Frame.AddScrollBar(Posn : FrameEdgeType;
+                               MinUser, MaxUser : LongInt;
+                               var Colors : ColorSet);
+    {-Add a standard scroll bar}
+  begin
+    AddCustomScrollBar(Posn, MinUser, MaxUser, 1, 1,
+                       DefSliderChar, DefBarChar, Colors);
+  end;
+
+  procedure Frame.ChangeScrollBar(Posn : FrameEdgeType;
+                                  MinUser, MaxUser : LongInt;
+                                  UpdateScreen : Boolean);
+    {-Change user range of existing scroll bar}
+  begin
+    if frBars[Posn] <> nil then
+      frBars[Posn]^.ChangeUserRange(MinUser, MaxUser, UpdateScreen);
+  end;
+  {$ENDIF}
+
+{$IFDEF UseStreams}
+
+  constructor Frame.Load(var S : IdStream);
+    {-Load from stream}
+  {$IFDEF UseScrollBars}
+  var
+    Edge : FrameEdgeType;
+    EdgeHasBar : Boolean;
+  {$ENDIF}
+  begin
+    Frame.frZeroOut;
+    if not Root.Init then
+      Fail;
+
+    {Read fixed data}
+    S.ReadRange(frXL, frRes);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {$IFDEF UseScrollBars}
+    {Read indicated scroll bars}
+    for Edge := frTT to frRR do begin
+      S.Read(EdgeHasBar, SizeOf(Boolean));
+      if EdgeHasBar then
+        frBars[Edge] := ScrollBarPtr(S.GetPtr);
+      if S.PeekStatus <> 0 then begin
+        Done;
+        Fail;
+      end;
+    end;
+    {$ENDIF}
+
+    {Read the linked lists}
+    S.Get(frHeaders);
+    {$IFDEF UseShadows}
+    S.Get(frShadows);
+    {$ENDIF}
+    {$IFDEF UseHotSpots}
+    S.Get(frHotSpots);
+    {$ENDIF}
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure Frame.Store(var S : IdStream);
+    {-Store to stream}
+  {$IFDEF UseScrollBars}
+  var
+    Edge : FrameEdgeType;
+    EdgeHasBar : Boolean;
+  {$ENDIF}
+  begin
+    {Write the fixed portion of the object data}
+    S.WriteRange(frXL, frRes);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {$IFDEF UseScrollBars}
+    {Write allocated scroll bars}
+    for Edge := frTT to frRR do begin
+      {Write a flag so we know when to expect a bar}
+      EdgeHasBar := (frBars[Edge] <> nil);
+      S.Write(EdgeHasBar, SizeOf(Boolean));
+      if EdgeHasBar then
+        {Write the bar itself}
+        S.PutPtr(frBars[Edge]);
+      if S.PeekStatus <> 0 then
+        Exit;
+    end;
+    {$ENDIF}
+
+    {Write the linked lists}
+    S.Put(frHeaders);
+    {$IFDEF UseShadows}
+    S.Put(frShadows);
+    {$ENDIF}
+    {$IFDEF UseHotSpots}
+    S.Put(frHotSpots);
+    {$ENDIF}
+  end;
+
+  procedure ScreenRectStream(SPtr : IdStreamPtr);
+    {-Register types needed for streams containing ScreenRects}
+  begin
+    SPtr^.RegisterType(otScreenRect, veScreenRect,
+                       TypeOf(ScreenRect), @ScreenRect.Store, @ScreenRect.Load);
+  end;
+
+  procedure FrameStream(SPtr : IdStreamPtr);
+    {-Register types needed for streams containing Frames}
+  begin
+    DoubleListStream(SPtr); {!!.01}
+    with SPtr^ do begin
+      RegisterType(otHeaderNode, veHeaderNode,
+                   TypeOf(HeaderNode), @HeaderNode.Store, @HeaderNode.Load);
+      {$IFDEF UseShadows}
+      RegisterType(otShadowNode, veShadowNode,
+                   TypeOf(ShadowNode), @ShadowNode.Store, @ShadowNode.Load);
+      {$ENDIF}
+      {$IFDEF UseHotSpots}
+      RegisterType(otHotNode, veHotNode,
+                   TypeOf(HotNode), @HotNode.Store, @HotNode.Load);
+      {$ENDIF}
+      {$IFDEF UseScrollBars}
+      RegisterType(otScrollBar, veScrollBar,
+                   TypeOf(ScrollBar), @ScrollBar.Store, @ScrollBar.Load);
+      {$ENDIF}
+      RegisterType(otFrame, veFrame,
+                   TypeOf(Frame), @Frame.Store, @Frame.Load);
+    end;
+  end;
+
+{$ENDIF}

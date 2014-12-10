@@ -1,0 +1,926 @@
+{*********************************************************}
+{*                  MAKEMISC.IN1 1.30                    *}
+{*      Copyright (c) TurboPower Software 1989, 1992.    *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+const
+  ScrollLockBit  = $10;
+  NumLockBit     = $20;
+  CapsLockBit    = $40;
+
+  function ScrollLock : Boolean;
+    {-Return scroll lock state}
+  begin
+{$IFDEF VIRTUALPASCAL}
+    ScrollLock := getKeyboardState( ScrollLockBit );
+{$ELSE}
+    ScrollLock := FlagIsSet(KbdFlagsPtr^, ScrollLockBit); {!!.20}
+{$ENDIF}
+  end;
+
+{$IFDEF UseMouse}
+
+  procedure SlowestMouse;
+    {-Slow mouse down a lot}
+  begin
+    if MouseInstalled then
+      SetMickeyToPixelRatio(64, 128);
+  end;
+
+  procedure SlowMouse;
+    {-Slow mouse down}
+  begin
+    if MouseInstalled then
+      SetMickeyToPixelRatio(32, 64);
+  end;
+
+  procedure FastMouse;
+    {-Let mouse move at normal speed}
+  begin
+    if MouseInstalled then
+      SetMickeyToPixelRatio(8, 16);
+  end;
+
+  function Sign(X : Integer) : Integer;
+    {-Force integer to range -1..+1}
+  begin
+    if X < 0 then
+      Sign := -1
+    else if X > 0 then
+      Sign := +1
+    else
+      Sign := 0;
+  end;
+
+{$ENDIF}
+
+  function ReadKeyWordXY : Word;
+    {-ReadKeyWord with mouse movement mapped to cursor movement}
+  {$IFDEF UseMouse}
+  const
+    {Keys to return for various mouse directions}
+    ArrowKeys : array[-1..1, -1..1] of Word = (
+      {DX=-1  DX=0   DX=+1}
+      ($D000, $4800, $D200),  {DY = -1}
+      ($4B00, $FFFF, $4D00),  {DY =  0}
+      ($D100, $5000, $D300)); {DY = +1}
+  {$ENDIF}
+  var
+    KW : Word;
+    SaveScrollLock : Boolean;
+    {$IFDEF UseMouse}
+    InitMX, InitMY : Integer;
+    XDelta, YDelta : Integer;
+    {$ENDIF}
+  begin
+    SaveScrollLock := ScrollLock;
+
+    {$IFDEF UseMouse}
+    if MouseInstalled then begin
+      InitMX := MouseLastX;
+      InitMY := MouseLastY;
+    end;
+    {$ENDIF}
+
+    KW := $FFFF;
+    repeat
+      {$IFDEF UseMouse}
+      if KeyOrButtonPressed then
+        KW := ReadKeyOrButton
+      else if MouseInstalled and MapMouseToCursor then begin
+        XDelta := Integer(MouseLastX)-InitMX;
+        YDelta := Integer(MouseLastY)-InitMY;
+        if (XDelta or YDelta) <> 0 then begin
+          if Abs(XDelta) > Abs(YDelta) then
+            YDelta := 0
+          else if Abs(YDelta) > Abs(XDelta) then
+            XDelta := 0;
+          KW := ArrowKeys[Sign(YDelta), Sign(XDelta)];
+        end;
+      end;
+      {$ELSE}
+      if KeyPressed then
+        KW := ReadKeyWord;
+      {$ENDIF}
+    until (KW <> $FFFF) or (ScrollLock <> SaveScrollLock);
+
+    ReadKeyWordXY := KW;
+  end;
+
+  function Decimal(N : LongInt; Width : Byte) : String;
+    {-Return a decimal number right-padded to the specified width}
+  var
+    S : String;
+    SLen : Byte absolute S;
+  begin
+    Str(N, S);
+    if SLen < Width then
+      FillChar(S[SLen+1], Width-SLen, ' ');
+    SLen := Width;
+    Decimal := S;
+  end;
+
+  function MemInUse : LongInt;
+    {-Returns amount of heap space in use}
+  var
+    Paras : LongInt;
+  begin
+{$IFDEF VIRTUALPASCAL}
+    MemInUse := 0;
+{$ELSE}
+{$IFDEF DPMI}                        {!!.20}
+    MemInUse := TotalAvail-MemAvail; {!!.20}
+{$ELSE}                              {!!.20}
+    {$IFDEF Heap6}
+    Paras := OS(HeapEnd).S-OS(HeapOrg).S;
+    {$ELSE}
+    Paras := (OS(FreePtr).S+$1000)-OS(HeapOrg).S;
+    {$ENDIF}
+    MemInUse := (Paras shl 4)-MemAvail;
+{$ENDIF}                             {!!.20}
+{$ENDIF}
+  end;
+
+  function ColorName(Attr : Byte) : String;
+    {-Return a readable name for an attribute}
+  const
+    AttrName : array[0..15] of string[9] = (
+      'Black', 'Blue', 'Green', 'Cyan',
+      'Red', 'Magenta', 'Brown', 'LtGray',
+      'DkGray', 'LtBlue', 'LtGreen', 'LtCyan',
+      'LtRed', 'LtMagenta', 'Yellow', 'White');
+    BlinkSt : array[Boolean] of string[6] = ('', '+Blink');
+  var
+    A : Byte;
+  begin
+    if GenColorNames then begin
+      A := Attr and $7F;
+      ColorName :=
+        AttrName[A and $0F]+'On'+AttrName[A shr 4]+BlinkSt[A <> Attr];
+    end
+    else
+      ColorName := '$'+HexB(Attr);
+  end;
+
+  function PascalString(S : string) : string;
+    {-Convert S to a valid Pascal string, including appropriate quotes}
+  const
+    Quote = #39;
+  var
+    I : Word;
+    OS : String;
+    OLen : Byte absolute OS;
+    InQuote : Boolean;
+
+    procedure AppendS(var O : String; A : String);
+    var
+      OLen : Byte absolute O;
+      ALen : Byte absolute A;
+      Len : Byte;
+    begin
+      if OLen < 255-ALen then
+        Len := ALen
+      else
+        Len := 255-OLen;
+      if Len > 0 then begin
+        move(A[1], O[OLen+1], Len);
+        inc(OLen, Len);
+      end;
+    end;
+
+  begin
+    I := 1;
+    OLen := 0;
+    InQuote := False;
+
+    for I := 1 to Length(S) do begin
+      case S[I] of
+        #0..#31 :
+          begin
+            if InQuote then begin
+              AppendS(OS, Quote);
+              InQuote := False;
+            end;
+            AppendS(OS, '^'+Char(Byte(S[I]) or $40));
+          end;
+        Quote :
+          if InQuote then
+            AppendS(OS, Quote+Quote)
+          else begin
+            AppendS(OS, Quote+Quote+Quote);
+            InQuote := True;
+          end;
+      else
+        if not InQuote then begin
+          AppendS(OS, Quote);
+          InQuote := True;
+        end;
+        AppendS(OS, S[I]);
+      end;
+    end;
+
+    if OLen = 0 then
+      OS := Quote+Quote
+    else if InQuote then
+      AppendS(OS, Quote);
+    PascalString := OS;
+  end;
+
+  function PascalChar(Ch : Char) : string;
+    {-Convert Ch to a Pascal character}
+  var
+    B : Byte absolute Ch;
+  begin
+    case Ch of
+      #1..#31 :
+        PascalChar := '^'+Char(B+64);
+      #39 :
+        PascalChar := #39#39#39#39;
+      #0, #127, #255 :
+        PascalChar := '#'+Long2Str(B);
+      else
+        PascalChar := #39+Ch+#39;
+    end;
+  end;
+
+  function PascalCtrlString(S : String) : String;
+    {-Return a safe-to-write string for something that may contain ctrl chars}
+  var
+    I : Word;
+    HasBadChar : Boolean;
+    T : string;
+  begin
+    HasBadChar := False;
+    for I := 1 to Length(S) do
+      case S[I] of
+        #0..#32, #39, #127, #255 : HasBadChar := True;
+      end;
+    if HasBadChar then begin
+      T := '';
+      for I := 1 to Length(S) do
+        T := T+'#'+Long2Str(Byte(S[I]));
+      PascalCtrlString := T;
+    end
+    else
+      PascalCtrlString := #39+S+#39;
+  end;
+
+  function PascalFrame(FrCh : FrameArray) : string;
+    {-Return a safe-to-write string for frame characters}
+  begin
+    PascalFrame := PascalCtrlString(FrCh);
+  end;
+
+  function WindowOptions(var Win : RawWindow) : String;
+    {-Return the window options in a readable string}
+  const
+    MaxOption = 12;
+    OptionNames : array[0..MaxOption] of string[16] = (
+      'wBordered', 'wClear', 'wSaveContents', 'wUserContents',
+      'wSoundEffects', 'wAltFrame', 'wSetMouse', 'wFullMouseWindow',
+      'wResizeable', 'wAllMouseEvents', 'wStoreContents',
+      'wNoCoversBuffer', 'wCoversOnDemand'); {!!.01}
+  var
+    I : Word;
+    S : String;
+  begin
+    S := '';
+    for I := 0 to MaxOption do
+      if Win.wOptionsAreOn(LongInt(1) shl I) then begin
+        if Length(S) <> 0 then
+          S := S+'+';
+        S := S+OptionNames[I];
+      end;
+    WindowOptions := S;
+  end;
+
+  procedure GenerateExploding(var OutF : Text;
+                              var Win : RawWindow;
+                              Indent : Word);
+    {-Generate call to enable explosions for a window}
+  begin
+    if Win.IsExploding then
+      WriteLn(OutF, '':Indent, 'EnableExplosions(', Win.wStageDelay, ');');
+  end;
+
+  procedure GenerateShadows(var OutF : Text;
+                            var Win : RawWindow;
+                            Indent : Word);
+    {-Generate call to draw shadows on a window}
+  const
+    ShadNames : array[shSeeThru..shOverWrite] of string[11] = (
+      'shSeeThru', 'shOverWrite');
+  var
+    ShP : ShadowPtr;
+    SDT : ShadowDrawType;
+    SetColor : Boolean;
+  begin
+    SDT := Win.ShadowType;
+    if SDT <> shNone then begin
+      Write(OutF, '':Indent);
+      if GenWFrame then
+        Write(OutF, 'wFrame.');
+      Write(OutF, 'AddShadow');
+      ShP := ShadowPtr(Win.wFrame.frShadows.Head);
+      SetColor := (ShP^.shAttrColor <> Win.wFrame.frShadowColor) or
+                  (ShP^.shAttrMono <> Win.wFrame.frShadowMono);
+      if SetColor then
+        Write(OutF, 'Color');
+      Write(OutF, '(shBR, ', ShadNames[SDT]);
+      if SetColor then
+        Write(OutF, ', ', ColorName(ShP^.shAttrColor),
+                    ', ', ColorName(ShP^.shAttrMono));
+      WriteLn(OutF, ');');
+    end;
+  end;
+
+  procedure GenerateHeaders(var OutF : Text;
+                            var Win : RawWindow;
+                            Indent : Word);
+    {-Generate calls to draw headers (ignores spans)}
+  const
+    FrameCornerNames : array[FrameCornerType] of String[4] =
+      ('frTL', 'frBL', 'frTR', 'frBR');
+  var
+    HP : HeaderPtr;
+    SetColor : Boolean;
+    DisplayPos : Byte;
+  begin
+    HP := HeaderPtr(Win.wFrame.frHeaders.Head);
+
+    while HP <> nil do begin
+      with HP^ do
+        if heType <> heSpan then begin
+          Write(OutF, '':Indent);
+          case heType of
+            heCustom :
+              begin
+                if GenWFrame then
+                  Write(OutF, 'wFrame.');
+                Write(OutF, 'AddCustomHeader(',
+                      PascalString(heName^), ', ',
+                      FrameCornerNames[hePosn], ', ',
+                      heDX, ', ',
+                      heDY, ', ');
+                SetColor := True;
+              end;
+          else
+            if GenWFrame then
+              Write(OutF, 'wFrame.');
+            Write(OutF, 'AddHeader');
+            SetColor := (heAttrColor <> Win.wFrame.frHeaderColor) or
+                        (heAttrMono <> Win.wFrame.frHeaderMono);
+            if SetColor then
+              Write(OutF, 'Color');
+            Write(OutF, '(', PascalString(heName^), ', ',
+                  HeaderPosAbbrevs[heType]);
+          end;
+          if SetColor then
+            Write(OutF, ', ', ColorName(heAttrColor),
+                        ', ', ColorName(heAttrMono));
+          WriteLn(OutF, ');');
+        end;
+
+      {Move to next header}
+      HP := HeaderPtr(Win.wFrame.frHeaders.Next(HP));
+    end;
+  end;
+
+  {--------- routine to move/resize a raw window -----------------}
+
+  procedure FrameIt(XL, YL, XH, YH : Byte;
+                    XBar : Char; var FrameChars : FrameArray);
+    {-Draws a window frame using existing screen colors}
+  var
+    Row     : Byte;
+    Span    : String;
+    SpanLen : Byte absolute Span;
+    {$IFDEF UseMouse}
+    SaveMouse : Boolean;
+    {$ENDIF}
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(SaveMouse);
+    {$ENDIF}
+
+    if (XL = XH) then
+      if (YL = YH) then
+        FastText(XBar, YL, XL)
+      else for Row := YL to YH do
+        FastText(FrameChars[frLL], Row, XL)
+    else begin
+      {construct top line}
+      SpanLen := Succ(XH-XL);
+      FillChar(Span[1], SpanLen, FrameChars[frTT]);
+      if (YL < YH) then begin
+        Span[1] := FrameChars[frTL];
+        Span[SpanLen] := FrameChars[frTR];
+      end;
+
+      {draw it}
+      FastText(Span, YL, XL);
+
+      if YL < YH then begin
+        {draw the vertical bars}
+        for Row := Succ(YL) to Pred(YH) do begin
+          FastText(FrameChars[frLL], Row, XL);
+          FastText(FrameChars[frRR], Row, XH);
+        end;
+
+        {draw the bottom border}
+        FillChar(Span[1], SpanLen, FrameChars[frBB]);
+        Span[1] := FrameChars[frBL];
+        Span[SpanLen] := FrameChars[frBR];
+        FastText(Span, YH, XL);
+      end;
+    end;
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SaveMouse);
+    {$ENDIF}
+  end;
+
+  function MoveOrResize(var RW : RawWindow;
+                        MoveOnly : Boolean;
+                        var Modified : Boolean) : Boolean;
+    {-Adjust the size/location of a window. Returns False for insufficient
+      memory}
+  const
+    VertTabSize = 5;
+  var
+    Cmd : Word;                   {current command}
+    ChWord : Word;                {key used to execute command}
+    SaveXY, SaveSL : Word;        {for storing cursor position and shape}
+    MinHeight, MinWidth,          {minimum width and height of window}
+    MaxHeight, MaxWidth,          {maximum width and height of window}
+    CurWidth, CurHeight : Byte;   {current width and height of the window}
+    Dragging,                     {true if we're dragging the window}
+    Done : Boolean;               {true when done moving/resizing}
+    VS : VirtScreen;              {used when drawing frame}
+    Redraw : Boolean;             {need to redraw screen?}
+    XL, YL, XH, YH,               {current window coordinates}
+    MinX, MinY,                   {absolute bounds of window}
+    MaxX, MaxY,                   {!!.22}
+    MX, MY : Integer;             {!!.22}
+    MChanged : Boolean;           {!!.22}
+    StatusLine : Byte;            {row for status line}
+    {$IFDEF UseMouse}
+    MWC : WindowCoordinates;      {saved window coordinates for mouse}
+    SaveMouse : Boolean;          {saved state of mouse visibility}
+    {$ENDIF}
+
+    procedure DrawStatusLine;
+      {-Draw the status line}
+    const
+      StatusForm : string[80] =
+      {         1         2         3         4         5         6         7         8}
+      {12345678901234567890123456789012345678901234567890123456789012345678901234567890}
+      '<Enter> Accept                     ³ Resize  Width x   Height x  Row x   Col x  ';
+      DragOrSize : array[Boolean] of string[6] = ('Resize', ' Move ');
+      ExtraPrompt : array[Boolean] of string[19] = (
+        '<ScrollLock> Toggle', '<Esc> Cancel');
+    var
+      Status : string[80];
+      StatusAttr : Byte;
+
+      procedure MergeString(Src : string; Col : Byte);
+      begin
+        Move(Src[1], Status[Col], Length(Src));
+      end;
+
+      procedure MergeNumber(L : LongInt; Col : Byte);
+      var
+        S : string[20];
+      begin
+        MergeString(Long2Str(L), Col);
+      end;
+
+    begin
+      {get a copy of the raw status line}
+      Status := StatusForm;
+
+      {make sure status line doesn't conflict with cursor}
+      if StatusLine = WhereYabs then
+        if StatusLine = 1 then
+          StatusLine := ScreenHeight
+        else
+          StatusLine := 1;
+
+      {plug in status stuff}
+      MergeString(ExtraPrompt[MoveOnly], 16);
+      MergeString(DragOrSize[Dragging],  38);
+      MergeNumber(CurWidth,              52);
+      MergeNumber(CurHeight,             63);
+      MergeNumber(WhereYabs,             70);
+      MergeNumber(WhereXabs,             78);
+
+      {draw the status line}
+      with DefaultColorSet do
+        StatusAttr := ColorMono(HighlightColor, HighlightMono);
+      FastWrite(Status, StatusLine, 1, StatusAttr);
+    end;
+
+    procedure DrawFrame;
+      {-Draw the frame on screen}
+    begin
+      {make a working copy of the screen}
+      with wStack.wsScreen do
+{$IFDEF VIRTUALPASCAL}
+        Move(Mem[vsVideoSeg+0], Mem[VS.vsVideoSeg+0], (vRows*vCols) shl 1);
+{$ELSE}
+        Move(Mem[vsVideoSeg:0], Mem[VS.vsVideoSeg:0], (vRows*vCols) shl 1);
+{$ENDIF}
+
+      {draw the frame on the working copy}
+      VS.Activate;
+      if Dragging then
+        {use double line frame}
+        FrameIt(XL, YL, XH, YH, 'Î', FrameTypes[3])
+      else
+        {use single line frame}
+        FrameIt(XL, YL, XH, YH, 'Å', FrameTypes[2]);
+      DrawStatusLine;
+      VS.Deactivate;
+
+      {update the physical screen}
+      VS.CopyToScreen(1, 1);
+    end;
+
+    procedure IncRow(N : Integer);
+      {-Move N rows up or down}
+    var
+      NewYL, NewYH, NewHeight : Integer;
+    begin
+      Redraw := False;
+      if N = 0 then
+        Exit;
+      if Dragging then begin
+        NewYL := YL+N;
+        NewYH := YH+N;
+        if NewYL < MinY then begin
+          N := MinY-NewYL;
+          Inc(NewYL, N);
+          Inc(NewYH, N);
+        end
+        else if NewYH > MaxY then begin
+          N := NewYH-MaxY;
+          Dec(NewYL, N);
+          Dec(NewYH, N);
+        end;
+
+        if NewYH = YH then
+          Exit;
+
+        YH := NewYH;
+        YL := NewYL;
+      end
+      else begin
+        NewYH := YH+N;
+        NewHeight := Succ(NewYH-YL);
+
+        if NewHeight < MinHeight then
+          NewYH := YL+MinHeight-1
+        else if NewHeight > MaxHeight then
+          NewYH := YL+MaxHeight-1;
+
+        if NewYH > MaxY then
+          NewYH := MaxY;
+
+        if NewYH = YH then
+          Exit;
+
+        YH := NewYH;
+      end;
+      Redraw := True;
+    end;
+
+    procedure IncCol(N : Integer);
+      {-Move N columns to the right (+) or left (-)}
+    var
+      NewXL, NewXH, NewWidth : Integer;
+    begin
+      Redraw := False;
+      if N = 0 then
+        Exit;
+      if Dragging then begin
+        NewXL := XL+N;
+        NewXH := XH+N;
+        if NewXL < MinX then begin
+          N := MinX-NewXL;
+          Inc(NewXL, N);
+          Inc(NewXH, N);
+        end
+        else if NewXH > MaxX then begin
+          N := NewXH-MaxX;
+          Dec(NewXL, N);
+          Dec(NewXH, N);
+        end;
+
+        if NewXH = XH then
+          Exit;
+
+        XH := NewXH;
+        XL := NewXL;
+      end
+      else begin
+        NewXH := XH+N;
+        NewWidth := Succ(NewXH-XL);
+
+        if NewWidth < MinWidth then
+          NewXH := XL+MinWidth-1
+        else if NewWidth > MaxWidth then
+          NewXH := XL+MaxWidth-1;
+
+        if NewXH > MaxX then
+          NewXH := MaxX;
+
+        if NewXH = XH then
+          Exit;
+
+        XH := NewXH;
+      end;
+      Redraw := True;
+    end;
+
+    procedure IncRowCol(RowDelta, ColDelta : Integer);
+      {-Adjust both row and column coordinates}
+    begin
+      IncRow(RowDelta);
+      IncCol(ColDelta);
+    end;
+
+    procedure TabRight;
+      {-Moves right edge of window to the next tab stop}
+    var
+      NewXH : Integer;
+    begin
+      if XH < MaxX then begin
+        NewXH := Succ(Succ(Pred(XH) shr 3) shl 3); {shr 3 = div 8}
+        IncCol(NewXH-XH);
+      end;
+    end;
+
+    procedure TabLeft;
+      {-Moves right edge of window to the previous tab stop}
+    var
+      NewXH : Integer;
+    begin
+      NewXH := XH;
+      if (Pred(NewXH) and $07) = 0 then
+        if NewXH > 8 then
+          Dec(NewXH, 8)
+        else
+          NewXH := 1
+      else
+        NewXH := Succ(Pred(NewXH) and $F8);
+      IncCol(NewXH-XH);
+    end;
+
+    procedure CenterHorizontally;
+      {-Center window horizontally}
+    var
+      Mid : Integer;
+    begin
+      Mid := (MinX+MaxX) shr 1;
+      XL := Mid-(CurWidth shr 1);
+      XH := XL+Pred(CurWidth);
+    end;
+
+    procedure CenterVertically;
+      {-Center window vertically}
+    var
+      Mid : Integer;
+    begin
+      Mid := (MinY+MaxY) shr 1;
+      YL := Mid-(CurHeight shr 1);
+      YH := YL+Pred(CurHeight);
+    end;
+
+    procedure AdjustMinMax;
+      {-Adjust min/max coordinates based on extent of window (frame included,
+        but not shadows)}
+    var
+      X1, Y1, X2, Y2 : Byte;
+    begin
+      with RW do begin
+        Extent(X1, Y1, X2, Y2, False);
+        Inc(MinX, XL-X1);
+        Inc(MinY, YL-Y1);
+        Dec(MaxX, X2-XH);
+        Dec(MaxY, Y2-YH);
+      end;
+    end;
+
+  begin
+    MoveOrResize := False;
+
+    {save cursor state}
+    GetCursorState(SaveXY, SaveSL);
+
+    {allocate default window stack's virtual screen if necessary}
+    with wStack.wsScreen do
+      if not vsAllocated then
+        if not Alloc(ScreenHeight, ScreenWidth) then
+          Exit;
+
+    {allocate virtual screen}
+    if not VS.Alloc(ScreenHeight, ScreenWidth) then
+      Exit;
+
+    {initialize coordinates}
+    with RW do begin
+      {current window coordinates}
+      XL := wXL;
+      YL := wYL;
+      XH := wXH;
+      YH := wYH;
+
+      {min/max window coordinates}
+      MinX := wMinXL;
+      MinY := wMinYL;
+      MaxX := wMaxXH;
+      MaxY := wMaxYH;
+
+      {adjust min/max coordinates based on full extent of window}
+      AdjustMinMax;
+
+      {min/max width and height}
+      MinHeight := wMinH;
+      MinWidth := wMinW;
+      MaxHeight := wMaxH;
+      MaxWidth := wMaxW;
+    end;
+
+    {$IFDEF UseMouse}
+    if MouseInstalled then begin
+      {hide the mouse and slow it down}
+      HideMousePrim(SaveMouse);
+      SlowMouse;
+
+      {adjust mouse window coordinates}
+      StoreMouseCoordinates(MWC);
+      MouseWindow(MinX, MinY, MaxX, MaxY);
+    end;
+    {$ENDIF}
+
+    {update default window stack's virtual screen}
+    wStack.wsScreen.CopyFromScreen(1, 1);
+
+    {make sure the window is truly resizeable}
+    if not MoveOnly then
+      MoveOnly := not RW.wOptionsAreOn(wResizeable);
+
+    {make sure scroll lock is off initially if we're resizing} {!!.01}
+    if not MoveOnly then                                       {!!.01}
+{$IFDEF VIRTUALPASCAL}
+      SetKeyboardState( ScrollLockBit, False );
+{$ELSE}
+      ClearFlag(KbdFlagsPtr^, ScrollLockBit);                  {!!.01}{!!.20}
+{$ENDIF}
+
+    Dragging := MoveOnly or ScrollLock;
+    StatusLine := ScreenHeight;
+    Redraw := True;
+    Done := False;
+
+    {use a block cursor}
+    BlockCursor;
+
+    repeat
+      {recalculate current width and height}
+      CurWidth := Succ(XH-XL);
+      CurHeight := Succ(YH-YL);
+
+      {position cursor}
+      if Dragging then
+        GotoXYabs(XL, YL)
+      else
+        GotoXYabs(XH, YH);
+
+      {update screen}
+      if Redraw then
+        DrawFrame;
+
+      {$IFDEF UseMouse}
+      {position mouse cursor}
+      if MouseInstalled then begin                {!!.22}
+        MX := MouseWhereX+MouseXLo;               {!!.22}
+        MY := MouseWhereY+MouseYLo;               {!!.22}
+        MChanged := False;                        {!!.22}
+        if MX < XL then begin                     {!!.22}
+          MX := XL;                               {!!.22}
+          MChanged := True;                       {!!.22}
+        end else if MX > XH then begin            {!!.22}
+          MX := XH;                               {!!.22}
+          MChanged := True;                       {!!.22}
+        if MY < YL then begin                     {!!.22}
+          MY := YL;                               {!!.22}
+          MChanged := True;                       {!!.22}
+        end else if MY > YH then                  {!!.22}
+          MY := YH;                               {!!.22}
+          MChanged := True;                       {!!.22}
+        end;                                      {!!.22}
+        if MChanged then                          {!!.22}
+          MouseGotoXY(MX-MouseXLo, MY-MouseYLo);  {!!.22}
+      end;                                        {!!.22}
+      {$ENDIF}
+
+      {get next command}
+      Cmd := MakeMiscCommands.GetCommand(ChWord);
+
+      Redraw := True;
+      case Cmd of
+        ccCenter :
+          begin
+            CenterHorizontally;
+            CenterVertically;
+          end;
+        ccHoriz :
+          CenterHorizontally;
+        ccVert :
+          CenterVertically;
+        ccHome :
+          IncCol(-MaxWidth);
+        ccUp :
+          IncRow(-1);
+        ccPageUp :
+          if (YH mod VertTabSize) = 0 then
+            IncRow(-VertTabSize)
+          else
+            IncRow(-(YH mod VertTabSize));
+        ccLeft :
+          IncCol(-1);
+        ccRight :
+          IncCol(1);
+        ccEnd :
+          IncCol(MaxWidth);
+        ccDown :
+          IncRow(1);
+        ccPageDn :
+          if (YH mod VertTabSize) = 0 then
+            IncRow(VertTabSize)
+          else
+            IncRow(VertTabSize-(YH mod VertTabSize)); {!!.13}
+          {
+          IncRow((Succ(YH div VertTabSize)*VertTabSize)-YH);
+          }
+        ccUpLeft  :
+          IncRowCol(-1, -1);
+        ccDownLeft  :
+          IncRowCol(1, -1);
+        ccUpRight :
+          IncRowCol(-1, 1);
+        ccDownRight :
+          IncRowCol(1, 1);
+        ccBackTab,
+        ccWordLeft :
+          TabLeft;
+        ccTab,
+        ccWordRight :
+          TabRight;
+        ccScreenBot,
+        ccEndOfFile :
+          IncRow(MaxHeight);
+        ccScreenTop,
+        ccTopOfFile :
+          IncRow(-MaxHeight);
+        ccQuit,
+        ccMouseSel,
+        ccSelect :
+          Done := True;
+        else if (Dragging <> ScrollLock) and not MoveOnly then
+          Dragging := ScrollLock
+        else
+          Redraw := False;
+      end;
+    until Done;
+
+    {restore window}
+    wStack.wsScreen.CopyToScreen(1, 1);
+
+    {$IFDEF UseMouse}
+    if MouseInstalled then begin
+      ShowMousePrim(SaveMouse);
+      FastMouse;
+      RestoreMouseCoordinates(MWC);
+    end;
+    {$ENDIF}
+
+    {restore cursor state}
+    RestoreCursorState(SaveXY, SaveSL);
+
+    {get rid of virtual screen}
+    VS.Done;
+
+    if Cmd <> ccQuit then
+      with RW do
+        {adjust actual window size/coordinates}
+        if (XL <> wXL) or (YL <> wYL) or (XH <> wXH) or (YH <> wYH) then begin
+          Modified := True;
+          RW.AdjustWindow(XL, YL, XH, YH);
+        end;
+
+    MoveOrResize := True;
+  end;
+

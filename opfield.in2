@@ -1,0 +1,1609 @@
+{*********************************************************}
+{*                   OPFIELD.IN2 1.30                    *}
+{*      Copyright (c) TurboPower Software 1988,1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {-------- methods for various descendents of EntryField ------}
+
+  constructor StringField.Init(ID : Word;         var Prompt : string;
+                               pRow, pCol : Word; var Picture : string;
+                               fRow, fCol : Word; fWidth : Byte;
+                               HlpNdx : Word;     var EditSt : String;
+                               PadChar : Char;    Options, IFlags : LongInt;
+                               var Colors : ColorSet);
+    {-Initialize an entry field of type string}
+  begin
+    if Length(Picture) = 0 then
+      Picture := CharStr(AnyChar, fWidth);
+
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      BlankRange, BlankRange, Length(Picture)+1, 0, NullValidation,
+      StringConversion, DrawString, StringEditor, EditSt, PadChar, Options,
+      IFlags, Colors) then
+        Fail;
+  end;
+
+  constructor StringField.InitSim(ID : Word;         var Prompt : string;
+                                  pRow, pCol : Word; PicChar : Char;
+                                  fRow, fCol : Word; fWidth, MaxLen : Byte;
+                                  HlpNdx : Word;     var EditSt : String;
+                                  PadChar : Char;    Options, IFlags : LongInt;
+                                  var Colors : ColorSet);
+    {-Initialize an entry field of type string (simple)}
+  var
+    Picture : String;
+  begin
+    if MaxLen = 255 then
+      MaxLen := 254;
+    Picture := CharStr(PicChar, MaxLen);
+
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      BlankRange, BlankRange, MaxLen+1, 0, NullValidation,
+      SimpleStringConversion, SimpleDrawString, SimpleStringEditor, EditSt,
+      PadChar, Options, IFlags or ifSimple, Colors) then
+        Fail;
+  end;
+
+  {-----------------}
+
+  constructor ArrayField.Init(ID : Word;         var Prompt : string;
+                              pRow, pCol : Word; var Picture : string;
+                              fRow, fCol : Word; fWidth : Byte;
+                              HlpNdx : Word;     var EditVar;
+                              PadChar : Char;    Options, IFlags : LongInt;
+                              var Colors : ColorSet);
+    {-Initialize an entry field of type array (of char)}
+  begin
+    if Length(Picture) = 0 then
+      Picture := CharStr(AnyChar, fWidth);
+
+    if not EntryField.InitNPP(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+                              {!!.03}
+      BlankRange, BlankRange, {fWidth+1} Length(Picture), 0, EditVar, PadChar,
+      Options and not efTrimBlanks, IFlags, Colors) then
+        Fail;
+
+     efDraw := DrawString;
+     efEditor := StringEditor;
+  end;
+
+  procedure ArrayField.Convert(PostEdit : Boolean);
+    {-Conversion routine for arrays of char}
+  begin
+    if PostEdit then
+      Move(efEditSt^[1], efVarPtr^, Length(efPicture^))
+    else begin
+      Move(efVarPtr^, efEditSt^[1], Length(efPicture^));
+      efEditSt^[0] := Char(Length(efPicture^));
+      if TrimSpaces(efEditSt^) = '' then
+        MergePicture(efEditSt^, efEditSt^);
+    end;
+  end;
+
+  {-----------------}
+
+  constructor CharField.Init(ID : Word;             var Prompt : string;
+                             pRow, pCol : Word;     var Picture : string;
+                             fRow, fCol : Word;     HlpNdx : Word;
+                             CharLo, CharHi : Char; var EditChar : Char;
+                             PadChar : Char;        Options, IFlags : LongInt;
+                             var Colors : ColorSet);
+    {-Initialize an entry field of type char}
+  var
+    fWidth : Byte;
+    VF : ValidationFunc;
+    RLo, RHi : RangeType;
+  begin
+    if Length(Picture) = 0 then begin
+      Picture := AnyChar;
+      fWidth := 1;
+    end
+    else
+      fWidth := Length(Picture);
+
+    if CharLo = CharHi then begin
+      {no special validation required}
+      VF := NullValidation;
+      RLo := BlankRange;
+      RHi := BlankRange;
+    end
+    else begin
+      VF := ValidateChar;
+      RLo.rtChar := CharLo;
+      RHi.rtChar := CharHi;
+    end;
+
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      RLo, RHi, SizeOf(Char), 0, VF, CharConversion, DrawString, CharEditor,
+      EditChar, PadChar, Options and not efTrimBlanks, IFlags, Colors) then
+        Fail;
+  end;
+
+  constructor CharField.InitSim(ID : Word;             var Prompt : string;
+                                pRow, pCol : Word;     PicChar : Char;
+                                fRow, fCol : Word;     HlpNdx : Word;
+                                CharLo, CharHi : Char; var EditChar : Char;
+                                PadChar : Char;        Options, IFlags : LongInt;
+                                var Colors : ColorSet);
+    {-Initialize an entry field of type char}
+  var
+    fWidth : Byte;
+    VF : ValidationFunc;
+    RLo, RHi : RangeType;
+    Picture : string[1];
+  begin
+    ClearLongFlag(Options, efHouseCursorAtEnd); {!!.01}
+    Picture := PicChar;
+    fWidth := 1;
+
+    if CharLo = CharHi then begin
+      {no special validation required}
+      VF := NullValidation;
+      RLo := BlankRange;
+      RHi := BlankRange;
+    end
+    else begin
+      VF := SimpleValidateChar;
+      RLo.rtChar := CharLo;
+      RHi.rtChar := CharHi;
+    end;
+
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      RLo, RHi, SizeOf(Char), 0, VF, SimpleCharConversion, SimpleDrawString,
+      SimpleCharEditor, EditChar, PadChar, Options and not efTrimBlanks,
+      IFlags or ifSimple, Colors) then
+        Fail;
+  end;
+
+  {-----------------}
+
+  constructor BooleanField.Init(ID : Word;              var Prompt : string;
+                                pRow, pCol : Word;      var Picture : string;
+                                fRow, fCol : Word;      HlpNdx : Word;
+                                var EditBool : Boolean; PadChar : Char;
+                                Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Initialize an entry field of type boolean}
+  var
+    fWidth : Byte;
+  begin
+    if Length(Picture) = 0 then begin
+      Picture := BooleanOnly;
+      fWidth := 1;
+    end
+    else
+      fWidth := Length(Picture);
+
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      BlankRange, BlankRange, SizeOf(Boolean), 0, NullValidation, BooleanConversion,
+      DrawString, CharEditor, EditBool, PadChar, Options or efClickExit,
+      IFlags or ifBoolean, Colors) then
+        Fail;
+  end;
+
+  constructor BooleanField.InitSim(ID : Word;         var Prompt : string;
+                                   pRow, pCol : Word; fRow, fCol : Word;
+                                   HlpNdx : Word;     var EditBool : Boolean;
+                                   PadChar : Char;    Options, IFlags : LongInt;
+                                   var Colors : ColorSet);
+    {-Initialize an entry field of type boolean}
+  var
+    fWidth : Byte;
+    Picture : string[1];
+  begin
+    ClearLongFlag(Options, efHouseCursorAtEnd); {!!.01}
+    Picture := BooleanOnly;
+    fWidth := 1;
+
+    SetLongFlag(Options, efClickExit);
+    ClearLongFlag(Options, efMapExtended);
+
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      BlankRange, BlankRange, SizeOf(Boolean), 0, NullValidation,
+      SimpleBooleanConversion, SimpleDrawString, SimpleCharEditor, EditBool,
+      PadChar, Options, IFlags or ifBoolean+ifSimple, Colors) then
+        Fail;
+  end;
+
+  procedure BooleanField.efIncrement;
+    {-Increment the value of the field}
+  begin
+    Boolean(efVarPtr^) := not Boolean(efVarPtr^);
+  end;
+
+  {-----------------}
+
+  constructor YesNoField.Init(ID : Word;               var Prompt : string;
+                              pRow, pCol : Word;       var Picture : string;
+                              fRow, fCol : Word;       HlpNdx : Word;
+                              var EditYesNo : Boolean; PadChar : Char;
+                              Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Initialize an entry field of type yes-no}
+  var
+    fWidth : Byte;
+  begin
+    if Length(Picture) = 0 then begin
+      Picture := YesNoOnly;
+      fWidth := 1;
+    end
+    else
+      fWidth := Length(Picture);
+
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      BlankRange, BlankRange, SizeOf(Boolean), 0, NullValidation, YesNoConversion,
+      DrawString, CharEditor, EditYesNo, PadChar, Options or efClickExit,
+      IFlags or ifBoolean, Colors) then
+        Fail;
+  end;
+
+  constructor YesNoField.InitSim(ID : Word;         var Prompt : string;
+                                 pRow, pCol : Word; fRow, fCol : Word;
+                                 HlpNdx : Word;  var EditYesNo : Boolean;
+                                 PadChar : Char;    Options, IFlags : LongInt;
+                                 var Colors : ColorSet);
+    {-Initialize an entry field of type yes-no}
+  var
+    fWidth : Byte;
+    Picture : String[1];
+  begin
+    ClearLongFlag(Options, efHouseCursorAtEnd); {!!.01}
+    Picture := YesNoOnly;
+    fWidth := 1;
+
+    SetLongFlag(Options, efClickExit);
+    ClearLongFlag(Options, efMapExtended);
+
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      BlankRange, BlankRange, SizeOf(Boolean), 0, NullValidation,
+      SimpleYesNoConversion, SimpleDrawString, SimpleCharEditor, EditYesNo,
+      PadChar, Options, IFlags or ifBoolean+ifSimple, Colors) then
+        Fail;
+  end;
+
+  procedure YesNoField.efIncrement;
+    {-Increment the value of the field}
+  begin
+    Boolean(efVarPtr^) := not Boolean(efVarPtr^);
+  end;
+
+  {-----------------}
+
+  constructor LongIntField.Init(ID : Word;                var Prompt : string;
+                                pRow, pCol : Word;        var Picture : string;
+                                fRow, fCol : Word;        HlpNdx : Word;
+                                LongLo, LongHi : LongInt; var EditLong : LongInt;
+                                PadChar : Char;           Options, IFlags : LongInt;
+                                var Colors : ColorSet);
+    {-Initialize an entry field of type longint}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if LongLo = LongHi then begin
+      RLo.rtLong := $80000000;
+      RHi.rtLong := $7FFFFFFF;
+    end
+    else begin
+      RLo.rtLong := LongLo;
+      RHi.rtLong := LongHi;
+    end;
+
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(LongInt), 0, ValidateLong, LongConversion, DrawString,
+      StringEditor, EditLong, PadChar, Options, IFlags, Colors) then
+        Fail;
+  end;
+
+  constructor LongIntField.InitNum(ID : Word;                var Prompt : string;
+                                   pRow, pCol : Word;        var Picture : string;
+                                   fRow, fCol : Word;        HlpNdx : Word;
+                                   LongLo, LongHi : LongInt; var EditLong : LongInt;
+                                   PadChar : Char;           Options, IFlags : LongInt;
+                                   var Colors : ColorSet);
+    {-Initialize an entry field of type longint}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if LongLo = LongHi then begin
+      RLo.rtLong := $80000000;
+      RHi.rtLong := $7FFFFFFF;
+    end
+    else begin
+      RLo.rtLong := LongLo;
+      RHi.rtLong := LongHi;
+    end;
+
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(LongInt), 0, ValidateLong, LongConversion, DrawString,
+      NumberEditor, EditLong, PadChar, Options, IFlags or ifNumeric, Colors) then
+        Fail;
+  end;
+
+  constructor LongIntField.InitSim(ID : Word;                var Prompt : string;
+                                   pRow, pCol : Word;        PicChar : Char;
+                                   fRow, fCol : Word;        fWidth : Byte;
+                                   HlpNdx : Word;         LongLo, LongHi : LongInt;
+                                   var EditLong : LongInt;   PadChar : Char;
+                                   Options, IFlags : LongInt;
+                                   var Colors : ColorSet);
+    {-Initialize an entry field of type longint}
+  var
+    RLo, RHi : RangeType;
+    Picture : string;
+  begin
+    Picture := CharStr(PicChar, fWidth);
+    if LongLo = LongHi then begin
+      RLo.rtLong := $80000000;
+      RHi.rtLong := $7FFFFFFF;
+    end
+    else begin
+      RLo.rtLong := LongLo;
+      RHi.rtLong := LongHi;
+    end;
+
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      RLo, RHi, SizeOf(LongInt), 0, SimpleValidateLong, SimpleLongConversion,
+      SimpleDrawString, SimpleStringEditor, EditLong, PadChar, Options,
+      IFlags or ifSimple, Colors) then
+        Fail;
+  end;
+
+  {-----------------}
+
+  constructor WordField.Init(ID : Word;             var Prompt : string;
+                             pRow, pCol : Word;     var Picture : string;
+                             fRow, fCol : Word;     HlpNdx : Word;
+                             WordLo, WordHi : Word; var EditWord : Word;
+                             PadChar : Char;        Options, IFlags : LongInt;
+                             var Colors : ColorSet);
+    {-Initialize an entry field of type word}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if WordLo = WordHi then begin
+      RLo.rtLong := 0;
+      RHi.rtLong := 65535;
+    end
+    else begin
+      RLo.rtLong := WordLo;
+      RHi.rtLong := WordHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Word), 0, ValidateLong, WordConversion, DrawString,
+      StringEditor, EditWord, PadChar, Options, IFlags, Colors) then
+        Fail;
+  end;
+
+  constructor WordField.InitNum(ID : Word;             var Prompt : string;
+                                pRow, pCol : Word;     var Picture : string;
+                                fRow, fCol : Word;     HlpNdx : Word;
+                                WordLo, WordHi : Word; var EditWord : Word;
+                                PadChar : Char;        Options, IFlags : LongInt;
+                                var Colors : ColorSet);
+    {-Initialize an entry field of type word}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if WordLo = WordHi then begin
+      RLo.rtLong := 0;
+      RHi.rtLong := 65535;
+    end
+    else begin
+      RLo.rtLong := WordLo;
+      RHi.rtLong := WordHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Word), 0, ValidateLong, WordConversion, DrawString,
+      NumberEditor, EditWord, PadChar, Options, IFlags or ifNumeric, Colors) then
+        Fail;
+  end;
+
+  constructor WordField.InitSim(ID : Word;             var Prompt : string;
+                                pRow, pCol : Word;     PicChar : Char;
+                                fRow, fCol : Word;     fWidth : Byte;
+                                HlpNdx : Word;         WordLo, WordHi : Word;
+                                var EditWord : Word;   PadChar : Char;
+                                Options, IFlags : LongInt;
+                                var Colors : ColorSet);
+    {-Initialize an entry field of type word}
+  var
+    RLo, RHi : RangeType;
+    Picture : string;
+  begin
+    Picture := CharStr(PicChar, fWidth);
+    if WordLo = WordHi then begin
+      RLo.rtLong := 0;
+      RHi.rtLong := 65535;
+    end
+    else begin
+      RLo.rtLong := WordLo;
+      RHi.rtLong := WordHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      RLo, RHi, SizeOf(Word), 0, SimpleValidateLong, SimpleWordConversion,
+      SimpleDrawString, SimpleStringEditor, EditWord, PadChar, Options,
+      IFlags or ifSimple, Colors) then
+        Fail;
+  end;
+
+  {-----------------}
+
+  constructor SmallWordField.Init(ID : Word;             var Prompt : string;
+                                  pRow, pCol : Word;     var Picture : string;
+                                  fRow, fCol : Word;     HlpNdx : Word;
+                                  WordLo, WordHi : SmallWord; var EditWord : SmallWord;
+                                  PadChar : Char;        Options, IFlags : LongInt;
+                                  var Colors : ColorSet);
+    {-Initialize an entry field of type word}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if WordLo = WordHi then begin
+      RLo.rtLong := 0;
+      RHi.rtLong := 65535;
+    end
+    else begin
+      RLo.rtLong := WordLo;
+      RHi.rtLong := WordHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(SmallWord), 0, ValidateLong, SmallWordConversion, DrawString,
+      StringEditor, EditWord, PadChar, Options, IFlags, Colors) then
+        Fail;
+  end;
+
+  constructor SmallWordField.InitNum(ID : Word;             var Prompt : string;
+                                     pRow, pCol : Word;     var Picture : string;
+                                     fRow, fCol : Word;     HlpNdx : Word;
+                                     WordLo, WordHi : SmallWord; var EditWord : SmallWord;
+                                     PadChar : Char;        Options, IFlags : LongInt;
+                                     var Colors : ColorSet);
+    {-Initialize an entry field of type word}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if WordLo = WordHi then begin
+      RLo.rtLong := 0;
+      RHi.rtLong := 65535;
+    end
+    else begin
+      RLo.rtLong := WordLo;
+      RHi.rtLong := WordHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(SmallWord), 0, ValidateLong, SmallWordConversion, DrawString,
+      NumberEditor, EditWord, PadChar, Options, IFlags or ifNumeric, Colors) then
+        Fail;
+  end;
+
+  constructor SmallWordField.InitSim(ID : Word;             var Prompt : string;
+                                     pRow, pCol : Word;     PicChar : Char;
+                                     fRow, fCol : Word;     fWidth : Byte;
+                                     HlpNdx : Word;         WordLo, WordHi : SmallWord;
+                                     var EditWord : SmallWord;   PadChar : Char;
+                                     Options, IFlags : LongInt;
+                                     var Colors : ColorSet);
+    {-Initialize an entry field of type word}
+  var
+    RLo, RHi : RangeType;
+    Picture : string;
+  begin
+    Picture := CharStr(PicChar, fWidth);
+    if WordLo = WordHi then begin
+      RLo.rtLong := 0;
+      RHi.rtLong := 65535;
+    end
+    else begin
+      RLo.rtLong := WordLo;
+      RHi.rtLong := WordHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      RLo, RHi, SizeOf(SmallWord), 0, SimpleValidateLong, SimpleSmallWordConversion,
+      SimpleDrawString, SimpleStringEditor, EditWord, PadChar, Options,
+      IFlags or ifSimple, Colors) then
+        Fail;
+  end;
+
+  {-----------------}
+
+  constructor IntegerField.Init(ID : Word;              var Prompt : string;
+                                pRow, pCol : Word;      var Picture : string;
+                                fRow, fCol : Word;      HlpNdx : Word;
+                                IntLo, IntHi : Integer; var EditInt : Integer;
+                                PadChar : Char;         Options, IFlags : LongInt;
+                                var Colors : ColorSet);
+    {-Initialize an entry field of type integer}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if IntLo = IntHi then begin
+      RLo.rtLong := -32768;
+      RHi.rtLong := MaxInt;
+    end
+    else begin
+      RLo.rtLong := IntLo;
+      RHi.rtLong := IntHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Integer), 0, ValidateLong, IntConversion, DrawString,
+      StringEditor, EditInt, PadChar, Options, IFlags, Colors) then
+        Fail;
+  end;
+
+  constructor IntegerField.InitNum(ID : Word;              var Prompt : string;
+                                   pRow, pCol : Word;      var Picture : string;
+                                   fRow, fCol : Word;      HlpNdx : Word;
+                                   IntLo, IntHi : Integer; var EditInt : Integer;
+                                   PadChar : Char;         Options, IFlags : LongInt;
+                                   var Colors : ColorSet);
+    {-Initialize an entry field of type integer}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if IntLo = IntHi then begin
+      RLo.rtLong := -32768;
+      RHi.rtLong := MaxInt;
+    end
+    else begin
+      RLo.rtLong := IntLo;
+      RHi.rtLong := IntHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Integer), 0, ValidateLong, IntConversion, DrawString,
+      NumberEditor, EditInt, PadChar, Options, IFlags or ifNumeric, Colors) then
+        Fail;
+  end;
+
+  constructor IntegerField.InitSim(ID : Word;              var Prompt : string;
+                                   pRow, pCol : Word;      PicChar : Char;
+                                   fRow, fCol : Word;      fWidth : Byte;
+                                   HlpNdx : Word;       IntLo, IntHi : Integer;
+                                   var EditInt : Integer;  PadChar : Char;
+                                   Options, IFlags : LongInt;
+                                   var Colors : ColorSet);
+    {-Initialize an entry field of type integer}
+  var
+    RLo, RHi : RangeType;
+    Picture : string;
+  begin
+    Picture := CharStr(PicChar, fWidth);
+    if IntLo = IntHi then begin
+      RLo.rtLong := -32768;
+      RHi.rtLong := MaxInt;
+    end
+    else begin
+      RLo.rtLong := IntLo;
+      RHi.rtLong := IntHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      RLo, RHi, SizeOf(Integer), 0, SimpleValidateLong, SimpleIntConversion,
+      SimpleDrawString, SimpleStringEditor, EditInt, PadChar, Options,
+      IFlags or ifSimple, Colors) then
+        Fail;
+  end;
+
+  {-----------------}
+
+  constructor SmallIntField.Init(ID : Word;              var Prompt : string;
+                                pRow, pCol : Word;      var Picture : string;
+                                fRow, fCol : Word;      HlpNdx : Word;
+                                IntLo, IntHi : SmallInt; var EditInt : SmallInt;
+                                PadChar : Char;         Options, IFlags : LongInt;
+                                var Colors : ColorSet);
+    {-Initialize an entry field of type integerSmallInt}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if IntLo = IntHi then begin
+      RLo.rtLong := -32768;
+      RHi.rtLong := MaxInt;
+    end
+    else begin
+      RLo.rtLong := IntLo;
+      RHi.rtLong := IntHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(SmallInt), 0, ValidateLong, SmallIntConversion, DrawString,
+      StringEditor, EditInt, PadChar, Options, IFlags, Colors) then
+        Fail;
+  end;
+
+  constructor SmallIntField.InitNum(ID : Word;              var Prompt : string;
+                                   pRow, pCol : Word;      var Picture : string;
+                                   fRow, fCol : Word;      HlpNdx : Word;
+                                   IntLo, IntHi : SmallInt; var EditInt : SmallInt;
+                                   PadChar : Char;         Options, IFlags : LongInt;
+                                   var Colors : ColorSet);
+    {-Initialize an entry field of type SmallInt}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if IntLo = IntHi then begin
+      RLo.rtLong := -32768;
+      RHi.rtLong := MaxInt;
+    end
+    else begin
+      RLo.rtLong := IntLo;
+      RHi.rtLong := IntHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(SmallInt), 0, ValidateLong, SmallIntConversion, DrawString,
+      NumberEditor, EditInt, PadChar, Options, IFlags or ifNumeric, Colors) then
+        Fail;
+  end;
+
+  constructor SmallIntField.InitSim(ID : Word;              var Prompt : string;
+                                   pRow, pCol : Word;      PicChar : Char;
+                                   fRow, fCol : Word;      fWidth : Byte;
+                                   HlpNdx : Word;       IntLo, IntHi : SmallInt;
+                                   var EditInt : SmallInt;  PadChar : Char;
+                                   Options, IFlags : LongInt;
+                                   var Colors : ColorSet);
+    {-Initialize an entry field of type SmallInt}
+  var
+    RLo, RHi : RangeType;
+    Picture : string;
+  begin
+    Picture := CharStr(PicChar, fWidth);
+    if IntLo = IntHi then begin
+      RLo.rtLong := -32768;
+      RHi.rtLong := MaxInt;
+    end
+    else begin
+      RLo.rtLong := IntLo;
+      RHi.rtLong := IntHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      RLo, RHi, SizeOf(SmallInt), 0, SimpleValidateLong, SimpleSmallIntConversion,
+      SimpleDrawString, SimpleStringEditor, EditInt, PadChar, Options,
+      IFlags or ifSimple, Colors) then
+        Fail;
+  end;
+
+  {-----------------}
+
+  constructor ByteField.Init(ID : Word;             var Prompt : string;
+                             pRow, pCol : Word;     var Picture : string;
+                             fRow, fCol : Word;     HlpNdx : Word;
+                             ByteLo, ByteHi : Byte; var EditByte : Byte;
+                             PadChar : Char;        Options, IFlags : LongInt;
+                             var Colors : ColorSet);
+    {-Initialize an entry field of type byte}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if ByteLo = ByteHi then begin
+      RLo.rtLong := 0;
+      RHi.rtLong := 255;
+    end
+    else begin
+      RLo.rtLong := ByteLo;
+      RHi.rtLong := ByteHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Byte), 0, ValidateLong, ByteConversion, DrawString,
+      StringEditor, EditByte, PadChar, Options, IFlags, Colors) then
+        Fail;
+  end;
+
+  constructor ByteField.InitNum(ID : Word;             var Prompt : string;
+                                pRow, pCol : Word;     var Picture : string;
+                                fRow, fCol : Word;     HlpNdx : Word;
+                                ByteLo, ByteHi : Byte; var EditByte : Byte;
+                                PadChar : Char;        Options, IFlags : LongInt;
+                                var Colors : ColorSet);
+    {-Initialize an entry field of type byte}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if ByteLo = ByteHi then begin
+      RLo.rtLong := 0;
+      RHi.rtLong := 255;
+    end
+    else begin
+      RLo.rtLong := ByteLo;
+      RHi.rtLong := ByteHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Byte), 0, ValidateLong, ByteConversion, DrawString,
+      NumberEditor, EditByte, PadChar, Options, IFlags or ifNumeric, Colors) then
+        Fail;
+  end;
+
+  constructor ByteField.InitSim(ID : Word;             var Prompt : string;
+                                pRow, pCol : Word;     PicChar : Char;
+                                fRow, fCol : Word;     fWidth : Byte;
+                                HlpNdx : Word;         ByteLo, ByteHi : Byte;
+                                var EditByte : Byte;   PadChar : Char;
+                                Options, IFlags : LongInt;
+                                var Colors : ColorSet);
+    {-Initialize an entry field of type byte}
+  var
+    RLo, RHi : RangeType;
+    Picture : string;
+  begin
+    Picture := CharStr(PicChar, fWidth);
+    if ByteLo = ByteHi then begin
+      RLo.rtLong := 0;
+      RHi.rtLong := 255;
+    end
+    else begin
+      RLo.rtLong := ByteLo;
+      RHi.rtLong := ByteHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      RLo, RHi, SizeOf(Byte), 0, SimpleValidateLong, SimpleByteConversion,
+      SimpleDrawString, SimpleStringEditor, EditByte, PadChar, Options,
+      IFlags or ifSimple, Colors) then
+        Fail;
+  end;
+
+  {-----------------}
+
+  constructor ShortIntField.Init(ID : Word;                   var Prompt : string;
+                                 pRow, pCol : Word;           var Picture : string;
+                                 fRow, fCol : Word;           HlpNdx : Word;
+                                 ShortLo, ShortHi : ShortInt; var EditShort : ShortInt;
+                                 PadChar : Char;              Options, IFlags : LongInt;
+                                 var Colors : ColorSet);
+    {-Initialize an entry field of type shortint}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if ShortLo = ShortHi then begin
+      RLo.rtLong := -128;
+      RHi.rtLong := 127;
+    end
+    else begin
+      RLo.rtLong := ShortLo;
+      RHi.rtLong := ShortHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(ShortInt), 0, ValidateLong, ShortConversion, DrawString,
+      StringEditor, EditShort, PadChar, Options, IFlags, Colors) then
+        Fail;
+  end;
+
+  constructor ShortIntField.InitNum(ID : Word;                   var Prompt : string;
+                                    pRow, pCol : Word;           var Picture : string;
+                                    fRow, fCol : Word;           HlpNdx : Word;
+                                    ShortLo, ShortHi : ShortInt; var EditShort : ShortInt;
+                                    PadChar : Char;              Options, IFlags : LongInt;
+                                    var Colors : ColorSet);
+    {-Initialize an entry field of type shortint}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if ShortLo = ShortHi then begin
+      RLo.rtLong := -128;
+      RHi.rtLong := 127;
+    end
+    else begin
+      RLo.rtLong := ShortLo;
+      RHi.rtLong := ShortHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(ShortInt), 0, ValidateLong, ShortConversion, DrawString,
+      NumberEditor, EditShort, PadChar, Options, IFlags or ifNumeric, Colors) then
+        Fail;
+  end;
+
+  constructor ShortIntField.InitSim(ID : Word;                var Prompt : string;
+                                    pRow, pCol : Word;        PicChar : Char;
+                                    fRow, fCol : Word;        fWidth : Byte;
+                                    HlpNdx : Word;         ShortLo, ShortHi : ShortInt;
+                                    var EditShort : ShortInt; PadChar : Char;
+                                    Options, IFlags : LongInt;
+                                    var Colors : ColorSet);
+    {-Initialize an entry field of type shortint}
+  var
+    RLo, RHi : RangeType;
+    Picture : string;
+  begin
+    Picture := CharStr(PicChar, fWidth);
+    if ShortLo = ShortHi then begin
+      RLo.rtLong := -128;
+      RHi.rtLong := 127;
+    end
+    else begin
+      RLo.rtLong := ShortLo;
+      RHi.rtLong := ShortHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx,
+      RLo, RHi, SizeOf(ShortInt), 0, SimpleValidateLong, SimpleShortConversion,
+      SimpleDrawString, SimpleStringEditor, EditShort, PadChar, Options,
+      IFlags or ifSimple, Colors) then
+        Fail;
+  end;
+
+  {-----------------}
+
+  constructor RealField.Init(ID : Word;             var Prompt : string;
+                             pRow, pCol : Word;     var Picture : string;
+                             fRow, fCol : Word;     HlpNdx : Word;
+                             RealLo, RealHi : Real; Places : Byte;
+                             var EditReal : Real;   PadChar : Char;
+                             Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Initialize an entry field of type real}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if Pos(DecimalPt, Picture) <> 0 then
+      Places := 0;
+    if RealLo = RealHi then begin
+      RLo.rtReal := -1.5e38;
+      RHi.rtReal := +1.5e38;
+    end
+    else begin
+      RLo.rtReal := RealLo;
+      RHi.rtReal := RealHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Real), Places, ValidateReal, RealConversion, DrawString,
+      StringEditor, EditReal, PadChar, Options, IFlags or ifRealVar, Colors) then
+        Fail;
+  end;
+
+  constructor RealField.InitNum(ID : Word;             var Prompt : string;
+                                pRow, pCol : Word;     var Picture : string;
+                                fRow, fCol : Word;     HlpNdx : Word;
+                                RealLo, RealHi : Real; Places : Byte;
+                                var EditReal : Real;   PadChar : Char;
+                                Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Initialize an entry field of type real}
+  var
+    RLo, RHi : RangeType;
+  begin
+    Places := 0;
+    if RealLo = RealHi then begin
+      RLo.rtReal := -1.5e38;
+      RHi.rtReal := +1.5e38;
+    end
+    else begin
+      RLo.rtReal := RealLo;
+      RHi.rtReal := RealHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Real), Places, ValidateReal, RealConversion, DrawString,
+      NumberEditor, EditReal, PadChar, Options, IFlags or ifNumeric+ifRealVar, Colors) then
+        Fail;
+  end;
+
+  constructor RealField.InitSim(ID : Word;         var Prompt : string;
+                                pRow, pCol : Word; PicChar : Char;
+                                fRow, fCol : Word; fWidth : Byte;
+                                HlpNdx : Word;  RealLo, RealHi : Real;
+                                Places : Byte;     var EditReal : Real;
+                                PadChar : Char;    Options, IFlags : LongInt;
+                                var Colors : ColorSet);
+    {-Initialize an entry field of type real (simple)}
+  var
+    RLo, RHi : RangeType;
+    Picture : string;
+  begin
+    Picture := CharStr(PicChar, fWidth);
+    if RealLo = RealHi then begin
+      RLo.rtReal := -1.5e38;
+      RHi.rtReal := +1.5e38;
+    end
+    else begin
+      RLo.rtReal := RealLo;
+      RHi.rtReal := RealHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx, RLo, RHi,
+      SizeOf(Real), Places, SimpleValidateReal, SimpleRealConversion, SimpleDrawString,
+      SimpleStringEditor, EditReal, PadChar, Options, IFlags or ifSimple+ifRealVar, Colors) then
+        Fail;
+  end;
+
+  {-----------------}
+
+{$IFDEF UseBcd}
+
+  constructor BcdField.Init(ID : Word;              var Prompt : string;
+                            pRow, pCol : Word;      var Picture : string;
+                            fRow, fCol : Word;      HlpNdx : Word;
+                            var BcdLo, BcdHi : Bcd; Places : Byte;
+                            var EditBcd : Bcd;      PadChar : Char;
+                            Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Initialize an entry field of type BCD}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if Pos(DecimalPt, Picture) <> 0 then
+      Places := 0;
+    if EqualBCD(BcdLo, BcdHi) then begin
+      RLo.rtBcd := MinBcd;
+      RHi.rtBcd := MaxBcd;
+    end
+    else begin
+      RLo.rtBcd := BcdLo;
+      RHi.rtBcd := BcdHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Bcd), Places, ValidateBcd, BcdConversion, DrawString,
+      StringEditor, EditBcd, PadChar, Options, IFlags or ifRealVar, Colors) then
+        Fail;
+  end;
+
+  constructor BcdField.InitNum(ID : Word;              var Prompt : string;
+                               pRow, pCol : Word;      var Picture : string;
+                               fRow, fCol : Word;      HlpNdx : Word;
+                               var BcdLo, BcdHi : Bcd; Places : Byte;
+                               var EditBcd : Bcd;      PadChar : Char;
+                               Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Initialize an entry field of type BCD}
+  var
+    RLo, RHi : RangeType;
+  begin
+    Places := 0;
+    if EqualBCD(BcdLo, BcdHi) then begin
+      RLo.rtBcd := MinBcd;
+      RHi.rtBcd := MaxBcd;
+    end
+    else begin
+      RLo.rtBcd := BcdLo;
+      RHi.rtBcd := BcdHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Bcd), Places, ValidateBcd, BcdConversion, DrawString,
+      NumberEditor, EditBcd, PadChar, Options, IFlags or ifNumeric+ifRealVar, Colors) then
+        Fail;
+  end;
+
+  constructor BcdField.InitSim(ID : Word;         var Prompt : string;
+                               pRow, pCol : Word; PicChar : Char;
+                               fRow, fCol : Word; fWidth : Byte;
+                               HlpNdx : Word;  var BcdLo, BcdHi : Bcd;
+                               Places : Byte;     var EditBcd : Bcd;
+                               PadChar : Char;    Options, IFlags : LongInt;
+                               var Colors : ColorSet);
+    {-Initialize an entry field of type BCD (simple)}
+  var
+    RLo, RHi : RangeType;
+    Picture : string;
+  begin
+    Picture := CharStr(PicChar, fWidth);
+    if EqualBCD(BcdLo, BcdHi) then begin
+      RLo.rtBcd := MinBcd;
+      RHi.rtBcd := MaxBcd;
+    end
+    else begin
+      RLo.rtBcd := BcdLo;
+      RHi.rtBcd := BcdHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx, RLo, RHi,
+      SizeOf(Bcd), Places, SimpleValidateBcd, SimpleBcdConversion, SimpleDrawString,
+      SimpleStringEditor, EditBcd, PadChar, Options, IFlags or ifSimple+ifRealVar, Colors) then
+        Fail;
+  end;
+
+{$ENDIF}
+
+{$IFOPT N+}
+
+  constructor ExtendedField.Init(ID : Word;               var Prompt : string;
+                                 pRow, pCol : Word;       var Picture : string;
+                                 fRow, fCol : Word;       HlpNdx : Word;
+                                 ExtLo, ExtHi : Extended; Places : Byte;
+                                 var EditExt : Extended;  PadChar : Char;
+                                 Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Initialize an entry field of type extended}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if Pos(DecimalPt, Picture) <> 0 then
+      Places := 0;
+    if ExtLo = ExtHi then begin
+      RLo.rtExt := -1.1e4931;
+      RHi.rtExt := +1.1e4931;
+    end
+    else begin
+      RLo.rtExt := ExtLo;
+      RHi.rtExt := ExtHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Extended), Places, ValidateExt, ExtConversion, DrawString,
+      StringEditor, EditExt, PadChar, Options, IFlags or ifRealVar, Colors) then
+        Fail;
+  end;
+
+  constructor ExtendedField.InitNum(ID : Word;               var Prompt : string;
+                                    pRow, pCol : Word;       var Picture : string;
+                                    fRow, fCol : Word;       HlpNdx : Word;
+                                    ExtLo, ExtHi : Extended; Places : Byte;
+                                    var EditExt : Extended;  PadChar : Char;
+                                    Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Initialize an entry field of type extended}
+  var
+    RLo, RHi : RangeType;
+  begin
+    Places := 0;
+    if ExtLo = ExtHi then begin
+      RLo.rtExt := -1.1e4931;
+      RHi.rtExt := +1.1e4931;
+    end
+    else begin
+      RLo.rtExt := ExtLo;
+      RHi.rtExt := ExtHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Extended), Places, ValidateExt, ExtConversion, DrawString,
+      NumberEditor, EditExt, PadChar, Options, IFlags or ifNumeric+ifRealVar, Colors) then
+        Fail;
+  end;
+
+  constructor ExtendedField.InitSim(ID : Word;         var Prompt : string;
+                                    pRow, pCol : Word; PicChar : Char;
+                                    fRow, fCol : Word; fWidth : Byte;
+                                    HlpNdx : Word;  ExtLo, ExtHi : Extended;
+                                    Places : Byte;     var EditExt : Extended;
+                                    PadChar : Char;    Options, IFlags : LongInt;
+                                    var Colors : ColorSet);
+    {-Initialize an entry field of type extended (simple)}
+  var
+    RLo, RHi : RangeType;
+    Picture : string;
+  begin
+    Picture := CharStr(PicChar, fWidth);
+    if ExtLo = ExtHi then begin
+      RLo.rtExt := -1.1e4931;
+      RHi.rtExt := +1.1e4931;
+    end
+    else begin
+      RLo.rtExt := ExtLo;
+      RHi.rtExt := ExtHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx, RLo, RHi,
+      SizeOf(Extended), Places, SimpleValidateExt, SimpleExtConversion, SimpleDrawString,
+      SimpleStringEditor, EditExt, PadChar, Options, IFlags or ifSimple+ifRealVar, Colors) then
+        Fail;
+  end;
+
+  {-----------------}
+
+  constructor DoubleField.Init(ID : Word;             var Prompt : string;
+                               pRow, pCol : Word;     var Picture : string;
+                               fRow, fCol : Word;     HlpNdx : Word;
+                               DblLo, DblHi : Double; Places : Byte;
+                               var EditDbl : Double;  PadChar : Char;
+                               Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Initialize an entry field of type double}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if Pos(DecimalPt, Picture) <> 0 then
+      Places := 0;
+    if DblLo = DblHi then begin
+      RLo.rtExt := -1.7e308;
+      RHi.rtExt := +1.7e308;
+    end
+    else begin
+      RLo.rtExt := DblLo;
+      RHi.rtExt := DblHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Double), Places, ValidateExt, DblConversion, DrawString,
+      StringEditor, EditDbl, PadChar, Options, IFlags or ifRealVar, Colors) then
+        Fail;
+  end;
+
+  constructor DoubleField.InitNum(ID : Word;             var Prompt : string;
+                                  pRow, pCol : Word;     var Picture : string;
+                                  fRow, fCol : Word;     HlpNdx : Word;
+                                  DblLo, DblHi : Double; Places : Byte;
+                                  var EditDbl : Double;  PadChar : Char;
+                                  Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Initialize an entry field of type double}
+  var
+    RLo, RHi : RangeType;
+  begin
+    Places := 0;
+    if DblLo = DblHi then begin
+      RLo.rtExt := -1.7e308;
+      RHi.rtExt := +1.7e308;
+    end
+    else begin
+      RLo.rtExt := DblLo;
+      RHi.rtExt := DblHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Double), Places, ValidateExt, DblConversion, DrawString,
+      NumberEditor, EditDbl, PadChar, Options, IFlags or ifNumeric+ifRealVar, Colors) then
+        Fail;
+  end;
+
+  constructor DoubleField.InitSim(ID : Word;         var Prompt : string;
+                                  pRow, pCol : Word; PicChar : Char;
+                                  fRow, fCol : Word; fWidth : Byte;
+                                  HlpNdx : Word;     DblLo, DblHi : Double;
+                                  Places : Byte;     var EditDbl : Double;
+                                  PadChar : Char;    Options, IFlags : LongInt;
+                                  var Colors : ColorSet);
+    {-Initialize an entry field of type double (simple)}
+  var
+    RLo, RHi : RangeType;
+    Picture : string;
+  begin
+    Picture := CharStr(PicChar, fWidth);
+    if DblLo = DblHi then begin
+      RLo.rtExt := -1.7e308;
+      RHi.rtExt := +1.7e308;
+    end
+    else begin
+      RLo.rtExt := DblLo;
+      RHi.rtExt := DblHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx, RLo, RHi,
+      SizeOf(Double), Places, SimpleValidateExt, SimpleDblConversion, SimpleDrawString,
+      SimpleStringEditor, EditDbl, PadChar, Options, IFlags or ifSimple+ifRealVar, Colors) then
+        Fail;
+  end;
+
+  {-----------------}
+
+  constructor SingleField.Init(ID : Word;             var Prompt : string;
+                               pRow, pCol : Word;     var Picture : string;
+                               fRow, fCol : Word;     HlpNdx : Word;
+                               SglLo, SglHi : Single; Places : Byte;
+                               var EditSgl : Single;  PadChar : Char;
+                               Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Initialize an entry field of type single}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if Pos(DecimalPt, Picture) <> 0 then
+      Places := 0;
+    if SglLo = SglHi then begin
+      RLo.rtExt := -3.4e38;
+      RHi.rtExt := +3.4e38;
+    end
+    else begin
+      RLo.rtExt := SglLo;
+      RHi.rtExt := SglHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Single), Places, ValidateExt, SglConversion, DrawString,
+      StringEditor, EditSgl, PadChar, Options, IFlags or ifRealVar, Colors) then
+        Fail;
+  end;
+
+  constructor SingleField.InitNum(ID : Word;             var Prompt : string;
+                                  pRow, pCol : Word;     var Picture : string;
+                                  fRow, fCol : Word;     HlpNdx : Word;
+                                  SglLo, SglHi : Single; Places : Byte;
+                                  var EditSgl : Single;  PadChar : Char;
+                                  Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Initialize an entry field of type single}
+  var
+    RLo, RHi : RangeType;
+  begin
+    Places := 0;
+    if SglLo = SglHi then begin
+      RLo.rtExt := -3.4e38;
+      RHi.rtExt := +3.4e38;
+    end
+    else begin
+      RLo.rtExt := SglLo;
+      RHi.rtExt := SglHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Single), Places, ValidateExt, SglConversion, DrawString,
+      NumberEditor, EditSgl, PadChar, Options, IFlags or ifNumeric+ifRealVar, Colors) then
+        Fail;
+  end;
+
+  constructor SingleField.InitSim(ID : Word;         var Prompt : string;
+                                  pRow, pCol : Word; PicChar : Char;
+                                  fRow, fCol : Word; fWidth : Byte;
+                                  HlpNdx : Word;  SglLo, SglHi : Single;
+                                  Places : Byte;     var EditSgl : Single;
+                                  PadChar : Char;    Options, IFlags : LongInt;
+                                  var Colors : ColorSet);
+    {-Initialize an entry field of type single (simple)}
+  var
+    RLo, RHi : RangeType;
+    Picture : string;
+  begin
+    Picture := CharStr(PicChar, fWidth);
+    if SglLo = SglHi then begin
+      RLo.rtExt := -3.4e38;
+      RHi.rtExt := +3.4e38;
+    end
+    else begin
+      RLo.rtExt := SglLo;
+      RHi.rtExt := SglHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx, RLo, RHi,
+      SizeOf(Single), Places, SimpleValidateExt, SimpleSglConversion, SimpleDrawString,
+      SimpleStringEditor, EditSgl, PadChar, Options, IFlags or ifSimple+ifRealVar, Colors) then
+        Fail;
+  end;
+
+  {-----------------}
+
+  constructor CompField.Init(ID : Word;             var Prompt : string;
+                             pRow, pCol : Word;     var Picture : string;
+                             fRow, fCol : Word;     HlpNdx : Word;
+                             CompLo, CompHi : Comp; var EditComp : Comp;
+                             PadChar : Char;        Options, IFlags : LongInt;
+                             var Colors : ColorSet);
+    {-Initialize an entry field of type comp}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if CompLo = CompHi then begin
+      RLo.rtExt := -9.2e18;
+      RHi.rtExt := +9.2e18;
+    end
+    else begin
+      RLo.rtExt := CompLo;
+      RHi.rtExt := CompHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Comp), 0, ValidateExt, CompConversion, DrawString,
+      StringEditor, EditComp, PadChar, Options, IFlags or ifRealVar, Colors) then
+        Fail;
+  end;
+
+  constructor CompField.InitNum(ID : Word;             var Prompt : string;
+                                pRow, pCol : Word;     var Picture : string;
+                                fRow, fCol : Word;     HlpNdx : Word;
+                                CompLo, CompHi : Comp; var EditComp : Comp;
+                                PadChar : Char;        Options, IFlags : LongInt;
+                                var Colors : ColorSet);
+    {-Initialize an entry field of type comp}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if CompLo = CompHi then begin
+      RLo.rtExt := -9.2e18;
+      RHi.rtExt := +9.2e18;
+    end
+    else begin
+      RLo.rtExt := CompLo;
+      RHi.rtExt := CompHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Comp), 0, ValidateExt, CompConversion, DrawString,
+      NumberEditor, EditComp, PadChar, Options, IFlags or ifNumeric+ifRealVar, Colors) then
+        Fail;
+  end;
+
+  constructor CompField.InitSim(ID : Word;             var Prompt : string;
+                                pRow, pCol : Word;     PicChar : Char;
+                                fRow, fCol : Word;     fWidth : Byte;
+                                HlpNdx : Word;         CompLo, CompHi : Comp;
+                                var EditComp : Comp;   PadChar : Char;
+                                Options, IFlags : LongInt;
+                                var Colors : ColorSet);
+    {-Initialize an entry field of type comp (simple)}
+  var
+    RLo, RHi : RangeType;
+    Picture : string;
+  begin
+    Picture := CharStr(PicChar, fWidth);
+    if CompLo = CompHi then begin
+      RLo.rtExt := -9.2e18;
+      RHi.rtExt := +9.2e18;
+    end
+    else begin
+      RLo.rtExt := CompLo;
+      RHi.rtExt := CompHi;
+    end;
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HlpNdx, RLo, RHi,
+      SizeOf(Comp), 0, SimpleValidateExt, SimpleCompConversion, SimpleDrawString,
+      SimpleStringEditor, EditComp, PadChar, Options, IFlags or ifSimple+ifRealVar, Colors) then
+        Fail;
+  end;
+
+{$ENDIF}
+
+{$IFDEF UseDates}
+
+  constructor DateField.Init(ID : Word;             var Prompt : string;
+                             pRow, pCol : Word;     var Picture : string;
+                             fRow, fCol : Word;     HlpNdx : Word;
+                             DateLo, DateHi : Date; var EditDate : Date;
+                             PadChar : Char;        Options, IFlags : LongInt;
+                             var Colors : ColorSet);
+    {-Initialize an entry field of type date}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if DateLo = DateHi then begin
+      DateLo := MinDate;
+      DateHi := MinDate;
+    end;
+
+    RLo.rtDate := DateLo;
+    RHi.rtDate := DateHi;
+
+    ClearLongFlag(Options, efTrimBlanks); {!!.11}
+
+    if not EntryField.InitNPP(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Date), 0, EditDate, PadChar, Options, IFlags, Colors) then
+        Fail;
+
+    efDraw := DrawString;
+    efEditor := StringEditor;
+  end;
+
+  procedure DateField.Convert(PostEdit : Boolean);
+    {-Conversion routine for dates}
+  var
+    D : Date;
+  begin
+    if @efConvert <> nil then
+      efConvert(@Self, PostEdit)
+    else begin
+      if PostEdit then
+        Date(efVarPtr^) := DateStringToDate(efPicture^, efEditSt^)
+      else
+        efEditSt^ := DateToDateString(efPicture^, Date(efVarPtr^));
+      efSetSemiHidden(Date(efVarPtr^) = BadDate);
+    end;
+  end;
+
+  function DateField.Validate(var Code : Word; var SP : StringPtr) : Boolean;
+    {-Validate a field of type date}
+  var
+    D : Date;
+    Day, Month, Year : Integer;
+  begin
+    if @efValidate <> nil then
+      Validate := efValidate(@Self, Code, SP)
+    else begin
+      Validate := False;
+      {if range high is 0, allow all 0's}
+      if efRangeHi.rtDate = MinDate then
+        if DateStringIsBlank(efPicture^, efEditSt^) then begin
+          Validate := True;
+          Exit;
+        end;
+
+      {convert efEditSt^ to a date}
+      D := DateStringToDate(efPicture^, efEditSt^);
+
+      {format OK?}
+      if D = BadDate then begin
+        Code := ecBadFormat;
+        SP := @emInvalidDate;
+      end
+      else if (D < efRangeLo.rtDate) or (D > efRangeHi.rtDate) then begin
+        {OK if range high is zero}
+        Validate := (efRangeHi.rtDate = MinDate);
+        Code := ecOutOfRange;
+        SP := @emOutOfRange;
+      end
+      else
+        Validate := True;
+    end;
+  end;
+
+  {-----------------}
+
+  constructor DateStField.Init(ID : Word;         var Prompt : string;
+                               pRow, pCol : Word; var Picture : string;
+                               fRow, fCol : Word; HlpNdx : Word;
+                               var EditDateSt : DateString;
+                               PadChar : Char;    Options, IFlags : LongInt;
+                               var Colors : ColorSet);
+    {-Initialize an entry field of type date string}
+  begin
+    if Length(EditDateSt) <> Length(Picture) then
+      EditDateSt := '';
+
+    if not EntryField.InitNPP(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1,
+      HlpNdx, BlankRange, BlankRange, Length(Picture)+1, 0, EditDateSt,
+      PadChar, Options and not efTrimBlanks, IFlags, Colors) then
+        Fail;
+
+    efDraw := DrawString;
+    efEditor := StringEditor;
+  end;
+
+  procedure DateStField.Convert(PostEdit : Boolean);
+    {-Conversion routine for date strings}
+  var
+    D : Date;
+  begin
+    if @efConvert <> nil then
+      efConvert(@Self, PostEdit)
+    else if PostEdit then begin
+      {convert to date and then back again}
+      if efEditSt^ = '' then
+        D := BadDate
+      else
+        D := DateStringToDate(efPicture^, efEditSt^);
+      efSetSemiHidden(D = BadDate);
+      String(efVarPtr^) := DateToDateString(efPicture^, D);
+    end
+    else begin
+      if Length(String(efVarPtr^)) <> sfFWidth then begin {!!.03}
+        efEditSt^ := String(efVarPtr^);                   {!!.03}
+        Convert(True);
+      end;                                                {!!.03}
+      efEditSt^ := String(efVarPtr^);
+      efSetSemiHidden(DateStringToDate(efPicture^, efEditSt^) = BadDate); {!!.03}
+    end;
+  end;
+
+  function DateStField.Validate(var Code : Word; var SP : StringPtr) : Boolean;
+    {-Validate a field of type date string}
+  begin
+    if @efValidate <> nil then
+      Validate := efValidate(@Self, Code, SP)
+    else begin
+      {extract day, month, year from efEditSt^}
+      if DateStringIsBlank(efPicture^, efEditSt^) then
+        Validate := True
+      else if DateStringToDate(efPicture^, efEditSt^) <> BadDate then
+        Validate := True
+      else begin
+        Validate := False;
+        Code := ecBadFormat;
+        SP := @emInvalidDate;
+      end;
+    end;
+  end;
+
+  {-----------------}
+
+  constructor TimeField.Init(ID : Word;             var Prompt : string;
+                             pRow, pCol : Word;     var Picture : string;
+                             fRow, fCol : Word;     HlpNdx : Word;
+                             TimeLo, TimeHi : Time; var EditTime : Time;
+                             PadChar : Char;        Options, IFlags : LongInt;
+                             var Colors : ColorSet);
+    {-Initialize an entry field of type time}
+  var
+    RLo, RHi : RangeType;
+  begin
+    if TimeLo = TimeHi then begin
+      TimeLo := MinTime;
+      TimeHi := MinTime;
+    end;
+
+    RLo.rtTime := TimeLo;
+    RHi.rtTime := TimeHi;
+
+    if not EntryField.InitNPP(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1, HlpNdx,
+      RLo, RHi, SizeOf(Time), 0, EditTime, PadChar, Options, IFlags, Colors) then
+        Fail;
+
+    efDraw := DrawString;
+    efEditor := StringEditor;
+  end;
+
+  procedure TimeField.Convert(PostEdit : Boolean);
+    {-Conversion routine for time variables}
+  begin
+    if @efConvert <> nil then
+      efConvert(@Self, PostEdit)
+    else begin
+      if PostEdit then
+        Time(efVarPtr^) := TimeStringToTime(efPicture^, efEditSt^)
+      else
+        efEditSt^ := TimeToTimeString(efPicture^, Time(efVarPtr^));
+      efSetSemiHidden(Time(efVarPtr^) = BadTime);
+    end;
+  end;
+
+  function TimeField.Validate(var Code : Word; var SP : StringPtr) : Boolean;
+    {-Validate a field of type time}
+  var
+    T : Time;
+    H, M, S : Integer;
+  begin
+    if @efValidate <> nil then
+      Validate := efValidate(@Self, Code, SP)
+    else begin
+      Validate := True;
+      {if range high is 0, allow all blanks}
+      if efRangeHi.rtTime = MinTime then
+        if not TimeStringToHMS(efPicture^, efEditSt^, H, M, S) then
+          if (H = -1) and (M = -1) and ((S = -1) or (S = 0)) then begin
+            Validate := True;
+            Exit;
+          end;
+
+      {format OK?}
+      T := TimeStringToTime(efPicture^, efEditSt^);
+      if T = BadTime then begin
+        Validate := False;
+        Code := ecBadFormat;
+        SP := @emInvalidTime;
+      end
+      else if (efRangeLo.rtTime <> efRangeHi.rtTime) then
+        if (T < efRangeLo.rtTime) or (T > efRangeHi.rtTime) then begin
+          Validate := False;
+          Code := ecOutOfRange;
+          SP := @emOutOfRange;
+        end
+    end;
+  end;
+
+{$ENDIF}
+
+  constructor NestedField.Init(ID : Word;         var Prompt : string;
+                               pRow, pCol : Word; var Picture : string;
+                               fRow, fCol : Word; fWidth : Byte;
+                               HlpNdx : Word;     PadChar : Char;
+                               Options, IFlags : LongInt;
+                               var Colors : ColorSet);
+    {-Initialize a nested entry field}
+  begin
+    if Length(Picture) = 0 then
+      Picture := CharStr(AnyChar, fWidth);
+
+    ClearLongFlag(Options, efRequired); {!!.03}
+    if not EntryField.InitNPP(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, Length(Picture), 1,
+      HlpNdx, BlankRange, BlankRange, 0, 0, NullMsgLen, PadChar, Options,
+      IFlags or ifNested, Colors) then
+        Fail;
+
+    efDraw := DrawString;
+    efEditor := StringEditor;
+  end;
+
+  procedure NestedField.Convert(PostEdit : Boolean);
+    {-Conversion routine for strings}
+  begin
+    if not PostEdit then begin
+      efEditSt^[0] := #0;
+      if Length(efEditSt^) < Length(efPicture^) then
+        MergePicture(efEditSt^, efEditSt^);
+    end;
+  end;

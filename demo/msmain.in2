@@ -1,0 +1,1765 @@
+{*********************************************************}
+{*                  MAKESCRN.IN2 1.30                    *}
+{*      Copyright (c) TurboPower Software 1989, 1992.    *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  function AddDataFieldPrim : Boolean;
+    {-Primitive routine to add a data field to the entry screen}
+  var
+    Dummy : string;
+    P : Pointer;
+    SaveO, NewO : LongInt;
+    SaveF, NewF : LongInt;  {!!.02}
+    EFP : EntryFieldPtr;
+  begin
+    AddDataFieldPrim := False;
+
+    with CES, FR do begin
+      {get pointer to dummy variable}
+      P := @Dummy;
+
+      {get rid of dummy field, if any}
+      RemoveDummyField;
+
+      {save default field options}
+      SaveO := asFieldOptions;
+      SaveF := esFieldFlags;   {!!.02}
+
+      {get new field options}
+      NewO := SaveO and not FieldOptionMask;
+      NewO := NewO or (FR.frOptions and FieldOptionMask);
+      NewF := SaveF and not FieldFlagMask;                  {!!.02}
+      NewF := NewF or (FR.frSecOptions and FieldFlagMask);  {!!.02}
+
+      {reset default field options}
+      asFieldOptions := NewO;
+      esFieldFlags := NewF;    {!!.02}
+
+      case frType of
+        otStringEField :
+          if IsSimple then
+            AddSimpleStringField(
+              frPrompt, frPRow, frPCol, frPicture[1], frFRow, frFCol, frWidth,
+              frMaxLen, 0, String(P^))
+          else
+            AddStringField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, frWidth, 0,
+              String(P^));
+
+        otArrayEField :
+          AddArrayField(
+            frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, frWidth,
+            0, P^);
+
+        otCharEField :
+          if IsSimple then
+            AddSimpleCharField(
+              frPrompt, frPRow, frPCol, frPicture[1], frFRow, frFCol, 0,
+              frRangeLo.rtChar, frRangeHi.rtChar, Char(P^))
+          else
+            AddCharField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtChar, frRangeHi.rtChar, Char(P^));
+
+        otBooleanEField :
+          if IsSimple then
+            AddSimpleBooleanField(
+              frPrompt, frPRow, frPCol, frFRow, frFCol, 0, Boolean(P^))
+          else
+            AddBooleanField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              Boolean(P^));
+
+        otYesNoEField :
+          if IsSimple then
+            AddSimpleYesNoField(
+              frPrompt, frPRow, frPCol, frFRow, frFCol, 0, Boolean(P^))
+          else
+            AddYesNoField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0, Boolean(P^));
+
+        otLongIntEField :
+          if IsSimple then
+            AddSimpleLongField(
+              frPrompt, frPRow, frPCol, frPicture[1], frFRow, frFCol, frWidth,
+              0, frRangeLo.rtLong, frRangeHi.rtLong, LongInt(P^))
+          else if IsNumeric then
+            AddNumericLongField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtLong, frRangeHi.rtLong, LongInt(P^))
+          else
+            AddLongField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtLong, frRangeHi.rtLong, LongInt(P^));
+
+        otWordEField :
+          if IsSimple then
+            AddSimpleWordField(
+              frPrompt, frPRow, frPCol, frPicture[1], frFRow, frFCol, frWidth,
+              0, frRangeLo.rtWord, frRangeHi.rtWord, Word(P^))
+          else if IsNumeric then
+            AddNumericWordField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtWord, frRangeHi.rtWord, Word(P^))
+          else
+            AddWordField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtWord, frRangeHi.rtWord, Word(P^));
+
+        otIntegerEField :
+          if IsSimple then
+            AddSimpleIntField(
+              frPrompt, frPRow, frPCol, frPicture[1], frFRow, frFCol, frWidth,
+              0, frRangeLo.rtInt, frRangeHi.rtInt, Integer(P^))
+          else if IsNumeric then
+            AddNumericIntField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtInt, frRangeHi.rtInt, Integer(P^))
+          else
+            AddIntField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtInt, frRangeHi.rtInt, Integer(P^));
+
+        otByteEField :
+          if IsSimple then
+            AddSimpleByteField(
+              frPrompt, frPRow, frPCol, frPicture[1], frFRow, frFCol, frWidth,
+              0, frRangeLo.rtByte, frRangeHi.rtByte, Byte(P^))
+          else if IsNumeric then
+            AddNumericByteField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtByte, frRangeHi.rtByte, Byte(P^))
+          else
+            AddByteField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtByte, frRangeHi.rtByte, Byte(P^));
+
+        otShortIntEField :
+          if IsSimple then
+            AddSimpleShortField(
+              frPrompt, frPRow, frPCol, frPicture[1], frFRow, frFCol, frWidth,
+              0, frRangeLo.rtSht, frRangeHi.rtSht, ShortInt(P^))
+          else if IsNumeric then
+            AddNumericShortField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtSht, frRangeHi.rtSht, ShortInt(P^))
+          else
+            AddShortField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtSht, frRangeHi.rtSht, ShortInt(P^));
+
+        otRealEField :
+          if IsSimple then
+            AddSimpleRealField(
+              frPrompt, frPRow, frPCol, frPicture[1], frFRow, frFCol, frWidth, 0,
+              frRangeLo.rtReal, frRangeHi.rtReal, frDPlaces, Real(P^))
+          else if IsNumeric then
+            AddNumericRealField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtReal, frRangeHi.rtReal, frDPlaces, Real(P^))
+          else
+            AddRealField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtReal, frRangeHi.rtReal, frDPlaces, Real(P^));
+
+{$IFDEF UseBcd}
+        otBcdEField :
+          if IsSimple then
+            AddSimpleBcdField(
+              frPrompt, frPRow, frPCol, frPicture[1], frFRow, frFCol, frWidth, 0,
+              frRangeLo.rtBCD, frRangeHi.rtBCD, frDPlaces, BCD(P^))
+          else if IsNumeric then
+            AddNumericBcdField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtBCD, frRangeHi.rtBCD, frDPlaces, BCD(P^))
+          else
+            AddBcdField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtBCD, frRangeHi.rtBCD, frDPlaces, BCD(P^));
+{$ENDIF}
+{$IFOPT N+}
+        otExtendedEField :
+          if IsSimple then
+            AddSimpleExtField(
+              frPrompt, frPRow, frPCol, frPicture[1], frFRow, frFCol, frWidth, 0,
+              frRangeLo.rtExt, frRangeHi.rtExt, frDPlaces, Extended(P^))
+          else if IsNumeric then
+            AddNumericExtField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtExt, frRangeHi.rtExt, frDPlaces, Extended(P^))
+          else
+            AddExtField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtExt, frRangeHi.rtExt, frDPlaces, Extended(P^));
+
+        otDoubleEField :
+          if IsSimple then
+            AddSimpleDblField(
+              frPrompt, frPRow, frPCol, frPicture[1], frFRow, frFCol, frWidth, 0,
+              frRangeLo.rtExt, frRangeHi.rtExt, frDPlaces, Double(P^)) {!!.01}
+          else if IsNumeric then
+            AddNumericDblField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtExt, frRangeHi.rtExt, frDPlaces, Double(P^)) {!!.01}
+          else
+            AddDblField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtExt, frRangeHi.rtExt, frDPlaces, Double(P^)); {!!.01}
+
+        otSingleEField :
+          if IsSimple then
+            AddSimpleSglField(
+              frPrompt, frPRow, frPCol, frPicture[1], frFRow, frFCol, frWidth, 0,
+              frRangeLo.rtExt, frRangeHi.rtExt, frDPlaces, Single(P^)) {!!.01}
+          else if IsNumeric then
+            AddNumericSglField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtExt, frRangeHi.rtExt, frDPlaces, Single(P^)) {!!.01}
+          else
+            AddSglField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtExt, frRangeHi.rtExt, frDPlaces, Single(P^)); {!!.01}
+
+        otCompEField :
+          if IsSimple then
+            AddSimpleCompField(
+              frPrompt, frPRow, frPCol, frPicture[1], frFRow, frFCol, frWidth, 0,
+              frRangeLo.rtExt, frRangeHi.rtExt, Comp(P^)) {!!.01}
+          else if IsNumeric then
+            AddNumericCompField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtExt, frRangeHi.rtExt, Comp(P^)) {!!.01}
+          else
+            AddCompField(
+              frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+              frRangeLo.rtExt, frRangeHi.rtExt, Comp(P^)); {!!.01}
+{$ENDIF}
+{$IFDEF UseDates}
+        otDateEField :
+          AddDateField(
+            frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+            frRangeLo.rtDate, frRangeHi.rtDate, Date(P^));
+
+        otDateStEField :
+          AddDateStField(
+            frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+            DateString(P^));
+
+        otTimeEField :
+          AddTimeField(
+            frPrompt, frPRow, frPCol, frPicture, frFRow, frFCol, 0,
+            frRangeLo.rtTime, frRangeHi.rtTime, Time(P^));
+{$ENDIF}
+      end;
+
+      {restore field options}
+      asFieldOptions := SaveO;
+      esFieldFlags := SaveF;   {!!.02}
+
+      if (GetLastError = 0) then begin
+        {get a pointer to the field}
+        EFP := GetLastField;
+
+        {add the name and allocate a new user record}
+        if EFP^.sfSetFieldName(frName) and ReallocUserRecord then begin
+          AddDataFieldPrim := True;
+          with EFP^ do begin
+            {fix colors}
+            sfPromptColor    := frPromptColor;
+            sfPromptMono     := frPromptMono;
+            sfSelPromptColor := frSelPromptColor;
+            sfSelPromptMono  := frSelPromptMono;
+            sfProPromptColor := frProPromptColor;
+            sfProPromptMono  := frProPromptMono;
+            sfFieldColor     := frFieldColor;
+            sfFieldMono      := frFieldMono;
+            sfSelFieldColor  := frSelFieldColor;
+            sfSelFieldMono   := frSelFieldMono;
+            sfProFieldColor  := frProFieldColor;
+            sfProFieldMono   := frProFieldMono;
+            sfCtrlColor      := frCtrlColor;
+            sfCtrlMono       := frCtrlMono;
+
+            {fix pad character}
+            efPadChar := frPadChar;
+          end;
+        end
+        else begin
+          {dispose of the field just added}
+          asFields.Delete(EFP);
+          Dispose(EFP, Done);
+        end;
+      end;
+
+      {restore dummy field if necessary}
+      AddDummyField;
+    end;
+  end;
+
+  {$F+}
+  procedure IncType(var Value; ID : Word; Factor : Integer; var St : string);
+    {-Increment the data type field}
+  var
+    TypeCode : Byte absolute Value;
+
+    procedure AdjustForFactor;
+    const
+      Groups : array[1..11] of Byte = (
+        {01} otBooleanEField,
+        {02} otYesNoEField,
+        {..}
+        {03} otLongIntEField,
+        {04} otWordEField,
+        {05} otIntegerEField,
+        {06} otByteEField,
+        {07} otShortIntEField,
+        {..}
+        {08} otExtendedEField,
+        {09} otDoubleEField,
+        {10} otSingleEField,
+        {11} otCompEField);
+    var
+      TCI, H, L : Integer;
+    begin
+      {find the bounds of the group}
+      case TypeCode of
+        otBooleanEField, otYesNoEField :
+          begin
+            L := 1; H := 2;
+          end;
+        otLongIntEField, otWordEField, otIntegerEField,
+        otByteEField, otShortIntEField :
+          begin
+            L := 3; H := 7;
+          end;
+        otExtendedEField, otDoubleEField, otSingleEField, otCompEField :
+          begin
+            L := 8; H := 11;
+          end;
+        else
+          Exit;
+      end;
+
+      {find the type code within the group}
+      TCI := 1;
+      while Groups[TCI] <> TypeCode do
+        Inc(TCI);
+
+      {adjust by factor}
+      Inc(TCI, Factor);
+      if TCI > H then
+        TCI := L
+      else if TCI < L then
+        TCI := H;
+      TypeCode := Groups[TCI];
+    end;
+
+  begin
+    if Factor <> 0 then
+      AdjustForFactor;
+    St := TypeCode2Str(TypeCode);
+  end;
+
+  procedure IncEditor(var Value; ID : Word; Factor : Integer; var St : string);
+    {-Increment the editor field}
+  var
+    E : ShortInt absolute Value;
+
+    function Valid : Boolean;
+    begin
+      case E of
+        edNormal  : Valid := True;
+        edSimple  : Valid := FR.frType in SimpleTypeCodes;
+        edNumeric : Valid := FR.frType in NumericTypeCodes;
+      end
+    end;
+
+    procedure AdjustForFactor;
+    begin
+      repeat
+        Inc(E, Factor);
+        if E < edNormal then
+          E := edNumeric
+        else if E > edNumeric then
+          E := edNormal;
+      until Valid;
+    end;
+
+  begin
+    if Factor <> 0 then
+      AdjustForFactor;
+    St := EditorSt[E];
+  end;
+
+  procedure PostEdit(ESP : EntryScreenPtr);
+    {-Called after a field has been edited}
+  var
+    I, Cmd : Word;
+  begin
+    with FR, ESP^ do begin
+      case GetCurrentID of
+        idPrompt :
+          if (frPRow = frFRow) then
+            if (frFCol < frPCol+Length(frPrompt)) then begin
+              frFCol := frPCol+Length(frPrompt)+1;
+              frModified := True;
+              DrawField(idFCol);
+            end;
+        idPicture :
+          if (frType = otStringEField) or (frType = otArrayEField) then
+            if (frPicture <> '') and (frWidth = 1) then
+              if Length(frPicture) < CES.Width then begin
+                frWidth := Length(frPicture);
+                frModified := True;
+                DrawField(idWidth);
+              end;
+      end;
+      if CurrentFieldModified then
+        frModified := True
+      else begin
+        Cmd := GetLastCommand;
+        if Cmd = ccMouseSel then begin
+          I := EvaluateCommand(Cmd);
+          if Cmd = ccIncChoice then
+            frModified := True;
+        end;
+      end;
+    end;
+  end;
+
+  procedure PreEdit(ESP : EntryScreenPtr); {!!.01} {reformatted code}
+    {-Called before a field is edited}
+  const
+    CharList = 'Press <F10> to choose from list of characters';
+  var
+    S : string;
+    {$IFDEF UseMouse}
+    SaveMouse : Boolean;
+    {$ENDIF}
+
+    function RowSt : string;
+    begin
+      RowSt := ' (1-'+Long2Str(cesMaxRow)+')';
+    end;
+
+    function ColSt : string;
+    begin
+      ColSt := ' (1-'+Long2Str(cesMaxCol)+')';
+    end;
+
+    function WidthSt : string;
+    begin
+      WidthSt := Long2Str(CES.Width);
+    end;
+
+    function HiLoRangeSt : string;
+    var
+      S : string[80];
+    begin
+      case FR.frType of
+        otLongIntEField  : S := '-2147483648..2147483647';
+        otWordEField     : S := '0..65535';
+        otIntegerEField  : S := '-32768..32767';
+        otByteEField     : S := '0..255';
+        otShortIntEField : S := '-128..127';
+        otRealEField     : S := '-1.5e38..1.5e38';
+        {$IFDEF UseBcd}
+        otBcdEField      : S := '-9.9e63..9.9e63';
+        {$ENDIF}
+        {$IFOPT N+}
+        otExtendedEField : S := '-1.1e4931..1.1e4931';
+        otDoubleEField   : S := '-1.7e308..1.7e308';
+        otSingleEField   : S := '-3.4e38..3.4e38';
+        otCompEField     : S := '-9.2e18..9.2e18';
+        {$ENDIF}
+        {$IFDEF UseDates}
+        otDateEField     : S := DateToDateString('mm/dd/yyyy', MinDate)+'..'+
+                                DateToDateString('mm/dd/yyyy', MaxDate);
+        otTimeEField     : S := TimeToTimeString('hh:mm:ss', MinTime)+'..'+
+                                TimeToTimeString('hh:mm:ss', MaxTime)
+        {$ENDIF}
+        else
+           S := '';
+      end;
+      if S = '' then
+        HiLoRangeSt := ''
+      else
+        HiLoRangeSt := ' ('+S+')';
+    end;
+
+  begin
+    with ESP^, FR do begin
+      case GetCurrentID of
+        idName      : S := 'Enter symbolic Pascal name for field';
+        idPrompt    : S := 'Enter prompt (optional)';
+        idPRow      : S := 'Enter row for prompt'+RowSt;
+        idPCol      : S := 'Enter column for prompt'+ColSt;
+        idType,
+        idEditor    : S := 'Press <Space>, <->, or <+> to choose';
+        idPicture   : S := 'Press <F10> to build mask, <AltF10> for samples';
+        idFRow      : S := 'Enter row for field'+RowSt;
+        idFCol      : S := 'Enter column for field'+ColSt;
+        idWidth     :
+          if (frType in RealTypeCodes) then
+            S := 'Enter default number of decimal places'
+          else
+            S := '<F10> to set width (1-'+WidthSt+') to match picture';
+        idPadChar   : S := CharList;
+        idOptions   : S := 'Press <F10> for field options menu';
+        idRangeLo, idRangeHi :
+          if (frType = otCharEField) then
+            S := CharList
+          else if GetCurrentID = idRangeLo then
+            S := 'Lower limit'+HiLoRangeSt
+          else
+            S := 'Upper limit'+HiLoRangeSt;
+        idPColor..idCtrlMono : S := 'Press <F10> to select from list';
+      end;
+
+      S := Center(S, Width);
+
+      {$IFDEF UseMouse}
+      HideMousePrim(SaveMouse);
+      {$ENDIF}
+
+      FastWrite(S, wYH+2, wXL, ColorMono(wTextColor, wTextMono));
+
+      {$IFDEF UseMouse}
+      ShowMousePrim(SaveMouse);
+      {$ENDIF}
+    end;
+  end;
+
+  function GlobalValidate(ESP : EntryScreenPtr; var EFP : EntryFieldPtr;
+                          var ErrCode : Word;   var ErrMsg : StringPtr) : Boolean;
+  const
+    emBadRange       : string[33] = 'Upper limit less than lower limit';
+    emPromptWontFit  : string[26] = 'Prompt won''t fit on screen';
+    emFieldWontFit   : string[25] = 'Field won''t fit on screen';
+    emNoLiterals     : string[44] = 'Literals not allowed in simple picture masks';
+    emAllMustMatch   : string[49] = 'Only one mask character allowed for simple fields';
+    emAllLiterals    : string[34] = 'Picture mask contains all literals';
+    emOneSubfield    : string[25] = 'Only one subfield allowed';
+    emInvalidPicture : string[20] = 'Invalid picture mask';
+ var
+   SFP : SelectFieldPtr absolute EFP;
+
+    function RangeOK : Boolean;
+
+      function LongRangeOK(Min, Max : LongInt) : Boolean;
+      begin
+        with FR do begin
+          if frRangeLo.rtLong > frRangeHi.rtLong then
+            LongRangeOK := False
+          else begin
+            if frRangeLo.rtLong < Min then
+              frRangeLo.rtLong := Min;
+            if frRangeHi.rtLong > Max then
+              frRangeHi.rtLong := Max;
+            LongRangeOK := True;
+          end
+        end;
+      end;
+
+      {$IFOPT N+}
+      function ExtRangeOK(Min, Max : Extended) : Boolean;
+      begin
+        with FR do begin
+          if frRangeLo.rtExt > frRangeHi.rtExt then
+            ExtRangeOK := False
+          else begin
+            if frRangeLo.rtExt < Min then
+              frRangeLo.rtExt := Min;
+            if frRangeHi.rtExt > Max then
+              frRangeHi.rtExt := Max;
+            ExtRangeOK := True;
+          end
+        end;
+      end;
+      {$ENDIF}
+
+    begin
+      with FR do
+        case frType of
+          otCharEField :
+            RangeOK := frRangeLo.rtChar <= frRangeHi.rtChar;
+
+          otLongIntEField :
+            RangeOK := LongRangeOK($80000000, $7FFFFFFF);
+          otWordEField :
+            RangeOK := LongRangeOK(0, 65535);
+          otIntegerEField :
+            RangeOK := LongRangeOK(-32768, 32767);
+          otByteEField :
+            RangeOK := LongRangeOK(0, 255);
+          otShortIntEField :
+            RangeOK := LongRangeOK(-128, 127);
+
+          otRealEField :
+            RangeOK := frRangeLo.rtReal <= frRangeHi.rtReal;
+
+          {$IFDEF UseBcd}
+          otBcdEField :
+            RangeOK := LessEqualBCD(frRangeLo.rtBcd, frRangeHi.rtBcd);
+          {$ENDIF}
+
+          {$IFOPT N+}
+          otExtendedEField :
+            RangeOK := ExtRangeOK(-1.1e4931, +1.1e4931);
+          otDoubleEField :
+            RangeOK := ExtRangeOK(-1.7e308, +1.7e308);
+          otSingleEField :
+            RangeOK := ExtRangeOK(-3.4e38, +3.4e38);
+          otCompEField :
+            RangeOK := ExtRangeOK(-9.2e18, +9.2e18);
+          {$ENDIF}
+
+          {$IFDEF UseDates}
+          otDateEField :
+            RangeOK := frRangeLo.rtDate <= frRangeHi.rtDate;
+
+          otTimeEField :
+            RangeOK := frRangeLo.rtTime <= frRangeHi.rtTime;
+          {$ENDIF}
+
+          else
+            RangeOK := True;
+        end;
+    end;
+
+    function PromptOK : Boolean;
+    begin
+      with FR do
+        PromptOK := (frPCol+Length(frPrompt)-1) <= cesMaxCol;
+    end;
+
+    function FieldOK : Boolean;
+    begin
+      with FR do
+        FieldOK := (frWidth <= CES.Width) and ((frFCol+frWidth-1) <= cesMaxCol); {!!.22}
+    end;
+
+    procedure InitPictureFlags(P : string; var PFlags : PictureFlags);
+      {-Initialize a picture flags table}
+    var
+      I : Word;
+      PLen : Byte absolute P;
+    begin
+      FillChar(PFlags[PLen+1], SizeOf(PFlags)-PLen, False);
+      for I := 1 to PLen do
+        PFlags[I] := (P[I] in PictureChars);
+    end;
+
+    function HasLiterals : Boolean;
+    var
+      I : Word;
+      PFlags : PictureFlags;
+    begin
+      HasLiterals := True;
+      InitPictureFlags(FR.frPicture, PFlags);
+      for I := 1 to Length(FR.frPicture) do
+        if not PFlags[I] then
+          Exit;
+      HasLiterals := False;
+    end;
+
+    function AllLiterals : Boolean;
+    var
+      I : Word;
+      PFlags : PictureFlags;
+    begin
+      AllLiterals := False;
+      InitPictureFlags(FR.frPicture, PFlags);
+      for I := 1 to Length(FR.frPicture) do
+        if PFlags[I] then
+          Exit;
+      AllLiterals := True;
+    end;
+
+    function SubFields(var LongestSub : Byte) : Byte;
+    var
+      I, SubCount, SubLength : Byte;
+      InSubfield : Boolean;
+    begin
+      SubCount := 0;
+      SubLength := 0;
+      InSubfield := False;
+      if (FR.frType in IntegerTypeCodes) and not IsSimple then {!!.13}
+        PictureChars := PictureChars+[Comma];                  {!!.13}
+      with FR do
+        for I := 1 to Length(frPicture) do
+          if not (frPicture[I] in PictureChars) then begin
+            if InSubfield then begin
+              if SubLength > LongestSub then
+                LongestSub := SubLength;
+              InSubfield := False;
+              SubLength := 0;
+            end
+          end
+          else if InSubfield then
+            Inc(SubLength)
+          else begin
+            Inc(SubCount);
+            SubLength := 1;
+            InSubfield := True;
+          end;
+      PictureChars := PictureChars-[Comma];                    {!!.13}
+      if SubLength > LongestSub then {!!.03}
+        LongestSub := SubLength;     {!!.03}
+      SubFields := SubCount;
+    end;
+
+    function PictureNotSame : Boolean;
+    begin
+      with FR do
+        PictureNotSame := frPicture <> CharStr(frPicture[1], Length(frPicture));
+    end;
+
+    function OneSubfieldCheck(Max : Byte) : Boolean;
+    var
+      L : Byte;
+    begin
+      OneSubfieldCheck := False;
+      if Subfields(L) > 1 then
+        ErrMsg := @emOneSubfield
+      else if L > Max then
+        ErrMsg := @emInvalidPicture
+      else
+        OneSubfieldCheck := True;
+    end;
+
+    function WidthAndPictureOK : Boolean;
+    begin
+      WidthAndPictureOK := False;
+
+      {supply default picture masks again if necessary}
+      DefaultPictureMasks;
+
+      with FR do begin
+        case frType of
+          otStringEField, otArrayEField :
+            {do nothing} ;
+          else
+            frWidth := Length(frPicture);
+        end;
+
+        {simple field types are different}
+        if IsSimple then begin
+          {literals not allowed in picture mask}
+          if HasLiterals then begin
+            ErrMsg := @emNoLiterals;
+            Exit;
+          end
+          {picture may contain only one mask character}
+          else if PictureNotSame then begin
+            ErrMsg := @emAllMustMatch;
+            Exit;
+          end;
+        end
+        else begin
+          {reset width if too high}
+          if (frWidth > Length(frPicture)) then
+            frWidth := Length(frPicture);
+
+          {check for all literals}
+          if AllLiterals then begin
+            ErrMsg := @emAllLiterals;
+            Exit;
+          end;
+        end;
+
+        {deal with special cases}
+        ErrMsg := @emInvalidPicture;
+        if (frType in IntegerTypeCodes) and not OneSubfieldCheck(255) then
+          Exit
+        else case frType of
+          otCharEField :
+            if IsSimple then begin
+              if not OneSubfieldCheck(1) then
+                Exit
+              else if Length(frPicture) > 1 then
+                Exit;
+            end
+            else if not OneSubfieldCheck(1) then
+              Exit;
+          otBooleanEField :
+            if IsSimple then begin
+              frPicture := BooleanOnly;
+              frWidth := 1;
+            end
+            else if not OneSubfieldCheck(1) then
+              Exit
+            else if Pos(BooleanOnly, frPicture) = 0 then
+              Exit;
+          otYesNoEField :
+            if IsSimple then begin
+              frPicture := YesNoOnly;
+              frWidth := 1;
+            end
+            else if not OneSubfieldCheck(1) then
+              Exit
+            else if Pos(YesNoOnly, frPicture) = 0 then
+              Exit;
+        end;
+      end;
+
+      WidthAndPictureOK := True;
+    end;
+
+  begin
+    GlobalValidate := False;
+    FES.ResetScreen;
+    ErrCode := epWarning+ecOutOfRange;
+
+    with FES, FR do begin
+      {check prompt}
+      if frPrompt = '' then begin
+        {force same coordinates as field}
+        frPRow := frFRow;
+        frPCol := frFCol;
+      end
+      else if not PromptOK then begin
+        SFP := FindField(idPrompt);
+        ErrMsg := @emPromptWontFit;
+        Exit;
+      end;
+
+      {check the width and picture mask}
+      SFP := FindField(idPicture);
+      if not WidthAndPictureOK then
+        Exit;
+
+      {check the field coordinates}
+      if not FieldOK then begin
+        ErrMsg := @emFieldWontFit;
+        Exit;
+      end;
+
+      {set max length based on width, picture}
+      frMaxLen := MaxWord(Length(frPicture), frWidth);
+
+      {check frDPlaces}
+      if frType in RealTypeCodes then
+        if (Pos(DecimalPt, frPicture) <> 0) then
+          frDPlaces := 0;
+
+      {check the range}
+      if not RangeOK then begin
+        SFP := FindField(idRangeHi);
+        ErrMsg := @emBadRange;
+        Exit;
+      end;
+    end;
+
+    GlobalValidate := True;
+  end;
+
+  function ValidateFieldName(EFP : EntryFieldPtr; var ErrCode : Word;
+                             var ErrorSt : StringPtr) : Boolean;
+    {-Validate a field name}
+  const
+    BadFieldName : string[29] = 'Not a valid Pascal identifier';
+  var
+    S : string[80];
+    I : Word;
+  begin
+    ErrCode := 0;
+    ErrorSt := @BadFieldName;
+
+    S := EFP^.efEditSt^;
+    if S <> '' then
+      case S[1] of
+        {digit not allowed as first character}
+        'A'..'Z', 'a'..'z', '_' :
+          for I := 1 to Length(S) do
+            if not (S[I] in PascalChars) then
+              ErrCode := 1;
+        else
+          ErrCode := 1;
+      end;
+
+    ValidateFieldName := (ErrCode = 0);
+  end;
+  {$F-}
+
+  function InitFieldEntryScreen : Boolean;
+    {-Initialize the entry screen used to edit field records}
+  const
+    LL = 'Lower limit';
+    UL = 'Upper limit';
+    ToggleTypeCodes : ByteSet = [
+      otBooleanEField, otYesNoEField, otLongIntEField, otWordEField,
+      otIntegerEField, otByteEField, otShortIntEField, otExtendedEField,
+      otDoubleEField, otSingleEField, otCompEField];
+
+    procedure AddSpanPrim(Row : Word);
+    begin
+      with FES, wFrame do
+        AddSpanHeader(DefLeftTee, DefCrossBar, DefRightTee, Row, frTT);
+    end;
+
+    procedure AddCHPrim(S : string; Row, Col : Word);
+    begin
+      with FES, wFrame do
+        AddCustomHeader(S, frTL, Row, Col, frHeaderColor, frHeaderMono);
+    end;
+
+  begin    {!!.01} {reformatted code}
+    InitFieldEntryScreen := False;
+    if not FES.Init(14, 2, 64, 21) then
+      Exit;
+
+    with FES, wFrame do begin
+      {adjust frame coordinates}
+      AdjustFrameCoords(frXL, frYL, frXH, frYH+2);
+
+      {add span headers}
+      AddSpanPrim(02);
+      AddSpanPrim(05);
+      AddSpanPrim(13);
+      AddSpanPrim(16);
+      AddSpanPrim(21);
+
+      {add other headers}
+      AddHeader(' Name ', heTC);
+      AddCHPrim(' Prompt ',       22, 02);
+      AddCHPrim(' Field ',        23, 05);
+      AddCHPrim(' Range ',        23, 13);
+      AddCHPrim(' Normal ',       13, 16);
+      AddCHPrim(' Selected ',     26, 16);
+      AddCHPrim(' Protected ',    39, 16);
+      AddCHPrim(' Instructions ', 20, 21);
+      AddHeader(' <Esc> Cancel '^G' <CtrlEnter> Save ', heBC); {!!.01}
+
+      {add shadows}
+      AddShadow(shBR, shSeeThru);
+    end;
+
+    with FES, FR do begin
+      {set options}
+      SetPadChar('_');
+      esFieldOptionsOn(efClearFirstChar);
+      esSecFieldOptionsOn(sefPadCurrentOnly);
+      esFieldOptionsOff(efTrimBlanks+efMapCtrls);
+      SetWrapMode(WrapAtEdges);
+      SetSelectedFieldAttr($2F, $70);
+
+      {set procedure pointers}
+      SetPostEditProc(PostEdit);
+      SetPreEditProc(PreEdit);
+      SetValidateFunc(GlobalValidate);
+
+      {change user character set #1}
+      UserSet1 := PascalChars;
+
+      {add fields}
+      AddSimpleStringField(
+        'Name',     01, 02, '1', 01, 14, 20, 20, 0, frName);
+      ChangeValidation(idName, ValidateFieldName);
+
+      AddSimpleStringField(
+        'Prompt',   03, 02, 'X', 03, 14, 37, 80, 0, frPrompt);
+      AddSimpleWordField(
+        'Row, Col', 04, 02, '9', 04, 14, 3, 0, 1, cesMaxRow, frPRow);
+      AddSimpleWordField(
+        '',         04, 19, '9', 04, 18, 3, 0, 1, cesMaxCol, frPCol);
+      AddChoiceField(
+        'Type',     06, 02, CharStr('X', 13), 06, 14, 0, 2, IncType, frType);
+      AddChoiceField(
+        'Editor',   07, 02, CharStr('X', 7), 07, 14, 0, 2, IncEditor, frEditor);
+
+      esFieldOptionsOn(efClickExit);
+      AddSimpleStringField(
+        'Picture',  08, 02, 'X', 08, 14, 37, 254, 0, frPicture);
+      esFieldOptionsOff(efClickExit);
+
+      AddSimpleWordField(
+        'Row, Col', 09, 02, '9', 09, 14, 3, 0, 1, cesMaxRow, frFRow);
+      AddSimpleWordField(
+        '',         09, 19, '9', 09, 18, 3, 0, 1, cesMaxCol, frFCol);
+
+      if frType in RealTypeCodes then begin
+        AddSimpleByteField(
+          'Dec places', 10, 02, '9',  10, 14, 2, 0, 0, 18, frDPlaces);
+      end
+      else begin
+        esFieldOptionsOn(efClickExit);
+        AddSimpleByteField(
+          'Width',  10, 02, '9', 10, 14, 3, 0, 1, CES.Width, frWidth);
+        esFieldOptionsOff(efClickExit);
+      end;
+
+      esFieldOptionsOn(efClickExit);
+      esFieldOptionsOff(efMapCtrls);
+      SetPadChar(' ');
+      AddCharField(
+        'Pad char', 11, 02, '''X''', 11, 14, 0, #0, #0, frPadChar);
+      SetPadChar('_');
+      esFieldOptionsOff(efClickExit);
+      esFieldOptionsOn(efMapCtrls);
+
+      AddNestedField(
+        'Options',  12, 02, '', 12, 14, 2, 0);
+
+      {use different types as necessary for lower/upper range}
+      esSecFieldOptionsOn(sefSmartExponents); {!!.02}
+      case frType of
+        otCharEField :
+          begin
+            esFieldOptionsOn(efClickExit);
+            esFieldOptionsOff(efMapCtrls);
+            SetPadChar(' ');
+            AddCharField(
+              LL, 14, 02, '''X''', 14, 14, 0, #0, #0, frRangeLo.rtChar);
+            AddCharField(
+              UL, 15, 02, '''X''', 15, 14, 0, #0, #0, frRangeHi.rtChar);
+            SetPadChar('_');
+            esFieldOptionsOff(efClickExit);
+            esFieldOptionsOn(efMapCtrls);
+          end;
+        otLongIntEField, otWordEField, otIntegerEField, otByteEField,
+        otShortIntEField :
+          begin
+            AddSimpleLongField(
+              LL, 14, 02, '#', 14, 14, 12, 0, 0, 0, frRangeLo.rtLong);
+            AddSimpleLongField(
+              UL, 15, 02, '#', 15, 14, 12, 0, 0, 0, frRangeHi.rtLong);
+          end;
+        otRealEField :
+          begin
+            AddSimpleRealField(
+              LL, 14, 02, 'E', 14, 14, 16, 0, 0.0, 0.0, 6, frRangeLo.rtReal);
+            AddSimpleRealField(
+              UL, 15, 02, 'E', 15, 14, 16, 0, 0.0, 0.0, 6, frRangeHi.rtReal);
+          end;
+{$IFDEF UseBcd}
+        otBcdEField :
+          begin
+            AddSimpleBcdField(
+              LL, 14, 02, 'E', 14, 14, 16, 0, ZeroBcd, ZeroBcd, 6, frRangeLo.rtBcd);
+            AddSimpleBcdField(
+              UL, 15, 02, 'E', 15, 14, 16, 0, ZeroBcd, ZeroBcd, 6, frRangeHi.rtBcd);
+          end;
+{$ENDIF}
+{$IFOPT N+}
+        otExtendedEField, otDoubleEField, otSingleEField, otCompEField :
+          begin
+            AddSimpleExtField(
+              LL, 14, 02, 'E', 14, 14, 16, 0, 0.0, 0.0, 6, frRangeLo.rtExt);
+            AddSimpleExtField(
+              UL, 15, 02, 'E', 15, 14, 16, 0, 0.0, 0.0, 6, frRangeHi.rtExt);
+          end;
+{$ENDIF}
+{$IFDEF UseDates}
+        otDateEField :
+          begin
+            AddDateField(
+              LL, 14, 02, 'mm/dd/yyyy', 14, 14, 0, 0, 0, frRangeLo.rtDate);
+            AddDateField(
+              UL, 15, 02, 'mm/dd/yyyy', 15, 14, 0, 0, 0, frRangeHi.rtDate);
+          end;
+        otTimeEField :
+          begin
+            AddTimeField(
+              LL, 14, 02, 'hh:mm:ss', 14, 14, 0, 0, 0, frRangeLo.rtTime);
+            AddTimeField(
+              UL, 15, 02, 'hh:mm:ss', 15, 14, 0, 0, 0, frRangeHi.rtTime);
+          end;
+{$ENDIF}
+        else
+          begin
+            AddNestedField(LL, 14, 02, '', 14, 14, 1, 0);
+            AddNestedField(UL, 15, 02, '', 15, 14, 1, 0);
+          end;
+      end;
+      esSecFieldOptionsOff(sefSmartExponents); {!!.02}
+
+      AddTextField(
+        'Color Mono', 17, 12);
+      AddTextField(
+        'Color Mono', 17, 26);
+      AddTextField(
+        'Color Mono', 17, 40);
+
+      esFieldOptionsOn(efClickExit);
+      AddSimpleByteField(
+        'Prompt',  18, 02, 'K', 18, 14, 2, 0, 0, 0, frPromptColor);
+      AddSimpleByteField(
+        '',        18, 18, 'K', 18, 19, 2, 0, 0, 0, frPromptMono);
+      AddSimpleByteField(
+        '',        18, 26, 'K', 18, 28, 2, 0, 0, 0, frSelPromptColor);
+      AddSimpleByteField(
+        '',        18, 32, 'K', 18, 33, 2, 0, 0, 0, frSelPromptMono);
+      AddSimpleByteField(
+        '',        18, 40, 'K', 18, 42, 2, 0, 0, 0, frProPromptColor);
+      AddSimpleByteField(
+        '',        18, 46, 'K', 18, 47, 2, 0, 0, 0, frProPromptMono);
+      AddSimpleByteField(
+        'Field',   19, 02, 'K', 19, 14, 2, 0, 0, 0, frFieldColor);
+      AddSimpleByteField(
+        '',        19, 18, 'K', 19, 19, 2, 0, 0, 0, frFieldMono);
+      AddSimpleByteField(
+        '',        19, 26, 'K', 19, 28, 2, 0, 0, 0, frSelFieldColor);
+      AddSimpleByteField(
+        '',        19, 32, 'K', 19, 33, 2, 0, 0, 0, frSelFieldMono);
+      AddSimpleByteField(
+        '',        19, 40, 'K', 19, 42, 2, 0, 0, 0, frProFieldColor);
+      AddSimpleByteField(
+        '',        19, 46, 'K', 19, 47, 2, 0, 0, 0, frProFieldMono);
+      AddSimpleByteField(
+        'Control', 20, 02, 'K', 20, 14, 2, 0, 0, 0, frCtrlColor);
+      AddSimpleByteField(
+        '',        20, 18, 'K', 20, 19, 2, 0, 0, 0, frCtrlMono);
+
+      if not (frType in ToggleTypeCodes) then
+        ChangeProtection(idType, True);
+
+      if not (frType in SimpleTypeCodes+NumericTypeCodes) then
+        ChangeProtection(idEditor, True);
+
+      case frType of
+        otStringEField, otArrayEField :
+          {do nothing} ;
+        else if not (frType in RealTypeCodes) then
+          ChangeHidden(idDPlaces, True);
+      end;
+
+      if not (frType in HaveRangeTypeCodes) then begin
+        ChangeHidden(idRangeLo, True);
+        ChangeHidden(idRangeHi, True);
+      end;
+
+      {install default error handler}
+      SetErrorProc(OurErrorProc);
+
+      if GetLastError <> 0 then
+        FES.Done
+      else
+        InitFieldEntryScreen := True;
+    end;
+  end;
+
+  {$F+}                           {!!.01} {reformatted/rewrote routine}
+  procedure FieldOptionsMenuCustom(var Name : String; Key : LongInt;
+                                   Selected, Highlighted : Boolean;
+                                   WPtr : RawWindowPtr);
+    {-String customization routine for FieldOptionsMenu}
+  const
+    MergeCol = 22;
+
+    procedure Merge(Src : string);
+    begin
+      Move(Src[1], Name[MergeCol], Length(Src));
+    end;
+
+    procedure MergeYesNo(YN : Boolean);
+    begin
+      Merge(YesNoSt[YN]);
+    end;
+
+    procedure MergeOpt(Flags : LongInt);
+    begin
+      MergeYesNo(frOptionsAreOn(Flags));
+    end;
+
+    procedure MergeSecOpt(Flags : LongInt);
+    begin
+      MergeYesNo(frSecOptionsAreOn(Flags));
+    end;
+
+    function ScrollByPageSt : string;
+    var
+      I : Word;
+    begin
+      I := 0;
+      if frOptionsAreOn(esScrollbyPage) then
+        Inc(I);
+      if frOptionsAreOn(esMousePage) then
+        Inc(I, 2);
+      ScrollByPageSt := PageSt[I];
+    end;
+
+  begin
+    with FR do
+      case Word(Key) of
+        mmAutoAdvanceChar   : MergeOpt(efAutoAdvanceChar);
+        mmAutoAdvanceCursor : MergeOpt(efAutoAdvanceCursor);
+        mmAutoNumLock       : MergeOpt(efAutoNumLock);
+        mmBeepOnError       : MergeOpt(efBeepOnError);
+        mmClearFirstChar    : MergeOpt(efClearFirstChar);
+        mmCursorToEnd       : MergeOpt(efCursorToEnd);
+        mmExitOnClick       : MergeOpt(efClickExit);
+        mmForceCase         :
+          if frOptionsAreOn(efForceUpper) then
+            Merge(UpperSt)
+          else if frOptionsAreOn(efForceLower) then
+            Merge(LowerSt)
+          else
+            Merge(NoSt);
+        mmForceTypingMode   :
+          if frOptionsAreOn(efForceMode) then
+            Merge(InsOverSt[frOptionsAreOn(efForceOvertype)])
+          else
+            Merge(NoSt);
+        mmHouseCursor       : MergeOpt(efHouseCursorAtEnd);
+        mmInsertPushes      : MergeOpt(efInsertPushes);
+        mmMapCtrls          : MergeOpt(efMapCtrls);
+        mmParensForMinus    : MergeOpt(efParensForMinus);
+        mmPasswordMode      : MergeOpt(efPasswordMode);   {!!.11}
+        mmProtected         : MergeOpt(efProtected);      {!!.11}
+        mmRequired          : MergeOpt(efRequired);
+        mmRightJustify      : MergeOpt(efRightJustify);
+        mmSuppressZeros     : MergeSecOpt(sefSuppressZero);
+        mmTrimBlanks        : MergeOpt(efTrimBlanks);
+      end;
+    if FieldOptionsMenu.FindItem(Key)^.IsProtected then
+      Merge('n.a. ');
+  end;
+  {$F-}
+
+  function InitFieldOptionsMenu : Boolean;
+    {-Initialize the field options menu}
+  begin
+    InitFieldOptionsMenu := False;
+
+    {initialize the menu}
+    if not FieldOptionsMenu.Init(26, 4, 51, 22, Vertical) then {!!.11}
+      Exit;
+
+    with FieldOptionsMenu do begin
+      {add the header}
+      wFrame.AddHeader(' Options ', heTC);
+
+      {add the items to the menu}
+      AddFieldOptionsToMenu(FieldOptionsMenu, False);
+      ItemsDone;
+
+      {add shadows to all submenus}
+      AddShadows(True, shBR, shSeeThru);
+
+      {install string customization routine}
+      SetCustomStringProc(FieldOptionsMenuCustom);
+
+      {check for errors}
+      if GetLastError <> 0 then
+        FieldOptionsMenu.Done
+      else
+        InitFieldOptionsMenu := True;
+    end;
+  end;
+
+  procedure DoOptionsMenu;
+    {-Toggle options}
+  var
+    Finished : Boolean;
+
+    procedure Toggle(Flags : LongInt);
+    begin
+      if frOptionsAreOn(Flags) then
+        frOptionsOff(Flags)
+      else
+        frOptionsOn(Flags);
+      FR.frModified := True;
+    end;
+
+    procedure ToggleSec(Flags : LongInt);
+    begin
+      if frSecOptionsAreOn(Flags) then
+        frSecOptionsOff(Flags)
+      else
+        frSecOptionsOn(Flags);
+      FR.frModified := True;
+    end;
+
+    procedure IncCase;
+    begin
+      if frOptionsAreOn(efForceUpper) then begin
+        frOptionsOff(efForceUpper);
+        frOptionsOn(efForceLower);
+      end
+      else if frOptionsAreOn(efForceLower) then
+        frOptionsOff(efForceLower)
+      else
+        frOptionsOn(efForceUpper);
+      FR.frModified := True;
+    end;
+
+    procedure IncTypingMode;
+    begin
+      if not frOptionsAreOn(efForceMode) then
+        frOptionsOn(efForceMode+efForceOverType)
+      else if frOptionsAreOn(efForceOverType) then
+        frOptionsOff(efForceOverType)
+      else
+        frOptionsOff(efForceMode);
+      FR.frModified := True;
+    end;
+
+    procedure Protect(ItemCode : LongInt; Enable : Boolean);
+      {-Protect disabled items}
+    begin
+      if Enable then
+        FieldOptionsMenu.UnprotectItem(ItemCode)
+      else
+        FieldOptionsMenu.ProtectItem(ItemCode);
+    end;
+
+    procedure ProtectItems(TC : Byte);
+      {-Protect menu items based on TypeCode}
+    begin
+      Protect(mmForceCase, IsSimple);
+      Protect(mmHouseCursor, IsSimple);
+      Protect(mmClearFirstChar, not (TC in CharEditorTypeCodes));
+      Protect(mmParensForMinus, IsNumeric);
+      Protect(mmCursorToEnd, not IsNumeric and not (TC in CharEditorTypeCodes));
+      Protect(mmInsertPushes, not IsNumeric and not (TC in CharEditorTypeCodes));
+      Protect(mmRightJustify, not (IsSimple or IsNumeric) and not (TC in CharEditorTypeCodes));
+      Protect(mmSuppressZeros, TC in IntegerTypeCodes);
+      case TC of
+        otStringEField, otDateStEField :
+          Protect(mmTrimBlanks, True);
+        else
+          Protect(mmTrimBlanks, False);
+      end;
+    end;
+
+  begin
+    with FieldOptionsMenu do begin
+      {protect menu items as appropriate}
+      ProtectItems(FR.frType);
+
+      Finished := False;
+      repeat
+        Process;
+        case GetLastCommand of
+          ccSelect :
+            case MenuChoice of
+              mmAutoAdvanceChar   : Toggle(efAutoAdvanceChar);
+              mmAutoAdvanceCursor : Toggle(efAutoAdvanceCursor);
+              mmAutoNumLock       : Toggle(efAutoNumLock);
+              mmBeepOnError       : Toggle(efBeepOnError);
+              mmClearFirstChar    : Toggle(efClearFirstChar);
+              mmCursorToEnd       : Toggle(efCursorToEnd);
+              mmExitOnClick       : Toggle(efClickExit);
+              mmForceCase         : IncCase;
+              mmForceTypingMode   : IncTypingMode;
+              mmHouseCursor       : Toggle(efHouseCursorAtEnd);
+              mmInsertPushes      : Toggle(efInsertPushes);
+              mmMapCtrls          : Toggle(efMapCtrls);
+              mmParensForMinus    : Toggle(efParensForMinus);
+              mmPasswordMode      : Toggle(efPasswordMode);   {!!.11}
+              mmProtected         : Toggle(efProtected);      {!!.11}
+              mmRequired          : Toggle(efRequired);
+              mmRightJustify      : Toggle(efRightJustify);
+              mmSuppressZeros     : ToggleSec(sefSuppressZero);
+              mmTrimBlanks        : Toggle(efTrimBlanks);
+            end;
+          MainMenuCmd,
+          ccQuit, ccError :
+            Finished := True;
+        end;
+      until Finished;
+      Erase;
+    end;
+  end;
+
+  procedure MakePictureMask;
+    {-Help user create a long picture mask with only one mask character}
+  const
+    Prompt1 = 'Enter picture mask character';
+    Prompt2 = 'Enter length of picture mask [1-254]: ';
+  var
+    Ch : Char;
+    L : Byte;
+  begin
+    with FR do begin
+      {get mask character}
+      Ch := frPicture[1];
+      if (Length(frPicture) = 0) or not (Ch in PictureChars) then
+        Ch := AnyChar;
+      if not PopupGetChar('', Prompt1, PictureChars, Ch) then
+        Exit;
+
+      {get length of picture mask}
+      L := MaxWord(frWidth, Length(frPicture));
+      if not PopupGetByte('', Prompt2, L, 1, 254) then
+        Exit;
+
+      {build a new picture mask}
+      frPicture := CharStr(Ch, L);
+
+      FR.frModified := True;
+    end;
+  end;
+
+  function EditDataFieldPrim : Boolean;
+    {-Edit a data field}
+  var
+    Finished : Boolean;
+
+    procedure EAPrim(HSt : string; var A : Byte; IsColor : Boolean);
+    var
+      OldA : Byte;
+    begin
+      OldA := A;
+      EditAttr(HSt, A, IsColor);
+      if A <> OldA then
+        FR.frModified := True;
+    end;
+
+    procedure DoNested;
+    const
+      SeS = 'Selected ';
+      PrS = 'Protected ';
+      PS  = 'Prompt';
+      FS  = 'Field';
+      CS  = 'Control';
+    begin
+      with FES, FR do
+        case GetCurrentID of
+          idPicture   :
+            MakePictureMask;
+          idWidth     :
+            if not (frType in RealTypeCodes) then
+              if Length(frPicture) = 0 then
+                RingBell
+              else begin
+                frWidth := MinWord(CES.Width, Length(frPicture));
+                frModified := True;
+              end;
+          idPadChar   :                           {!!.03}
+            if EditChar('Pad Character', frPadChar, True) then
+              frModified := True;
+          idOptions   :
+            DoOptionsMenu;
+          idRangeLo   :
+            if frType = otCharEField then                {!!.03}
+              if EditChar('Lower Limit', frRangeLo.rtChar, True) then
+                frModified := True;
+          idRangeHi   :
+            if frType = otCharEField then                {!!.03}
+              if EditChar('Upper Limit', frRangeHi.rtChar, True) then
+                frModified := True;
+          idPColor    : EAPrim(PS,     frPromptColor,    True);
+          idPMono     : EAPrim(PS,     frPromptMono,     False);
+          idSelPColor : EAPrim(SeS+PS, frSelPromptColor, True);
+          idSelPMono  : EAPrim(SeS+PS, frSelPromptMono,  False);
+          idProPColor : EAPrim(PrS+PS, frProPromptColor, True);
+          idProPMono  : EAPrim(PrS+PS, frProPromptMono,  False);
+          idFColor    : EAPrim(FS,     frFieldColor,     True);
+          idFMono     : EAPrim(FS,     frFieldMono,      False);
+          idSelFColor : EAPrim(SeS+FS, frSelFieldColor,  True);
+          idSelFMono  : EAPrim(SeS+FS, frSelFieldMono,   False);
+          idProFColor : EAPrim(PrS+FS, frProFieldColor,  True);
+          idProFMono  : EAPrim(PrS+FS, frProFieldMono,   False);
+          idCtrlColor : EAPrim(CS,     frCtrlColor,      True);
+          idCtrlMono  : EAPrim(CS,     frCtrlMono,       False);
+        end;
+    end;
+
+  begin
+    EditDataFieldPrim := False;
+
+    {erase the main menu}
+    EraseMainMenu;
+
+    with FES, EntryCommands do begin
+      {F10: Brings up nested "menu"}
+      AddCommand(MainMenuCmd, 1, $4400, $0000);
+
+      {AltF10 : Sample picture masks}
+      AddCommand(ccUser50, 1, $7100, $0000);
+
+      Finished := False;
+      repeat
+        {process commands}
+        Process;
+
+        case GetLastCommand of
+          MainMenuCmd, ccClickExit, ccNested :
+            DoNested;
+          ccDone :
+            begin
+              EditDataFieldPrim := FR.frModified;
+              Finished := True;
+            end;
+          ccUser50 :
+            if GetCurrentID = idPicture then
+              PictureMaskSamples;
+          ccError :
+            Finished := True;
+          ccQuit :
+            if FR.frModified then
+              Finished := ConfirmAction('Abandon changes')
+            else
+              Finished := True;
+        end;
+      until Finished;
+
+      {cancel the hot keys}
+      AddCommand(ccNone, 1, $4400, $0000);
+      AddCommand(ccNone, 1, $7100, $0000);
+    end;
+  end;
+
+  procedure EditDataField(EFP : EntryFieldPtr);
+    {-Edit a data field}
+  var
+    OK : Boolean;
+    EFP2 : EntryFieldPtr;
+  label
+    ExitPoint;
+  begin
+    {initialize field record}
+    InitFieldRecFromEFP(EFP);
+
+    {initialize the entry screen and menu}
+    OK := InitFieldEntryScreen;
+    if OK then begin
+      OK := InitFieldOptionsMenu;
+      if not OK then
+        FES.Done;
+    end;
+
+    {OK to continue?}
+    if not OK then begin
+      {reset user character set #1}
+      UserSet1 := UserSet2;
+
+      InsufficientMemory;
+      Exit;
+    end;
+
+    OK := False;
+    repeat
+      {edit the field record}
+      if not EditDataFieldPrim then
+        goto ExitPoint;
+
+      {add the data field to the entry screen}
+      OK := AddDataFieldPrim;
+      if not OK then
+        PopupErrorMessage('Error adding field');
+    until OK;
+
+    {exchange original field and field just added}
+    CES.ExchangeFields(EFP, EntryFieldPtr(CES.asFields.Tail));
+
+    {remove original field (now the tail)}
+    CES.DeleteEntryField(EntryFieldPtr(CES.asFields.Tail));
+
+    {sort the field list}
+    CES.SortEntryFields;
+
+ExitPoint:
+    {dispose of options menu}
+    FieldOptionsMenu.Done;
+
+    {erase and dispose of the entry screen}
+    FES.Erase;
+    FES.Done;
+
+    {reset user character set #1}
+    UserSet1 := UserSet2;
+
+    if OK then begin
+      Modified := True;
+      RedrawCES(False);
+      if not CES.FindEntryFieldAtCursor(EFP2) then
+        with EFP^ do
+          CES.cesGotoXY(sfFCol, sfFRow);
+    end;
+  end;
+
+  procedure AddDataField(Item : Word);
+    {-Add a data field to the entry screen}
+  var
+    OK : Boolean;
+    TypeCode : Byte;
+    EFP, EFP2 : EntryFieldPtr;
+    TFP : TextFieldPtr;
+  label
+    ExitPoint;
+  begin
+    {check for existing field at cursor}                               {!!.03}
+    if CES.FindEntryFieldAtCursor(EFP) or CES.FindTextFieldAtCursor(TFP, True) then
+      OverlapError
+    else begin
+      {initialize a blank field record}
+      TypeCode := ItemToTypeCode[Item];
+      InitBlankFieldRec(TypeCode);
+
+      {initialize the entry screen and menu}
+      OK := InitFieldEntryScreen;
+      if OK then begin
+        OK := InitFieldOptionsMenu;
+        if not OK then
+          FES.Done;
+      end;
+
+      {OK to continue?}
+      if not OK then begin
+        {reset user character set #1}
+        UserSet1 := UserSet2;
+
+        InsufficientMemory;
+        Exit;
+      end;
+
+      OK := False;
+      repeat
+        {edit the field record}
+        if not EditDataFieldPrim then
+          goto ExitPoint;
+
+        {add the data field to the entry screen}
+        OK := AddDataFieldPrim;
+        if not OK then
+          PopupErrorMessage('Error adding field');
+      until OK;
+
+      {get pointer to field just added}
+      EFP := CES.GetLastField;
+
+      {sort the field list}
+      CES.SortEntryFields;
+
+ExitPoint:
+      {dispose of options menu}
+      FieldOptionsMenu.Done;
+
+      {erase and dispose of the entry screen}
+      FES.Erase;
+      FES.Done;
+
+      {reset user character set #1}
+      UserSet1 := UserSet2;
+
+      if OK then begin
+        Modified := True;
+        CES.ForceReset;
+        RedrawCES(False);
+        if not CES.FindEntryFieldAtCursor(EFP2) then
+          with EFP^ do
+            CES.cesGotoXY(sfFCol, sfFRow);
+      end;
+    end;
+  end;
+
+  procedure Initialize;
+    {-Initialize main menu, etc.}
+  begin
+    {initialize command processor}
+    MakeScrnCommands.Init(@MakeScrnKeySet, MakeScrnKeyMax);
+
+    {add hot keys}
+    MenuCommands.SetSecondaryKeyPtr(@HotKeySet, HotKeyMax);
+    MakeScrnCommands.SetSecondaryKeyPtr(@HotKeySet, HotKeyMax);
+
+    {$IFDEF UseMouse}
+    {<ClickBoth>: invoke main menu}
+    MenuCommands.AddCommand(MainMenuCmd, 1, MouseBoth, $0000);
+    {$ENDIF}
+
+    {default to framed windows}
+    DefWindowOptions := DefWindowOptions or wBordered;
+
+    {default to our custom color set}
+    DefaultColorSet  := MakeScrnColors;
+
+    {default to window-relative coordinates for line editors}
+    DefSecEditOptions := DefSecEditOptions or sleWindowRelative;
+
+    {allocate covers buffers on demand}              {!!.01}
+    SetLongFlag(DefWindowOptions, wCoversOnDemand);  {!!.01}
+
+    {initialize the main menu}
+    if not InitMainMenu then
+      Halt;
+
+    {cancel wCoversOnDemand option}                    {!!.01}
+    ClearLongFlag(DefWindowOptions, wCoversOnDemand);  {!!.01}
+
+    {initialize Status window}
+    if not Status.Init then
+      Halt;
+
+    with MakeScrnColors do
+      Status.SetTextAttr(HighlightColor, HighlightMono);
+
+    {create backdrop}
+    DrawBackdrop;
+
+    {$IFDEF UseMouse}
+    if MouseInstalled then begin
+      {activate mouse cursor}
+      with MakeScrnColors do
+        SoftMouseCursor($0000, (ColorMono(MouseColor, MouseMono) shl 8)+$04);
+      ShowMouse;
+
+      {enable mouse support}
+      MenuCommands.cpOptionsOn(cpEnableMouse);
+      EntryCommands.cpOptionsOn(cpEnableMouse);
+      PickCommands.cpOptionsOn(cpEnableMouse);
+      EditCommands.cpOptionsOn(cpEnableMouse);
+      MakeScrnCommands.cpOptionsOn(cpEnableMouse);
+    end;
+    {$ENDIF}
+  end;
+
+  function IsAlpha(Ch : Char) : Boolean;
+    {-Is Ch an alpha?}
+  begin
+    IsAlpha := not (Ch in WordDelims);
+  end;
+
+{$F+}
+  procedure ChangePadChar(EFP : EntryFieldPtr; var D; ESP : EntryScreenPtr);
+    {-Reset the pad character for specified field to the default}
+  begin
+    EFP^.efPadChar := ESP^.esPadChar;
+  end;
+
+  procedure ChangeFieldOption(EFP : EntryFieldPtr; var D; ESP : EntryScreenPtr);
+    {-Change a field option for the specified field}
+  var
+    Flags : LongInt absolute D;
+    TOP : Pointer;
+    Mask : LongInt;
+  begin
+    TOP := TypeOf(EFP^);
+
+    if Flags = (efTrimBlanks) then begin
+      if {$IFDEF UseDates} (TOP = TypeOf(DateStField)) or {$ENDIF}
+         (TOP = TypeOf(ArrayField)) or (TOP = TypeOf(CharField)) then
+            Exit;
+    end
+    else if (Flags = efClickExit) then
+      if (TOP = TypeOf(BooleanField)) or (TOP = TypeOf(YesNoField)) then
+        Exit;
+
+    with EFP^ do begin
+      Mask := ESP^.asFieldOptions and Flags;
+      ClearLongFlag(sfOptions, Flags);
+      SetLongFlag(sfOptions, Mask);
+    end;
+  end;
+
+  procedure ChangeSecFieldOption(EFP : EntryFieldPtr; var D; ESP : EntryScreenPtr);
+    {-Change a field option for the specified field}
+  var
+    Flags : LongInt absolute D;
+    Mask : LongInt;
+  begin
+    if Flags = (sefSuppressZero) then
+      if not (GetTypeCode(EFP) in IntegerTypeCodes) then
+        Exit;
+
+    with EFP^ do begin
+      Mask := ESP^.esFieldFlags and Flags;
+      ClearLongFlag(sfFlags, Flags);
+      SetLongFlag(sfFlags, Mask);
+    end;
+  end;
+{$F-}

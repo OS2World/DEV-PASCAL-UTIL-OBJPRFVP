@@ -1,0 +1,568 @@
+{*********************************************************}
+{*                  OPSELECT.IN1 1.30                    *}
+{*     Copyright (c) TurboPower Software 1989, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {--------------- methods for SelectField's ----------------}
+
+  constructor SelectField.Init(FieldID : Word;     PromptRow, PromptCol : Word;
+                               PromptWidth : Byte; FieldRow, FieldCol : Word;
+                               fWidth, fHeight : Byte; HlpNdx : Word;
+                               Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Called when field is created}
+  begin
+    sfFieldName := nil;
+
+    if not AbstractField.Init then
+      Fail;
+
+    if fWidth = 0 then begin
+      InitStatus := epFatal+ecBadParam;
+      Done;
+      Fail;
+    end;
+
+    {make sure PromptRow and PromptCol OK}
+    if PromptWidth = 0 then begin
+      PromptRow := FieldRow;
+      PromptCol := FieldCol;
+    end;
+
+    sfID := FieldID;
+    sfNextID := BadFieldID;
+    sfPrevID := BadFieldID;
+    sfPRow := PromptRow;
+    sfPCol := PromptCol;
+    sfPWidth := PromptWidth;
+    sfFRow := FieldRow;
+    sfFCol := FieldCol;
+    sfFWidth := fWidth;
+    sfFCPos := 1;
+    sfFRPos := 1;
+    sfFHeight := fHeight;
+    sfHelpIndex := HlpNdx;
+    sfOptions := Options;
+    sfFlags := IFlags;
+
+    with Colors do begin
+      sfPromptColor := PromptColor;
+      sfPromptMono := PromptMono;
+      sfSelPromptColor := SelPromptColor;
+      sfSelPromptMono := SelPromptMono;
+      sfProPromptColor := ProPromptColor;
+      sfProPromptMono := ProPromptMono;
+      sfFieldColor := FieldColor;
+      sfFieldMono := FieldMono;
+      sfSelFieldColor := SelFieldColor;
+      sfSelFieldMono := SelFieldMono;
+      sfProFieldColor := ProFieldColor;
+      sfProFieldMono := ProFieldMono;
+      sfCtrlColor := CtrlColor;
+      sfCtrlMono := CtrlMono;
+    end;
+  end;
+
+  destructor SelectField.Done;
+    {-Deallocate dynamic data}
+  begin
+    DisposeString(sfFieldName);
+    AbstractField.Done;
+  end;
+
+  procedure SelectField.sfOptionsOn(OptionFlags : LongInt);
+    {-Activate multiple options}
+  begin
+    SetLongFlag(sfOptions, OptionFlags and not BadSFieldOptions);
+  end;
+
+  procedure SelectField.sfOptionsOff(OptionFlags : LongInt);
+    {-Deactivate multiple options}
+  begin
+    ClearLongFlag(sfOptions, OptionFlags and not BadSFieldOptions);
+  end;
+
+  function SelectField.sfOptionsAreOn(OptionFlags : LongInt) : Boolean;
+    {-Return true if all specified options are on}
+  begin
+    sfOptionsAreOn := (sfOptions and OptionFlags) = OptionFlags;
+  end;
+
+  procedure SelectField.SetPromptAttr(Color, Mono : Byte);
+    {-Set attributes for prompts}
+  begin
+    sfPromptColor := Color;
+    sfPromptMono := MapMono(Color, Mono);
+  end;
+
+  procedure SelectField.SetSelectedPromptAttr(Color, Mono : Byte);
+    {-Set attributes for selected prompts}
+  begin
+    sfSelPromptColor := Color;
+    sfSelPromptMono := MapMono(Color, Mono);
+  end;
+
+  procedure SelectField.SetProtectedPromptAttr(Color, Mono : Byte);
+    {-Set attributes for protected prompts}
+  begin
+    sfProPromptColor := Color;
+    sfProPromptMono := MapMono(Color, Mono);
+  end;
+
+  procedure SelectField.SetFieldAttr(Color, Mono : Byte);
+    {-Set attributes for unselected fields}
+  begin
+    sfFieldColor := Color;
+    sfFieldMono := MapMono(Color, Mono);
+  end;
+
+  procedure SelectField.SetSelectedFieldAttr(Color, Mono : Byte);
+    {-Set attributes for selected fields}
+  begin
+    sfSelFieldColor := Color;
+    sfSelFieldMono := MapMono(Color, Mono);
+  end;
+
+  procedure SelectField.SetProtectedFieldAttr(Color, Mono : Byte);
+    {-Set attributes for protected fields}
+  begin
+    sfProFieldColor := Color;
+    sfProFieldMono := MapMono(Color, Mono);
+  end;
+
+  procedure SelectField.SetCtrlAttr(Color, Mono : Byte);
+    {-Set attributes for control characters}
+  begin
+    sfCtrlColor := Color;
+    sfCtrlMono := MapMono(Color, Mono);
+  end;
+
+  function SelectField.afWidth : Byte; {!!.22}
+  begin
+    afWidth := sfFWidth;
+  end;
+
+  function SelectField.sfSetFieldName(S : string) : Boolean;
+    {-Set field name. Used only by MAKESCRN.}
+  var
+    I : Integer;
+  begin
+    sfSetFieldName := True;
+
+    if sfFieldName = nil then
+      I := -1
+    else
+      I := Length(sfFieldName^);
+
+    if S = '' then
+      DisposeString(sfFieldName)
+    else if I = Length(S) then
+      sfFieldName^ := S
+    else if (I > Length(S)) or (MaxAvail > Length(S)) then begin
+      DisposeString(sfFieldName);
+      sfFieldName := StringToHeap(S);
+    end
+    else
+      sfSetFieldName := False;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor SelectField.Load(var S : IdStream);
+    {-Load a select field from a stream}
+  var
+    St : string[80];
+    StLen : Byte absolute St;
+  begin
+    sfFieldName := nil;
+
+    if not AbstractField.Init then
+      Fail;
+
+    S.ReadRange(sfID, sfFieldName);
+    St := S.ReadString;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    if Length(St) <> 0 then begin
+      sfFieldName := StringToHeap(St);
+      if (sfFieldName = nil) then begin
+        InitStatus := epFatal+ecOutOfMemory;
+        Done;
+        Fail;
+      end;
+    end;
+  end;
+
+  procedure SelectField.Store(var S : IdStream);
+    {-Store a select field in a stream}
+  begin
+    S.WriteRange(sfID, sfFieldName);
+    if sfFieldName = nil then
+      S.WriteString('')
+    else
+      S.WriteString(sfFieldName^);
+  end;
+
+{$ENDIF}
+
+  {--------------- methods for TextField's ----------------}
+
+  constructor TextField.Init(FieldID : Word; var St : String; Row, Col : Word;
+                             var ColorAttrs, MonoAttrs : FlexAttrs);
+    {-Called when field is created}
+  var
+    StLen : Byte absolute St;
+  begin
+    if not SingleListNode.Init then
+      Fail;
+
+    {allocate space for the string}
+    if not GetMemCheck(tfString, StLen+1) then begin
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+
+    {initialize the data fields}
+    tfID := FieldID;
+    tfFlags := $0000;
+    tfString^ := St;
+    tfRow := Row;
+    tfCol := Col;
+    tfColorAttrs := ColorAttrs;
+    tfMonoAttrs  := MonoAttrs;
+  end;
+
+  destructor TextField.Done;
+    {-Called when field is destroyed}
+  begin
+    if tfString <> nil then  {!!.20}
+      FreeMemCheck(tfString, Length(tfString^)+1);
+  end;
+
+  procedure TextField.Draw(XDelta, YDelta : Byte);
+    {-Draw the field}
+  var
+    FA : FlexAttrs;
+    {$IFDEF UseMouse}
+    SaveMouse : Boolean;
+    {$ENDIF}
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(SaveMouse);
+    {$ENDIF}
+
+    if UseColor then
+      FA := tfColorAttrs
+    else
+      FA := tfMonoAttrs;
+    FlexWrite(tfString^, tfRow+YDelta, tfCol+XDelta, FA);
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SaveMouse);
+    {$ENDIF}
+  end;
+
+  function TextField.tfWidth : Word;         {!!.03}
+    {-Return the width of the text field}
+  begin
+    tfWidth := FlexLen(tfString^);
+  end;
+
+  function TextField.tfHeight : Word;         {!!.03}
+    {-Return the height of the text field}
+  begin
+    tfHeight := 1;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor TextField.Load(var S : IdStream);
+    {-Load a text field from a stream}
+  var
+    St : string;
+    StLen : Byte absolute St;
+  begin
+    tfString := nil;
+
+    if not SingleListNode.Init then
+      Fail;
+
+    S.ReadRange(tfID, tfString);
+    St := S.ReadString;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    if GetMemCheck(tfString, StLen+1) then
+      tfString^ := St
+    else begin
+      InitStatus := epFatal+ecOutOfMemory;
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure TextField.Store(var S : IdStream);
+    {-Store a text field in a stream}
+  begin
+    S.WriteRange(tfID, tfString);
+    S.WriteString(tfString^);
+  end;
+
+{$ENDIF}
+
+  {--------------- methods for TextLineField's ----------------}
+  {all TextLineField methods} {!!.03}
+
+  constructor TextLineField.Init(FieldID : Word;
+                                 Ch1, Ch2, Ch3 : Char;
+                                 Row, Col, Length : Word;
+                                 Color, Mono : Byte;
+                                 Vertical : Boolean);
+    {-Create horizontal or vertical line field}
+  var
+    S : string[3];
+    CA, MA : FlexAttrs;
+  begin
+    S[0] := #3;
+    S[1] := Ch1;
+    S[2] := Ch2;
+    S[3] := Ch3;
+    FillChar(CA, SizeOf(CA), Color);
+    FillChar(MA, SizeOf(MA), Mono);
+
+    if not TextField.Init(FieldId, S, Row, Col, CA, MA) then
+      Fail;
+
+    tlfLength := Length;
+    {$IFDEF VIRTUALPASCAL}
+    SetFlag16( tfFlags, tfLine );
+    {$ELSE}
+    SetFlag(tfFlags, tfLine);
+    {$ENDIF}
+    if Vertical then
+      {$IFDEF VIRTUALPASCAL}
+      SetFlag16( tfFlags, tfVertical );
+      {$ELSE}
+      SetFlag( tfFlags, tfVertical);
+      {$ENDIF}
+  end;
+
+  procedure TextLineField.Draw(XDelta, YDelta : Byte);
+    {-Draw the field}
+  var
+    R, C, W, H : Word;
+    Ch : Char;
+    A : Byte;
+    {$IFDEF UseMouse}
+    SaveMouse : Boolean;
+    {$ENDIF}
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(SaveMouse);
+    {$ENDIF}
+
+    {select attribute}
+    if UseColor then
+      A := tfColorAttrs[0]
+    else
+      A := tfMonoAttrs[0];
+
+    {fix coordinates}
+    R := tfRow+YDelta;
+    C := tfCol+XDelta;
+
+    {draw the line}
+    if FlagIsSet(tfFlags, tfVertical) then begin
+      H := tfHeight;
+      FastFillVert(1, tfString^[1], R, C, A);
+      if H > 2 then
+        FastFillVert(H-2, tfString^[2], R+1, C, A);
+      FastFillVert(1, tfString^[3], R+Pred(H), C, A);
+    end
+    else begin
+      W := tfWidth;
+      FastFill(1, tfString^[1], R, C, A);
+      if W > 2 then
+        FastFill(W-2, tfString^[2], R, C+1, A);
+      FastFill(1, tfString^[3], R, C+Pred(W), A);
+    end;
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SaveMouse);
+    {$ENDIF}
+  end;
+
+{$IFDEF UseStreams}
+  constructor TextLineField.Load(var S : IdStream);
+    {-Load a line field from a stream}
+  begin
+    if not TextField.Load(S) then
+      Fail;
+    S.Read(tlfLength, SizeOf(tlfLength));
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure TextLineField.Store(var S : IdStream);
+    {-Store a line field in a stream}
+  begin
+    TextField.Store(S);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    S.Write(tlfLength, SizeOf(tlfLength));
+  end;
+{$ENDIF}
+
+  function TextLineField.tfWidth : Word;
+    {-Return the width of the line field}
+  begin
+    if FlagIsSet(tfFlags, tfVertical) then
+      tfWidth := 1
+    else
+      tfWidth := tlfLength;
+  end;
+
+  function TextLineField.tfHeight : Word;
+    {-Return the height of the line field}
+  begin
+    if not FlagIsSet(tfFlags, tfVertical) then
+      tfHeight := 1
+    else
+      tfHeight := tlfLength;
+  end;
+
+  {--------------- methods for TextBoxField's ----------------}
+  {all TextBoxField methods} {!!.03}
+
+  constructor TextBoxField.Init(FieldID : Word;
+                                BoxChars : FrameArray;
+                                XL, YL, XH, YH : Word;
+                                Color, Mono : Byte);
+    {-Create box field}
+  var
+    S : string[SizeOf(FrameArray)];
+    CA, MA : FlexAttrs;
+  begin
+    S := BoxChars;
+    FillChar(CA, SizeOf(CA), Color);
+    FillChar(MA, SizeOf(MA), Mono);
+
+    if not TextField.Init(FieldId, S, YL, XL, CA, MA) then
+      Fail;
+
+    tbfRowH := YH;
+    tbfColH := XH;
+
+{$IFDEF VIRTUALPASCAL}
+    SetFlag16(tfFlags, tfBox);
+{$ELSE}
+    SetFlag(tfFlags, tfBox);
+{$ENDIF}
+  end;
+
+  constructor TextBoxField.AddShadow(SColor, SMono : Byte);
+    {-Add a shadow to the box field}
+  begin
+    tfColorAttrs[1] := SColor;
+    tfMonoAttrs[1] := SMono;
+{$IFDEF VIRTUALPASCAL}
+    SetFlag16(tfFlags, tfShadowed);
+{$ELSE}
+    SetFlag(tfFlags, tfShadowed);
+{$ENDIF}
+  end;
+
+  procedure TextBoxField.Draw(XDelta, YDelta : Byte);
+    {-Draw the field}
+  var
+    R, XL, YL, XH, YH : Word;
+    BA, SA : Byte;
+    {$IFDEF UseMouse}
+    SaveMouse : Boolean;
+    {$ENDIF}
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(SaveMouse);
+    {$ENDIF}
+
+    {select attributes}
+    if UseColor then begin
+      BA := tfColorAttrs[0];
+      SA := tfColorAttrs[1];
+    end
+    else begin
+      BA := tfMonoAttrs[0];
+      SA := tfMonoAttrs[1];
+    end;
+
+    {fix coordinates}
+    XL := tfCol+XDelta;
+    YL := tfRow+YDelta;
+    XH := tbfColH+XDelta;
+    YH := tbfRowH+YDelta;
+
+    {draw the box}
+    ExchangeStructs(tfString^[1], FrameChars, SizeOf(FrameArray));
+    FrameWindow(XL, YL, XH, YH, BA, BA, '');
+    ExchangeStructs(tfString^[1], FrameChars, SizeOf(FrameArray));
+
+    {draw the shadow}
+    if FlagIsSet(tfFlags, tfShadowed) then begin
+      (*
+      for R := YL+1 to YH do
+        ChangeAttribute(1, R, XH+1, SA);
+      ChangeAttribute(Succ(XH-XL), YH+1, XL+1, SA);
+      *)
+      for R := YL+1 to YH do
+        FastFill(1, 'Û', R, XH+1, SA);
+      FastFill(Succ(XH-XL), 'ß', YH+1, XL+1, SA);
+    end;
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SaveMouse);
+    {$ENDIF}
+  end;
+
+{$IFDEF UseStreams}
+  constructor TextBoxField.Load(var S : IdStream);
+    {-Load a text field from a stream}
+  begin
+    if not TextField.Load(S) then
+      Fail;
+    S.Read(tbfRowH, SizeOf(tbfRowH)+SizeOf(tbfColH));
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure TextBoxField.Store(var S : IdStream);
+    {-Store a text field in a stream}
+  begin
+    TextField.Store(S);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    S.Write(tbfRowH, SizeOf(tbfRowH)+SizeOf(tbfColH));
+  end;
+{$ENDIF}
+
+  function TextBoxField.tfWidth : Word;
+    {-Return the width of the text field}
+  begin
+    tfWidth := Succ(tbfColH-tfCol)+Ord(FlagIsSet(tfFlags, tfShadowed));
+  end;
+
+  function TextBoxField.tfHeight : Word;
+    {-Return the height of the text field}
+  begin
+    tfHeight := Succ(tbfRowH-tfRow)+Ord(FlagIsSet(tfFlags, tfShadowed));
+  end;

@@ -1,0 +1,687 @@
+{*********************************************************}
+{*                    OPDIR.PAS 1.30                     *}
+{*     Copyright (c) TurboPower Software 1987, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  function MoreAtLevel(Level : Byte; Item : Word;
+                       PathPtr : PathListPtr) : Boolean;
+    {-Return True if more paths at Level are found beyond Item}
+  var
+    I : Word;
+    L : Byte;
+  begin
+    with PathPtr^ do
+      for I := Item+1 to paCurFiles do begin
+        L := paDPtr^[I].PLevel;
+        if L < Level then begin
+          MoreAtLevel := False;
+          Exit;
+        end else if L = Level then begin
+          MoreAtLevel := True;
+          Exit;
+        end;
+      end;
+    MoreAtLevel := False;
+  end;
+
+  procedure PathFullDrawProc(Item : Word; Mode : pkMode;
+                             var ItemType : pkItemType;
+                             var S : String; PickPtr : PickListPtr);
+    {-Return full pathname string for pick list}
+  var
+    SSize : String[11];
+  begin
+    with PathListPtr(PickPtr)^, paDPtr^[Item] do begin
+      ItemType := PCat;
+      if Mode <> pkGetType then begin
+        S := GetMultiPath(Item);
+        if FlagIsSet(paFlags, paShowSize) then begin
+          S := Pad(S, paMaxLen+1);
+          Str(PSize:8, SSize);
+          AppendString(S, SSize);
+        end;
+      end;
+    end;
+  end;
+
+  procedure PathLineDrawProc(Item : Word; Mode : pkMode;
+                            var ItemType : pkItemType;
+                            var S : String; PickPtr : PickListPtr);
+    {-Return linedraw pathname string for pick list}
+  var
+    L : Word;
+    LThis : Integer;
+    LNext : Integer;
+    SSize : String[11];
+  begin
+    with PathListPtr(PickPtr)^, paDPtr^[Item] do begin
+      ItemType := PCat;
+      if Mode <> pkGetType then
+        if Mode = pkSearch then
+          {Just return the name}
+          S := PName
+
+        else begin
+          {Format a string with line-drawing characters}
+          S := '';
+
+          LThis := PLevel;
+
+          if LThis > 1 then
+            for L := 1 to LThis-1 do begin
+              if MoreAtLevel(L, Item, PathListPtr(PickPtr)) then
+                AppendChar(S, paLine[paPipe])
+              else
+                AppendChar(S, wBackChar);
+              AppendChar(S, wBackChar);
+            end;
+
+          if Item = paCurFiles then
+            LNext := -1
+          else
+            LNext := paDPtr^[Item+1].PLevel;
+
+          if LThis > 0 then begin
+            if (LNext >= LThis) and
+            MoreAtLevel(LThis, Item, PathListPtr(PickPtr)) then
+              AppendChar(S, paLine[paArrow])
+            else
+              AppendChar(S, paLine[paEll]);
+            AppendChar(S, paLine[paBar]);
+          end;
+
+          if LNext > LThis then
+            AppendChar(S, paLine[paTee])
+          else
+            AppendChar(S, paLine[paBar]);
+          AppendChar(S, paLine[paBar]);
+
+          AppendString(S, PName);
+          if FlagIsSet(paFlags, paShowSize) then begin
+            S := Pad(S, paMaxLen+1);
+            Str(PSize:8, SSize);
+            AppendString(S, SSize);
+          end;
+        end;
+    end;
+  end;
+
+  function PathList.paMaxNumFiles : Word;
+    {-Return the number of files that will fit in paHeapToUse}
+  begin
+    paMaxNumFiles := paHeapToUse div SizeOf(PathRec);
+  end;
+
+  procedure PathList.paSetItemWidth;
+    {-Modify item width}
+  begin
+    paItemWidth := paMaxLen+pkLeftPad+pkRightPad;
+    if FlagIsSet(pkFlags, pkMultiChoice) then
+      inc(paItemWidth, Length(pkLeftSel)+Length(pkRightSel));
+    if FlagIsSet(paFlags, paShowSize) then
+      inc(paItemWidth, 9);
+    {Don't allow more than one column}{!!.21}
+    if paItemWidth < pkReqdWidth then {!!.21}
+      paItemWidth := pkReqdWidth;     {!!.21}
+    ChangeItemWidth(paItemWidth);
+  end;
+
+  procedure SinglePath(PathPtr : PathListPtr;
+                       var StringProc : pkStringProc;
+                       var CommandInitProc : pkGenlProc);
+    {-Initialize for picking single paths}
+  begin
+    with PathPtr^ do begin
+      StringProc  := PathLineDrawProc;
+      CommandInitProc := SingleChoice;
+    end;
+  end;
+
+  procedure MultiplePath(PathPtr : PathListPtr;
+                         var StringProc : pkStringProc;
+                         var CommandInitProc : pkGenlProc);
+    {-Initialize for picking multiple paths}
+  begin
+    with PathPtr^ do begin
+      StringProc  := PathLineDrawProc;
+      CommandInitProc := MultipleChoice;
+    end;
+  end;
+
+  constructor PathList.Init(X1, Y1, X2, Y2 : Byte;
+                            HeapToUse : LongInt; {!!.01}
+                            PickOrientation : pkGenlProc;
+                            CommandInit : paInitCommandProc);
+    {-Initialize a path list}
+  begin
+    if not PathList.InitCustom(X1, Y1, X2, Y2, DefaultColorSet,
+                               DefWindowOptions, HeapToUse, PickOrientation,
+                               CommandInit) then
+      Fail;
+  end;
+
+  constructor PathList.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                  var Colors : ColorSet;
+                                  Options : LongInt;
+                                  HeapToUse : LongInt; {!!.01}
+                                  PickOrientation : pkGenlProc;
+                                  CommandInit : paInitCommandProc);
+    {-Initialize a path list with custom window options}
+  var
+    StringProc : pkStringProc;
+    CommandInitProc : pkGenlProc;
+  begin
+    paFlags := DefPathOptions;
+    paDPtr := nil;
+    paMaxLen := 5;
+    paItemWidth := X2-X1+1;     {One column of items only}
+    if HeapToUse > $FFF1 then
+      HeapToUse := $FFF1;
+    paHeapToUse := HeapToUse;
+    paMaxFiles := paMaxNumFiles;
+    paCurFiles := 0;
+    paCurItem := 0;
+    pkLeftPad := 1;
+    pkRightPad := 1;
+    paDrive := DefaultDrive;
+    paClusterSize := 1;
+    paLine := paSingleDraw;
+
+    {Set up for single or multiple path pick}
+    CommandInit(@Self, StringProc, CommandInitProc);
+
+    {Initialize pick list and window}
+    {Note: number of items is an estimate at this point}
+    if not PickList.InitCustom(X1, Y1, X2, Y2, Colors, Options,
+                               paItemWidth, paMaxFiles, StringProc,
+                               PickOrientation, CommandInitProc) then
+      Fail;
+
+    {Change unit code}
+    cwUnitCode := ucDir;
+
+    {Downward adjust heap space to use}
+    if paHeapToUse > MaxAvail then  {!!.01}
+      paHeapToUse := MaxAvail;      {!!.01}
+
+    {Allocate space for file buffer}
+    if (paHeapToUse = 0) or not GetMemCheck(paDPtr, paHeapToUse) then begin {!!.01}
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Exit;
+    end;
+
+    if FlagIsSet(pkFlags, pkMultiChoice) then begin
+      {Allocate select set space for maximum number of paths}
+      ClearErrors; {!!.01}
+      AllocateSelectSet(paMaxNumFiles);
+      if RawError <> 0 then begin {!!.01}
+        Done;
+        InitStatus := epFatal+ecOutOfMemory;
+        Fail;
+      end;
+    end;
+
+    {Note that we must read the file directory first time}
+    ResetList;
+  end;
+
+  destructor PathList.Done;
+    {-Dispose of path list}
+  begin
+    FreeMemCheck(paDPtr, paHeapToUse);
+    PickList.Done;
+  end;
+
+  procedure PathList.SetDrive(Drive : Char);
+    {-Specify drive for path list}
+  begin
+    if Upcase(Drive) <> paDrive then begin
+      paDrive := Upcase(Drive);
+      ResetList;
+    end;
+  end;
+
+  procedure PathList.ResetList;
+    {-Force reread of directories when they may have changed}
+  begin
+    SetFlag(paFlags, paReadDir);
+  end;
+
+  procedure PathList.UpdateContents;
+    {-Redraw the complete pick window}
+  begin
+    if paCurFiles = 0 then begin
+      Clear;
+      {Update child windows if any} {!!.01}
+      StackWindow.UpdateContents;   {!!.01}
+    end else if not FlagIsSet(paFlags, paUpdating) then begin
+      SetFlag(paFlags, paUpdating);
+      {Update the path list}
+      PreloadPathList;
+      PickList.UpdateContents;
+      ClearFlag(paFlags, paUpdating);
+    end;
+  end;
+
+  procedure PathList.paFindPaths(Level : Byte; StartDir : PathStr);
+    {-Find all subdirectories of StartDir, recursively}
+  var
+    PCnt : Word;
+    Srec : SearchRec;
+    Len : Byte;
+  begin
+    PCnt := paCurFiles;
+    StartDir := AddBackSlash(StartDir);
+
+
+    FindFirst(StartDir+'*.*', Directory, Srec);
+    while DosError = 0 do begin
+      with Srec do
+        if ByteFlagIsSet(Attr, Directory) then begin
+          if Name[1] <> '.' then
+            if paCurFiles < paMaxFiles then begin
+              inc(paCurFiles);
+              with paDPtr^[paCurFiles] do begin
+                PLevel := Level;
+                PSize := 0;
+                PCat := pkNormal;
+                if FlagIsSet(paFlags, paUpcase) then
+                  PName := StUpCase(Name)
+                else
+                  PName := StLoCase(Name);
+                if FlagIsSet(paFlags, paFullPathDisp) then
+                  Len := Length(StartDir)+Length(Name)
+                else
+                  Len := 2*(Level+1)+Length(Name);
+                if Len > paMaxLen then
+                  paMaxLen := Len;
+              end;
+              paFindPaths(Level+1, StartDir+Name);
+            end else
+              Exit;
+        end else if FlagIsSet(paFlags, paShowSize) then
+          inc(paDPtr^[PCnt].PSize, DosSize(Size, paClusterSize));
+      FindNext(Srec);
+    end;
+  end;
+
+  procedure PathList.paFindAllPaths;
+    {-Find all paths on the specified drive}
+  begin
+    {Validate drive letter}
+    if not ValidDrive(paDrive) then begin
+      paCurFiles := 0;
+      Exit;
+    end;
+
+    {Store the root directory}
+    with paDPtr^[1] do begin
+      PCat := pkNormal;
+      PLevel := 0;
+      PSize := 0;
+      if FlagIsSet(paFlags, paUpcase) then
+        PName := UpCase(paDrive)
+      else
+        PName := LoCase(paDrive);
+      PName := PName+':\';
+    end;
+    paCurFiles := 1;
+    paMaxLen := 5;
+
+    {Find all subdirectories, recursively}
+    paFindPaths(1, paDPtr^[1].PName);
+    ClearFlag(paFlags, paReadDir);
+
+    {Set the item width based on what was found}
+    paSetItemWidth;
+  end;
+
+  procedure PathList.paSetChoiceCurDir;
+    {-Set the initial choice to the current directory}
+  var
+    I : Word;
+    CurDir : PathStr;
+  begin
+    GetDir(Byte(UpCase(paDrive))-Byte('A')+1, CurDir);
+    CurDir := StUpcase(CurDir);
+    for I := 1 to paMaxFiles do
+      if StUpcase(GetMultiPath(I)) = CurDir then begin
+        SetInitialChoice(I);
+        if FlagIsSet(paFlags, paAltCurDir) then
+          paDPtr^[I].PCat := pkAlternate;
+        Exit;
+      end;
+  end;
+
+  procedure PathList.PreloadPathList;
+    {-Read paths in advance, in order to optimize size before drawing}
+  begin
+    ClearErrors; {!!.01}
+    if FlagIsSet(paFlags, paReadDir) then begin
+      {Load all paths into array}
+      paFindAllPaths;
+
+      {Reinit pick window for the actual number of files}
+      ChangeNumItems(paCurFiles);                        {!!.01}
+
+      if paCurFiles = 0 then begin
+        GotError(epWarning+ecInvalidDrive, emInvalidDrive);
+        Exit;
+      end;
+
+      {$IFDEF UseAdjustableWindows}
+      if FlagIsSet(paFlags, paOptimizeSize) then
+        {Tell pick list to optimize its size}
+        PickList.OptimizeSize;
+      {$ENDIF}
+
+      if FlagIsSet(paFlags, paSetCurDir) then
+        paSetChoiceCurDir
+      else
+        SetChoice(1, 1);
+
+      if FlagIsSet(pkFlags, pkMultiChoice) then
+        {Clear the bitset}
+        ClearSelected;
+    end;
+  end;
+
+  {!!.30 - New}
+  procedure PathList.SavePathList(FName : PathStr);
+  var
+    OutFile    : File;
+    TempResult : Integer;
+    Sz         : Word;
+
+  begin
+    ClearErrors;
+
+    { don't save if no files }
+    if (paCurFiles = 0) then begin
+      GotError(epWarning+ecPathListEmpty, emNullError);
+      Exit;
+    end;
+
+    Sz := SizeOf(PathRec) * paCurFiles;
+    Assign(OutFile, FName);
+    Rewrite(OutFile, 1);
+    TempResult := IoResult;
+    if (TempResult <> 0) then begin
+      GotError(epNonFatal+TempResult, emNullError);
+      Exit;
+    end;
+
+    BlockWrite(OutFile, paCurFiles, SizeOf(paCurFiles));
+    BlockWrite(OutFile, paMaxLen, SizeOf(paMaxLen));
+    BlockWrite(OutFile, paDPtr^, Sz);
+    TempResult := IoResult;
+    if (TempResult <> 0) then begin
+      GotError(epNonFatal+TempResult, emNullError);
+      System.Close(OutFile); if (IoResult = 0) then ;
+      System.Erase(OutFile); if (IoResult = 0) then ;
+      Exit;
+    end;
+
+    Close(OutFile); if (IoResult = 0) then ;
+  end;
+
+  procedure PathList.LoadPathList(FName : PathStr);
+  var
+    InFile     : File;
+    Sz         : Word;
+    TempResult : Integer;
+
+  begin
+    Assign(InFile, FName);
+    Reset(InFile, 1);
+    TempResult := IoResult;
+    if (TempResult <> 0) then begin
+      GotError(epNonFatal+TempResult, emNullError);
+      Exit;
+    end;
+
+    BlockRead(InFile, paCurFiles, SizeOf(paCurFiles));
+    BlockRead(InFile, paMaxLen, SizeOf(paMaxLen));
+    Sz := SizeOf(PathRec) * paCurFiles;
+
+    BlockRead(InFile, paDPtr^, Sz);
+    TempResult := IoResult;
+    if (TempResult <> 0) then begin
+      Close(InFile); if (IoResult = 0) then ;
+      GotError(epNonFatal+TempResult, emNullError);
+      Exit;
+    end;
+
+    Close(InFile); if (IoResult = 0) then ;
+
+    ChangeNumItems(paCurFiles);
+
+    {$IFDEF UseAdjustableWindows}
+    if FlagIsSet(paFlags, paOptimizeSize) then
+      PickList.OptimizeSize;
+    {$ENDIF}
+
+    if FlagIsSet(paFlags, paSetCurDir) then
+      paSetChoiceCurDir
+    else
+      SetChoice(1, 1);
+
+    if FlagIsSet(pkFlags, pkMultiChoice) then
+      ClearSelected;
+
+    ClearFlag(paFlags, paReadDir);
+    paSetItemWidth;
+  end;
+
+  procedure PathList.ProcessSelf; {!!.01}
+    {-Display path list, get one or more selections}
+  begin
+    {Assure paths are loaded into memory}
+    PreloadPathList;
+    if RawError <> 0 then {!!.01}
+      Exit;
+
+    {Get a selection}
+    PickList.ProcessSelf; {!!.01}
+    if RawError = 0 then {!!.01}
+      paCurItem := GetLastChoice;
+  end;
+
+  function PathList.GetPathName(Drive : Char) : PathStr;
+    {-Set drive, pick a path, and return it. Returns empty string if error.}
+  var
+    CurItem : Word;
+    WasActive : Boolean;
+  begin
+    {Return empty string if any problems}
+    GetPathName := '';
+
+    {Set the drive mask}
+    SetDrive(Drive);
+
+    WasActive := IsActive;
+    if not WasActive then begin
+      PreloadPathList;
+      if RawError <> 0 then {!!.01}
+        Exit
+      else if (paCurFiles = 0) then begin
+        GotError(epWarning+ecInvalidDrive, emInvalidDrive);
+        Exit;
+      end;
+      {Display the pick window now}
+      Draw;
+    end;
+
+    {Get a selection}
+    ProcessSelf; {!!.01}
+    if (RawError <> 0) or (paCurFiles = 0) then
+      Exit;
+    if GetLastCommand = ccSelect then
+      GetPathName := GetSelectedPath;
+
+    {Erase the window if it wasn't originally active}
+    if not WasActive then
+      Erase;
+  end;
+
+  function PathList.GetSelectedPath : PathStr;
+    {-Return selected pathname}
+  begin
+    GetSelectedPath := GetMultiPath(paCurItem);
+  end;
+
+  procedure PathList.paOptionsOn(OptionFlags : Word);
+    {-Activate multiple options}
+  begin
+    (*paFlags := paFlags or (OptionFlags and not BadDirOptions);*) {!!.22}
+    paFlags := paFlags or (OptionFlags and not BadPathOptions);   {!!.22}
+  end;
+
+  procedure PathList.paOptionsOff(OptionFlags : Word);
+    {-Deactivate multiple options}
+  begin
+    (*paFlags := paFlags and not (OptionFlags and not BadDirOptions);*) {!!.22}
+    paFlags := paFlags and not (OptionFlags and not BadPathOptions);    {!!.22}
+  end;
+
+  function PathList.paOptionsAreOn(OptionFlags : Word) : Boolean;
+    {-Return True if all specified options are on}
+  begin
+    paOptionsAreOn := (paFlags and OptionFlags = OptionFlags);
+  end;
+
+  procedure PathList.SetClusterSize(Size : Word);
+    {-Set cluster size for adjusting files to DOS boundaries}
+  begin
+    if Size = 0 then
+      Size := 1;
+    paClusterSize := Size;
+  end;
+
+  procedure PathList.SetDrawingChars(P : PathDrawArray);
+    {-Set the characters used for line graphics}
+  begin
+    paLine := P;
+  end;
+
+  procedure PathList.SetLineDrawMode;
+    {-Display hierarchy with line draw characters (default)}
+  begin
+    ChangeStringProc(PathLineDrawProc);
+    ClearFlag(paFlags, paFullPathDisp);
+  end;
+
+  procedure PathList.SetFullPathMode;
+    {-Display hierarchy with full path names}
+  begin
+    ChangeStringProc(PathFullDrawProc);
+    SetFlag(paFlags, paFullPathDisp);
+  end;
+
+  procedure PathList.SetPathAttr(Color, Mono : Byte);
+    {-Set video attributes for paths}
+  begin
+    SetPickAttr(pkNormal, False, Color, Mono);
+  end;
+
+  procedure PathList.SetSelectPathAttr(Color, Mono : Byte);
+    {-Set video attributes for selected path}
+  begin
+    SetPickAttr(pkNormal, True, Color, Mono);
+  end;
+
+  function PathList.GetMultiPath(N : Word) : PathStr;
+    {-Return pathname of specified path}
+  var
+    I : Word;
+    Level : Byte;
+    S : String;
+  begin
+    if (paDPtr = nil) or (N = 0) or (N > paCurFiles) then begin
+      GetMultiPath := '';
+      Exit;
+    end;
+    with paDPtr^[N] do begin
+      Level := PLevel;
+      S := PName;
+    end;
+    while Level > 0 do begin
+      dec(Level);
+      repeat
+        dec(N);
+      until paDPtr^[N].PLevel = Level;
+      S := AddBackSlash(paDPtr^[N].PName)+S;
+    end;
+    GetMultiPath := S;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor PathList.Load(var S : IdStream);
+    {-Load a list from a stream}
+  begin
+    {No dynamic space allocated yet}
+    paDPtr := nil;
+
+    {Load the underlying pick list}
+    if not PickList.Load(S) then
+      Fail;
+
+    {Change unit code}
+    cwUnitCode := ucDir;
+
+    {Load fixed data}
+    S.Read(paFlags, Ofs(paLine)-Ofs(paFlags)+SizeOf(PathDrawArray));
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {Allocate space for file buffer}
+    if not GetMemCheck(paDPtr, paHeapToUse) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Exit;
+    end;
+
+    if FlagIsSet(pkFlags, pkMultiChoice) then begin
+      {Allocate select set space for maximum number of paths}
+      ClearErrors; {!!.01}
+      AllocateSelectSet(paMaxNumFiles);
+      if RawError <> 0 then begin
+        Done;
+        InitStatus := epFatal+ecOutOfMemory;
+        Fail;
+      end;
+    end;
+
+    {Note that we must read the file directory first time}
+    ResetList;
+  end;
+
+  procedure PathList.Store(var S : IdStream);
+    {-Store a list in a stream}
+  begin
+    {Store the underlying pick list}
+    PickList.Store(S);
+
+    {Store fixed data}
+    S.Write(paFlags, Ofs(paLine)-Ofs(paFlags)+SizeOf(PathDrawArray));
+  end;
+
+  procedure PathListStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing path lists}
+  begin
+    with SPtr^ do begin
+      PickListStream(SPtr);
+      RegisterType(otPathList, vePathList, TypeOf(PathList),
+                   @PathList.Store, @PathList.Load);
+
+      RegisterPointer(ptFullDrawProc, @PathFullDrawProc);
+      RegisterPointer(ptLineDrawProc, @PathLineDrawProc);
+    end;
+  end;
+
+{$ENDIF}

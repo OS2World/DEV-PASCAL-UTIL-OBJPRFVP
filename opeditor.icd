@@ -1,0 +1,126 @@
+{*********************************************************}
+{*                  OPEDITOR.ICD 1.30                    *}
+{*    Copyright (c) TurboPower Software 1989, 1992.      *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {.F-}
+const
+  {Keystroke to command mapping}
+  EditorKeyMax = 400;   {last available slot in EditorKeySet}
+  {ID string for installation programs}
+  EditorKeyID : string[18] = 'opeditor key array';
+  {default key assignments}
+  EditorKeySet : array[0..EditorKeyMax] of Byte = (
+   {length keys         command type      key sequence}
+    3,     $00, $3B,    ccHelp,          {F1}
+    3,     $00, $3C,    ccSaveFile,      {F2}
+    3,     $00, $3D,    ccNewFile,       {F3}
+    3,     $00, $41,    ccBlkBegin,      {F7}
+    3,     $00, $42,    ccBlkEnd,        {F8}
+    3,     $00, $47,    ccHome,          {Home}
+    3,     $00, $48,    ccUp,            {Up}
+    3,     $00, $49,    ccPageUp,        {PgUp}
+    3,     $00, $4B,    ccLeft,          {Left}
+    3,     $00, $4D,    ccRight,         {Right}
+    3,     $00, $4F,    ccEnd,           {End}
+    3,     $00, $50,    ccDown,          {Down}
+    3,     $00, $51,    ccPageDn,        {PgDn}
+    3,     $00, $52,    ccIns,           {Ins}
+    3,     $00, $53,    ccDel,           {Del}
+    3,     $00, $73,    ccWordLeft,      {^Left}
+    3,     $00, $74,    ccWordRight,     {^Right}
+    3,     $00, $75,    ccScreenBot,     {^End}
+    3,     $00, $76,    ccEndOfFile,     {^PgDn}
+    3,     $00, $77,    ccScreenTop,     {^Home}
+    3,     $00, $84,    ccTopOfFile,     {^PgUp}
+    2,     $01,         ccWordLeft,      {^A}
+    2,     $02,         ccReformatP,     {^B}
+    2,     $03,         ccPageDn,        {^C}
+    2,     $04,         ccRight,         {^D}
+    2,     $05,         ccUp,            {^E}
+    2,     $06,         ccWordRight,     {^F}
+    2,     $07,         ccDel,           {^G}
+    2,     $08,         ccBack,          {^H, Bksp}
+    2,     $09,         ccTab,           {^I, Tab}
+    2,     $0C,         ccReSearch,      {^L}
+    2,     $0D,         ccSelect,        {^M, Enter}
+    2,     $0E,         ccInsertLine,    {^N}
+    2,     $10,         ccCtrlChar,      {^P}
+    2,     $12,         ccPageUp,        {^R}
+    2,     $13,         ccLeft,          {^S}
+    2,     $14,         ccDelWord,       {^T}
+    2,     $16,         ccIns,           {^V}
+    2,     $17,         ccScrollUp,      {^W}
+    2,     $18,         ccDown,          {^X}
+    2,     $19,         ccDelLine,       {^Y}
+    2,     $1A,         ccScrollDn,      {^Z}
+    2,     $7F,         ccBack,          {^Bksp}
+    3,     $0A, $0C,    ccJmpLine,       {^J^L}
+    3,     $0B, $01,    ccBlkAppend,     {^K^A}
+    3,     $0B, $02,    ccBlkBegin,      {^K^B}
+    3,     $0B, $03,    ccBlkCopy,       {^K^C}
+    3,     $0B, $04,    ccSaveSwitch,    {^K^D}
+    3,     $0B, $07,    ccReformatG,     {^K^G}
+    3,     $0B, $08,    ccBlkToggle,     {^K^H}
+    3,     $0B, $09,    ccBlkIndent,     {^K^I}
+    3,     $0B, $0B,    ccBlkEnd,        {^K^K}
+    3,     $0B, $0D,    ccMarkToggle,    {^K^M}
+    3,     $0B, $0E,    ccSaveNamed,     {^K^N}
+    3,     $0B, $10,    ccBlkPrint,      {^K^P}
+    3,     $0B, $11,    ccAbandonFile,   {^K^Q}
+    3,     $0B, $12,    ccBlkRead,       {^K^R}
+    3,     $0B, $13,    ccSaveFile,      {^K^S}
+    3,     $0B, $14,    ccBlkWord,       {^K^T}
+    3,     $0B, $15,    ccBlkUnindent,   {^K^U}
+    3,     $0B, $16,    ccBlkMove,       {^K^V}
+    3,     $0B, $17,    ccBlkWrite,      {^K^W}
+    3,     $0B, $18,    ccSaveExit,      {^K^X}
+    3,     $0B, $19,    ccBlkDelete,     {^K^Y}
+    3,     $0B, $30,    ccSetMark0,      {^K0}
+    3,     $0B, $31,    ccSetMark1,      {^K1}
+    3,     $0B, $32,    ccSetMark2,      {^K2}
+    3,     $0B, $33,    ccSetMark3,      {^K3}
+    3,     $0F, $02,    ccSetIndent,     {^O^B}
+    3,     $0F, $03,    ccCenterLine,    {^O^C}
+    3,     $0F, $06,    ccTabToggle,     {^O^F}
+    3,     $0F, $09,    ccIndent,        {^O^I}
+    3,     $0F, $0F,    ccBlkTCase,      {^O^O}
+    3,     $0F, $12,    ccRtMargin,      {^O^R}
+    3,     $0F, $14,    ccTabSize,       {^O^T}
+    3,     $0F, $15,    ccBlkUCase,      {^O^U}
+    3,     $0F, $16,    ccBlkLCase,      {^O^V}
+    3,     $0F, $17,    ccWordWrap,      {^O^W}
+    3,     $11, $01,    ccReplace,       {^Q^A}
+    3,     $11, $02,    ccJmpBegin,      {^Q^B}
+    3,     $11, $03,    ccEndOfFile,     {^Q^C}
+    3,     $11, $04,    ccEnd,           {^Q^D}
+    3,     $11, $05,    ccScreenTop,     {^Q^E}
+    3,     $11, $06,    ccSearch,        {^Q^F}
+    3,     $11, $0B,    ccJmpEnd,        {^Q^K}
+    3,     $11, $0C,    ccRestore,       {^Q^L}
+    3,     $11, $10,    ccPrevPos,       {^Q^P}
+    3,     $11, $12,    ccTopOfFile,     {^Q^R}
+    3,     $11, $13,    ccHome,          {^Q^S}
+    3,     $11, $18,    ccScreenBot,     {^Q^X}
+    3,     $11, $19,    ccDelEol,        {^Q^Y}
+    3,     $11, $30,    ccJmpMark0,      {^Q0}
+    3,     $11, $31,    ccJmpMark1,      {^Q1}
+    3,     $11, $32,    ccJmpMark2,      {^Q2}
+    3,     $11, $33,    ccJmpMark3,      {^Q3}
+  {$IFDEF UseMouse}
+    3,     $00, $EF,    ccMouseSel,      {click left  = mouse select}
+    3,     $00, $ED,    ccHelp,          {click both  = help}
+  {$ELSE}
+             0, 0, 0, 0, 0, 0, 0,        {360}
+    0,                                   {370}
+  {$ENDIF}
+    {-----------pad to end of array----------}
+                   0, 0, 0, 0, 0,        {370}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,        {380}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,        {390}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0);       {400}
+{.F+}
+
+const
+  EditorCfgEnd : Byte = 0;

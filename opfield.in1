@@ -1,0 +1,597 @@
+{*********************************************************}
+{*                   OPFIELD.IN1 1.30                    *}
+{*      Copyright (c) TurboPower Software 1988,1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {------------------- miscellaneous routines -------------------}
+
+  function CharOK(PicChar : Char; var Ch : Char;
+                  PrevCh : Char; Fix : Boolean) : Boolean;
+    {-Return True if Ch is in character set corresponding to PicChar}
+  begin
+    if Fix then
+      FixCase(PicChar, Ch, PrevCh);
+    case PicChar of
+      AnyChar,
+      ForceUp,
+      ForceLo,
+      ForceMixed : CharOK := Ch in AnyCharSet;
+      {$IFDEF UseDates}
+      NameOnly,
+      NameOnlyU,
+      {$ENDIF}
+      AlphaOnly,
+      UpperAlpha,
+      LowerAlpha : CharOK := Ch in AlphaOnlySet;
+
+      {$IFDEF UseDates}
+      MonthOnly, MonthOnlyU,
+      DayOnly, DayOnlyU,
+      YearOnly,
+      HourOnly, HourOnlyU,
+      {$IFNDEF VIRTUALPASCAL}
+      MinOnly,
+      MinOnlyU,
+      {$ENDIF}
+      SecOnly, SecOnlyU,
+      {$ENDIF}
+      NumberOnly : CharOK := Ch in NumberOnlySet;
+
+      HexOnly : CharOK := Ch in HexOnlySet;
+
+      {$IFDEF UseDates}
+      TimeOnly :
+        case UpCase(Ch) of
+          'P', 'A', ' ' : CharOK := True;                   {!!.22}
+          else CharOK := False;
+        end;
+      EmOnly : CharOK := (Upcase(Ch) = 'M') or (Ch = ' ');  {!!.22}
+      {$ENDIF}
+
+      DigitOnly : CharOK := Ch in DigitOnlySet;
+      BooleanOnly : CharOK := Ch in BooleanSet;
+      YesNoOnly : CharOK := Ch in YesNoSet;
+      Scientific : CharOK := Ch in ScientificSet;
+      User1 : CharOK := Ch in UserSet1;
+      User2 : CharOK := Ch in UserSet2;
+      User3 : CharOK := Ch in UserSet3;
+      User4 : CharOK := Ch in UserSet4;
+      User5 : CharOK := Ch in UserSet5;
+      User6 : CharOK := Ch in UserSet6;
+      User7 : CharOK := Ch in UserSet7;
+      User8 : CharOK := Ch in UserSet8;
+    end;
+  end;
+
+  function ValidField(EFP : EntryFieldPtr; var St : string) : Byte;
+    {-Check an entire field for valid characters. If error is found, result has
+      offset into the string so that cursor can be positioned on it.}
+  var
+    I : Byte;
+    Flags : PictureFlags;
+  begin
+    with EFP^ do begin
+      {initialize flags table}
+      InitPictureFlags(Flags);
+
+      ValidField := 0;
+      for I := 1 to Length(efPicture^) do
+        if Flags[I] then
+          if not CharOK(efPicture^[I], St[I], #255, False) then begin
+            ValidField := I;
+            Exit;
+          end;
+    end;
+  end;
+
+  procedure FixRealPrim(var S : string; Validating : Boolean);
+    {-Get a string representing a real ready for Val}
+  var
+    SLen : Byte absolute S;
+    EPos, I : Byte; {!!.20}
+  begin
+    TrimSpacesPrim(S);
+    if S[SLen] = DecimalChar then
+      Dec(SLen);
+    if SLen > 0 then begin
+      {check for 'nnnn.'}
+      if S[SLen] = DecimalChar then begin
+        Inc(SLen, 1);
+        S[SLen] := '0';
+      end;
+
+      {check for '.nnnn'}
+      if S[1] = DecimalChar then
+        S := '0'+S;
+
+      {check for '-.nnnn'}
+      if (SLen > 1) and (S[1] = '-') and (S[2] = DecimalChar) then
+        Insert('0', S, 2);
+
+      {Val doesn't accept alternate decimal point chars}
+      I := Pos(DecimalChar, S);
+      if I <> 0 then
+        S[I] := '.';
+
+      {fix up numbers with exponents}       {!!.20}
+      EPos := Pos('E', S);                  {!!.20}
+      if (EPos > 0) then begin              {!!.20}
+        if I = 0 then begin                 {!!.20}
+          Insert('.', S, EPos);             {!!.20}
+          I := EPos;                        {!!.20}
+          Inc(EPos);                        {!!.20}
+        end;                                {!!.20}
+        if EPos-I < 12 then                 {!!.20}
+          Insert('00000', S, EPos);         {!!.20}
+      end;                                  {!!.20}
+    end
+    else if Validating then
+      {empty string = 0}
+      S := '0';
+  end;
+
+  {--------------- methods for EntryField's ----------------}
+
+  constructor EntryField.Init(ID : Word;           var Prompt : string;
+                              pRow, pCol : Word;   var Picture : string;
+                              fRow, fCol : Word;   fWidth, fHeight : Byte;
+                              HlpNdx : Word;    var RangeLo, RangeHi : RangeType;
+                              DataSize : Word;     DecimalPlaces : Byte;
+                              VF : ValidationFunc; CP : ConversionProc;
+                              DP : DrawProc;       EP : EditProc;
+                              var EditVar;         PadChar : Char;
+                              Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Initialize an entry field}
+  begin
+    if not EntryField.InitNPP(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, fHeight,
+      HlpNdx, RangeLo, RangeHi, DataSize, DecimalPlaces, EditVar, PadChar,
+      Options, IFlags, Colors) then
+        Fail;
+
+    efValidate := VF;
+    efConvert := CP;
+    efDraw := DP;
+    efEditor := EP;
+  end;
+
+  constructor EntryField.InitNPP(ID : Word;         var Prompt : string;
+                                 pRow, pCol : Word; var Picture : string;
+                                 fRow, fCol : Word; fWidth, fHeight : Byte;
+                                 HlpNdx : Word;     var RangeLo, RangeHi : RangeType;
+                                 DataSize : Word;   DecimalPlaces : Byte;
+                                 var EditVar;       PadChar : Char;
+                                 Options, IFlags : LongInt; var Colors : ColorSet);
+    {-Initialize an entry field (No Procedure Pointers)}
+  var
+    OK : Boolean;
+    I : Word;
+    PFlags : PictureFlags;
+  begin
+    efPrompt := nil;
+    efPicture := nil;
+    efEditSt := nil;
+
+    {set hexadecimal flag if appropriate}
+    if Pos(HexOnly, Picture) <> 0 then
+      SetLongFlag(IFlags, ifHexadecimal);
+
+    {if there's a fixed decimal pt, a comma, or a floating dollar, it's
+     automatically right justified}
+    if (Pos(DecimalPt, Picture) <> 0) or
+       (Pos(FloatDollar, Picture) <> 0) or
+       (Pos(Comma, Picture) <> 0) then
+         SetLongFlag(Options, efRightJustify);
+
+    if not SelectField.Init(ID, pRow, pCol, Length(Prompt),
+                            fRow, fCol, fWidth, fHeight,
+                            HlpNdx, Options, IFlags, Colors) then
+        Fail;
+
+    efMaxLen := MaxWord(Length(Picture), fWidth);
+    I := Succ(efMaxLen)*fHeight;
+
+    OK := GetMemCheck(efPicture, Length(Picture)+1);
+    if OK then begin
+      efPicture^ := Picture;
+      if Picture <> '' then              {!!.03}
+        OK := GetMemCheck(efEditSt, I);
+    end;
+    if OK then
+      OK := GetMemCheck(efPrompt, Length(Prompt)+1);
+    if not OK then begin
+      InitStatus := epFatal+ecOutOfMemory;
+      Done;
+      Fail;
+    end;
+    efPrompt^ := Prompt;
+    if Picture <> '' then              {!!.03}
+      FillChar(efEditSt^, I, 0);
+
+    efPadChar := PadChar;
+    efRangeLo := RangeLo;
+    efRangeHi := RangeHi;
+    efDataSize := DataSize;
+    efDPlaces := DecimalPlaces;
+    efVarPtr := @EditVar;
+    efHOffset := 0;                    {!!.20}
+
+    @efValidate := nil;
+    @efConvert := nil;
+    @efDraw := nil;
+    @efEditor := nil;
+
+    {see if we can optimize InitPictureFlags}
+    InitPictureFlags(PFlags);
+    if Picture <> '' then                {!!.03}
+      for I := 1 to efMaxLen do
+        if not PFlags[I] then
+          Exit;
+    SetLongFlag(sfFlags, ifNoLiterals);
+  end;
+
+  destructor EntryField.Done;
+    {-Deallocate dynamic data}
+  var
+    I : Word;
+  begin
+    DisposeString(efPicture);
+    FreeMemCheck(efEditSt, Succ(efMaxLen)*sfFHeight);
+    DisposeString(efPrompt);
+
+    SelectField.Done;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor EntryField.Load(var S : IdStream);
+    {-Load an entry field from a stream}
+  var
+    I : Word;
+
+    function LoadString(var SP : StringPtr) : Boolean;
+    var
+      St : string;
+      StLen : Byte absolute St;
+    begin
+      St := S.ReadString;
+      if (S.PeekStatus = 0) and GetMemCheck(SP, StLen+1) then begin
+        SP^ := St;
+        LoadString := True;
+      end
+      else
+        LoadString := False;
+    end;
+
+  begin
+    efPrompt := nil;
+    efPicture := nil;
+    efEditSt := nil;
+    efHOffset := 0;                    {!!.20}
+
+    if not SelectField.Load(S) then
+      Fail;
+
+    {load our two strings onto the heap}
+    if not ( LoadString(efPrompt) and LoadString(efPicture) ) then begin
+      if S.PeekStatus = 0 then
+        InitStatus := epFatal+ecOutOfMemory;
+      Done;
+      Fail;
+    end;
+
+    @efValidate := S.ReadPointer;
+    @efConvert := S.ReadPointer;
+    @efDraw := S.ReadPointer;
+    @efEditor := S.ReadPointer;
+
+    S.Read(efMaxLen, Ofs(efVarPtr)-Ofs(efMaxLen)+SizeOf(efVarPtr));
+
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    I := Succ(efMaxLen)*sfFHeight;
+    if efPicture^ <> '' then              {!!.03}
+      if GetMemCheck(efEditSt, I) then
+        FillChar(efEditSt^, I, 0)
+      else begin
+        InitStatus := epFatal+ecOutOfMemory;
+        Done;
+        Fail;
+      end;
+  end;
+
+  procedure EntryField.Store(var S : IdStream); {!!.12} {rewritten}
+    {-Store an entry field in a stream}
+
+    procedure WritePointerToStream(P : Pointer);
+    begin
+      if (P = nil) or (P = @NullValidation) then
+        S.WriteUserPointer(P, ptNil)
+      else
+        S.WritePointer(P);
+    end;
+
+  begin
+    SelectField.Store(S);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    S.WriteString(efPrompt^);
+    S.WriteString(efPicture^);
+
+    WritePointerToStream(@efValidate);
+    WritePointerToStream(@efConvert);
+    WritePointerToStream(@efDraw);
+    WritePointerToStream(@efEditor);
+
+    S.Write(efMaxLen, Ofs(efVarPtr)-Ofs(efMaxLen)+SizeOf(efVarPtr));
+  end;
+
+{$ENDIF}
+
+  procedure EntryField.efOptionsOn(OptionFlags : LongInt);
+    {-Activate multiple options}
+  begin
+    SetLongFlag(sfOptions, OptionFlags and not BadEFieldOptions);
+  end;
+
+  procedure EntryField.efOptionsOff(OptionFlags : LongInt);
+    {-Deactivate multiple options}
+  begin
+    ClearLongFlag(sfOptions, OptionFlags and not BadEFieldOptions);
+  end;
+
+  function EntryField.efOptionsAreOn(OptionFlags : LongInt) : Boolean;
+    {-Return true if all specified options are on}
+  begin
+    efOptionsAreOn := (sfOptions and OptionFlags) = OptionFlags;
+  end;
+
+  procedure EntryField.sefOptionsOn(OptionFlags : LongInt);
+    {-Activate multiple secondary options}
+  begin
+    SetLongFlag(sfFlags, OptionFlags and not BadSEFieldOptions);
+  end;
+
+  procedure EntryField.sefOptionsOff(OptionFlags : LongInt);
+    {-Deactivate multiple secondary options}
+  begin
+    ClearLongFlag(sfFlags, OptionFlags and not BadSEFieldOptions);
+  end;
+
+  function EntryField.sefOptionsAreOn(OptionFlags : LongInt) : Boolean;
+    {-Return true if all specified secondary options are on}
+  begin
+    sefOptionsAreOn := (sfFlags and OptionFlags) = OptionFlags;
+  end;
+
+  procedure EntryField.efTrimSpaces;
+    {-Trim leading and trailing spaces in efEditSt}
+  var
+    I, J : Word;
+    Flags : PictureFlags;
+  begin
+    if efEditSt = nil then              {!!.03}
+      Exit;                             {!!.03}
+    {make sure it's safe to trim}
+    InitPictureFlags(Flags);
+    J := Length(efPicture^);
+    for I := 1 to J do
+      if not Flags[I] then
+        Exit;
+    TrimSpacesPrim(efEditSt^);
+  end;
+
+  function EntryField.efFieldIsEmpty : Boolean;
+    {-Return true if field is empty}
+  var
+    I : Word;
+    Flags : PictureFlags;
+  begin
+    if not LongFlagIsSet(sfFlags, ifSemiHidden) then begin {!!.01}
+      efFieldIsEmpty := False;
+      InitPictureFlags(Flags);
+      if (efEditSt <> nil) and (efEditSt^ <> '') then        {!!.03}
+        for I := 1 to Length(efPicture^) do
+          if Flags[I] and (efEditSt^[I] <> ' ') then
+            Exit;
+    end;                                                     {!!.01}
+    efFieldIsEmpty := True;
+  end;
+
+  function EntryField.efOKtoAdvance(CC : Word) : Boolean;
+    {-Verify that it's OK to go to next/previous field if requested}
+  begin
+    case CC of
+      ccAutoAdvance,   {!!.02}
+      ccSelect :
+        efOKtoAdvance := not LongFlagIsSet(sfFlags, ifNotNext);
+
+      ccRight,
+      ccWordRight,
+      ccTab,
+      ccDown,
+      ccNextField :        {!!.02}
+      {ccAutoAdvance :}    {!!.02}
+        efOKtoAdvance := not LongFlagIsSet(sfFlags, ifNotNext+sefNoFieldMovement);
+
+      ccLeft,
+      ccWordLeft,
+      ccBackTab,
+      ccUp,
+      ccPrevField :
+        efOKtoAdvance := not LongFlagIsSet(sfFlags, ifNotPrev+sefNoFieldMovement);
+
+      ccNone {, ccMouseAuto} :      {!!.13}
+        efOKtoAdvance := False;  {!!.03}
+
+      else
+        efOKtoAdvance := True;
+    end;
+  end;
+
+{$IFDEF UseMouse}
+  function EntryField.efMousePos(Row, Col : Word) : Byte;  {!!.20} {new}
+    {-Returns position of cursor in field, or 0 if outside of field}
+  begin
+    if (MouseKeyWordY < Row) or (MouseKeyWordY > Row+Pred(sfFHeight)) or
+       (MouseKeyWordX < Col) or (MouseKeyWordX > Col+Pred(sfFWidth)) then
+         efMousePos := 0
+    else
+      efMousePos := Succ(MouseKeyWordX-Col)+efHOffset;
+  end;
+{$ENDIF}
+
+  function EntryField.afMaxLen : Byte;
+    {-Returns maximum length of field}
+  begin
+    afMaxLen := efMaxLen;
+  end;
+
+  function EntryField.afWidth : Byte; {!!.22}
+  begin
+    if sfFlags and ifSimple <> 0 then
+      afWidth := sfFWidth+Ord(sfOptions and efHouseCursorAtEnd <> 0)
+    else
+      afWidth := sfFWidth;
+  end;
+
+  function EntryField.afPicture : String;
+    {-Returns picture mask}
+  begin
+    afPicture := efPicture^;
+  end;
+
+  function EntryField.afDPlaces : Byte;
+    {-Returns default number of decimal places}
+  begin
+    afDPlaces := efDPlaces;
+  end;
+
+  function EntryField.afNoLiterals : Boolean;
+    {-Returns True if there are no literals in the picture mask}
+  begin
+    afNoLiterals := LongFlagIsSet(sfFlags, ifNoLiterals);
+  end;
+
+  function EntryField.afNumeric : Boolean;
+    {-Returns True if the field is "numeric"}
+  begin
+    afNumeric := LongFlagIsSet(sfFlags, ifNumeric);
+  end;
+
+  function EntryField.afHexadecimal : Boolean;
+    {-Returns True if the field holds hexadecimal numbers}
+  begin
+    afHexadecimal := LongFlagIsSet(sfFlags, ifHexadecimal);
+  end;
+
+  function EntryField.afRightJustified : Boolean;
+    {-Returns True if field is right justified}
+  begin
+    afRightJustified := LongFlagIsSet(sfOptions, efRightJustify);
+  end;
+
+  function EntryField.afIsReal : Boolean;
+    {-Returns True if field is a real type}
+  begin
+    afIsReal := LongFlagIsSet(sfFlags, ifRealVar);
+  end;
+
+  function EntryField.efStr2Long(S : string; var L : LongInt) : Boolean;
+    {-Convert a string to a longint}
+  begin
+    efStr2Long := True;
+    TrimSpacesPrim(S);
+    if LongFlagIsSet(sfFlags, sefSuppressZero) and (S = '') then
+      L := 0
+    else begin
+      if LongFlagIsSet(sfFlags, ifHexadecimal) and (S <> '') then
+        S := '$'+S;
+      if S = '-2147483648' then
+        L := $80000000
+      else
+        efStr2Long := Str2Long(S, L);
+    end;
+  end;
+
+  function EntryField.efLong2Str(L : LongInt; W : Byte) : string;
+    {-Convert a longint to a string}
+  var
+    S : string;
+  begin
+    if LongFlagIsSet(sfFlags, ifHexadecimal) then begin
+      S := HexL(L);
+      W := MinWord(W, sfFWidth);
+      if W < 8 then
+        Delete(S, 1, 8-W);
+      efLong2Str := S;
+    end
+    else
+      efLong2Str := Long2Str(L);
+  end;
+
+  procedure EntryField.efIncrement;
+    {-Increment the value of the field}
+  begin
+  end;
+
+  procedure EntryField.efSetSemiHidden(TF : Boolean);
+    {-Set/clear the ifSemiHidden flag}
+  begin
+    if TF then
+      SetLongFlag(sfFlags, ifSemiHidden)
+    else
+      ClearLongFlag(sfFlags, ifSemiHidden);
+  end;
+
+  function EntryField.Validate(var Code : Word; var SP : StringPtr) : Boolean;
+    {-Validate user's input}
+  begin
+    if @efValidate = nil then
+      Validate := True
+    else
+      Validate := efValidate(@Self, Code, SP);
+  end;
+
+  procedure EntryField.Convert(PostEdit : Boolean);
+    {-Convert from string to native type and vice versa}
+  begin
+    if @efConvert = nil then
+      Abstract
+    else
+      efConvert(@Self, PostEdit);
+  end;
+
+  procedure EntryField.Draw(var St : string;
+                            Row, Col : Word;
+                            FA, CA, POffset : Byte;
+                            PasswordChar : Char;
+                            var Flags : PictureFlags);
+    {-Draw the field}
+  begin
+    if @efDraw = nil then
+      Abstract
+    else
+      efDraw(Self, St, Row, Col, FA, CA, POffset, PasswordChar, Flags);
+  end;
+
+  procedure EntryField.Edit(Row, Col : Word;     FA, CA : Byte;
+                            PasswordChar : Char; PosCode : Byte;
+                            ReadOnly : Boolean;  var CC : Word;
+                            var ChWord : Word;   var InsertMode : Boolean;
+                            EP : ErrorProc;      UnitCode : Byte;
+                            var CP : CommandProcessor);
+    {-Edit the field}
+  begin
+    if @efEditor = nil then
+      Abstract
+    else
+      efEditor(Self, Row, Col, FA, CA, PasswordChar, PosCode, ReadOnly, CC,
+               ChWord, InsertMode, EP, UnitCode, CP);
+  end;
+

@@ -1,0 +1,78 @@
+{*********************************************************}
+{*                   OPHELP.ICD 1.30                     *}
+{*    Copyright (c) TurboPower Software 1989, 1992.      *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+const
+  HelpKeyMax = 240;                                       {!!.01}{!!.20}
+  HelpKeyID : string[16] = 'ophelp key array';
+  HelpKeySet : array[0..HelpKeyMax] of Byte = (
+    3, $00, $48, ccUp,        {Up}
+    3, $00, $50, ccDown,      {Down}
+    3, $00, $49, ccPageUp,    {PgUp}
+    3, $00, $51, ccPageDn,    {PgDn}
+    3, $00, $4B, ccLeft,      {Left}
+    3, $00, $4D, ccRight,     {Right}
+    2, $05,      ccUp,        {^E}
+    2, $18,      ccDown,      {^X}
+    2, $12,      ccPageUp,    {^R}
+    2, $03,      ccPageDn,    {^C}
+    2, $13,      ccLeft,      {^S}
+    2, $04,      ccRight,     {^D}
+
+    3, $00, $3B, ccIndex,     {F1}
+    3, $00, $68, ccPrevTopic, {Alt-F1}
+    2, $1B,      ccQuit,      {Esc}
+    2, $0D,      ccSelect,    {Enter}
+
+    3, $00, $47, ccHome,      {Home}
+    3, $00, $4F, ccEnd,       {End}
+    3, $11, $13, ccHome,      {^Q^S}
+    3, $11, $04, ccEnd,       {^Q^D}
+    3, $00, $75, ccScreenBot, {^End}
+    3, $00, $76, ccEndOfFile, {^PgDn}
+    3, $00, $77, ccScreenTop, {^Home}
+    3, $00, $84, ccTopOfFile, {^PgUp}
+    3, $11, $03, ccEndOfFile, {^Q^C}
+    3, $11, $05, ccScreenTop, {^Q^E}
+    3, $11, $12, ccTopOfFile, {^Q^R}
+    3, $11, $18, ccScreenBot, {^Q^X}
+    2, $17,      ccScrollUp,  {^W}
+    2, $1A,      ccScrollDn,  {^Z}
+
+    3, $00, $73, ccWordLeft,  {^Left}
+    3, $00, $74, ccWordRight, {^Right}
+    2, $01,      ccWordLeft,  {^A}
+    2, $06,      ccWordRight, {^F}
+    2, $09,      ccNextXref,  {Tab}
+    3, $00, $0F, ccPrevXref,  {ShTab}
+
+    3,     $0B, $02,    ccBlkBegin,      {^K^B}
+    3,     $0B, $03,    ccBlkCopy,       {^K^C}
+    3,     $0B, $08,    ccBlkToggle,     {^K^H}
+    3,     $0B, $0B,    ccBlkEnd,        {^K^K}
+
+    3,     $00, $3E,    ccBlkCopy,       {F4}
+    3,     $00, $41,    ccBlkBegin,      {F7}
+    3,     $00, $42,    ccBlkEnd,        {F8}
+
+    {$IFDEF UseMouse}                                 {!!.11}
+    3, $00, $EF, ccMouseSel,  {Click left}            {!!.11}
+    3, $00, $EE, ccQuit,      {Click right}           {!!.11}
+    3, $00, $ED, ccIndex,     {Click both}            {!!.11}
+    {$ELSE}                                           {!!.11}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,                     {!!.11}
+    0, 0,                                             {!!.11}
+    {$ENDIF}                                          {!!.11}
+
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,                     {!!.01}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,                     {!!.20}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0); {Space for customization}
+
+const
+  HelpCfgEnd : Byte = 0;

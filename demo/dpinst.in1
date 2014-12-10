@@ -1,0 +1,1530 @@
+{*********************************************************}
+{*                   DPINST.IN1 1.30                     *}
+{*    Copyright (c) TurboPower Software 1989, 1992.      *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+const
+  DividerChar = 'ฤ';
+
+  BrowseCount        = 43;
+  BrowseDescriptor   : array[1..BrowseCount] of Byte = (
+    ccUp,
+    ccDown,
+    ccLeft,
+    ccRight,
+    ccHome,
+    ccEnd,
+    ccWordLeft,
+    ccWordRight,
+    ccPageUp,
+    ccPageDn,
+    ccTopOfFile,
+    ccEndOfFile,
+    0,
+    ccQuit,
+    ccMouseSel,
+    ccHelp,
+    0,
+    ccSetMark0,
+    ccSetMark1,
+    ccSetMark2,
+    ccSetMark3,
+    ccJmpMark0,
+    ccJmpMark1,
+    ccJmpMark2,
+    ccJmpMark3,
+    0,
+    ccBlkBegin,
+    ccBlkEnd,
+    ccBlkBottom,
+    ccBlkToggle,
+    ccBlkWrite,
+    ccBlkPrint,
+    ccJmpBegin,
+    ccJmpEnd,
+    ccJmpLine,
+    0,
+    ccSearch,
+    ccReSearch,
+    0,
+    ccNewFile,
+    ccHexMode,
+    ccStripHigh,
+    ccTabExpand);
+
+  CalCount           = 15;
+  CalDescriptor      : array[1..CalCount] of Byte = (
+    ccUp,
+    ccDown,
+    ccLeft,
+    ccRight,
+    ccHome,
+    ccEnd,
+    ccIncMonth,
+    ccDecMonth,
+    ccIncYear,
+    ccDecYear,
+    ccToday,
+    0,
+    ccMouseSel,
+    ccQuit,
+    ccHelp);
+
+  CalcCount          = 36;
+  CalcDescriptor     : array[1..CalcCount] of Byte = (
+    ccBack,
+    ccDecimalPt,
+    ccClearAll,
+    ccClearEntry,
+    ccSaveValue,
+    ccInsertValue,
+    0,
+    ccMouseSel,
+    ccQuit,
+    ccHelp,
+    0,
+    ccSelect,
+    ccMultiply,
+    ccAdd,
+    ccSubtract,
+    ccDivide,
+    ccAnd,
+    ccShl,
+    ccMod,
+    ccNot,
+    ccOr,
+    ccShr,
+    ccXor,
+    0,
+    ccBinaryMode,
+    ccDecimalMode,
+    ccExpMode,
+    ccFloatMode,
+    ccHexMode,
+    0,
+    ccHexA,
+    ccHexB,
+    ccHexC,
+    ccHexD,
+    ccHexE,
+    ccHexF);
+
+  EditorCount        = 86;
+  EditorDescriptor   : array[1..EditorCount] of Byte = (
+    ccUp,
+    ccDown,
+    ccLeft,
+    ccRight,
+    ccHome,
+    ccEnd,
+    ccWordLeft,
+    ccWordRight,
+    0,
+    ccPageUp,
+    ccPageDn,
+    ccScrollUp,
+    ccScrollDn,
+    ccTopOfFile,
+    ccEndOfFile,
+    ccScreenTop,
+    ccScreenBot,
+    ccPrevPos,
+    ccJmpLine,
+    0,
+    ccSelect,
+    ccInsertLine,
+    ccIns,
+    ccCtrlChar,
+    ccTab,
+    ccRestore,
+    0,
+    ccDel,
+    ccBack,
+    ccDelWord,
+    ccDelLine,
+    ccDelEol,
+    0,
+    ccMouseSel,
+    ccHelp,
+    0,
+    ccSaveFile,
+    ccNewFile,
+    ccSaveNamed,
+    ccSaveExit,
+    ccAbandonFile,
+    ccSaveSwitch,
+    0,
+    ccSearch,
+    ccReplace,
+    ccReSearch,
+    0,
+    ccBlkBegin,
+    ccBlkEnd,
+    ccBlkWord,
+    ccBlkToggle,
+    ccJmpBegin,
+    ccJmpEnd,
+    ccBlkCopy,
+    ccBlkDelete,
+    ccBlkMove,
+    0,
+    ccBlkRead,
+    ccBlkWrite,
+    ccBlkPrint,
+    ccBlkUCase,
+    ccBlkLCase,
+    ccBlkTCase,
+    ccBlkIndent,
+    ccBlkUnindent,
+    ccSetIndent,
+    0,
+    ccSetMark0,
+    ccSetMark1,
+    ccSetMark2,
+    ccSetMark3,
+    ccJmpMark0,
+    ccJmpMark1,
+    ccJmpMark2,
+    ccJmpMark3,
+    ccMarkToggle,
+    0,
+    ccReformatP,
+    ccReformatG,
+    ccCenterLine,
+    0,
+    ccTabToggle,
+    ccTabSize,
+    ccRtMargin,
+    ccIndent,
+    ccWordWrap);
+
+  DirCount           = 31;
+  DirDescriptor      : array[1..DirCount] of Byte = (
+    ccUp,
+    ccDown,
+    ccLeft,
+    ccRight,
+    ccHome,
+    ccEnd,
+    ccPageUp,
+    ccPageDn,
+    0,
+    ccToggle,
+    ccDel,
+    ccRestore,
+    ccBlkBegin,
+    ccBlkEnd,
+    ccBlkToggle,
+    0,
+    ccSelect,
+    ccMouseSel,
+    ccQuit,
+    ccHelp,
+    0,
+    ccRenameFile,
+    ccDeleteItem,
+    ccDeleteFiles,
+    ccCopyFiles,
+    ccMoveFiles,
+    0,
+    ccToggleMode,
+    ccNewMask,
+    ccLoadEditor,
+    ccLoadBrowser);
+
+  MenuCount          = 11;
+  MenuDescriptor     : array[1..MenuCount] of Byte = (
+    ccUp,
+    ccDown,
+    ccLeft,
+    ccRight,
+    ccHome,
+    ccEnd,
+    0,
+    ccSelect,
+    ccMouseSel,
+    ccQuit,
+    ccHelp);
+
+  QkRefCount         = 18;
+  QkRefDescriptor    : array[1..QkRefCount] of Byte = (
+    ccUp,
+    ccDown,
+    ccLeft,
+    ccRight,
+    ccHome,
+    ccEnd,
+    ccWordLeft,
+    ccWordRight,
+    ccPageUp,
+    ccPageDn,
+    ccEndOfFile,
+    ccTopOfFile,
+    0,
+    ccMouseSel,
+    ccQuit,
+    ccHelp,
+    0,
+    ccBlinkToggle);
+
+  PhoneCount         = 19;
+  PhoneDescriptor    : array[1..PhoneCount] of Byte = (
+    ccUp,
+    ccDown,
+    ccLeft,
+    ccRight,
+    ccHome,
+    ccEnd,
+    ccPageUp,
+    ccPageDn,
+    0,
+    ccMouseSel,
+    ccQuit,
+    ccHelp,
+    0,
+    ccSelect,
+    ccInsertItem,
+    ccDeleteItem,
+    ccNewMask,
+    ccDialPhone,
+    ccHangUpModem);
+
+  EntryCount         = 32;
+  EntryDescriptor    : array[1..EntryCount] of Byte = (
+    ccUp,
+    ccDown,
+    ccLeft,
+    ccRight,
+    ccHome,
+    ccEnd,
+    ccWordLeft,
+    ccWordRight,
+    ccPageUp,
+    ccPageDn,
+    0,
+    ccSelect,
+    ccTab,
+    ccBackTab,
+    ccFirstFld,
+    ccLastFld,
+    0,
+    ccDone,
+    ccMouseSel,
+    ccQuit,
+    ccHelp,
+    0,
+    ccIns,
+    ccCtrlChar,
+    ccRestore,
+    0,
+    ccDel,
+    ccBack,
+    ccDelWord,
+    ccDelLine,
+    ccDelEol,
+    ccDelBol);
+
+  HotKeyCount        = 25;
+  HotKeyDescriptor   : array[1..HotKeyCount] of Byte = (
+    ccQuit,
+    ExitTsrCmd,
+    UnloadTsrCmd,
+    0,
+    LocalMenuCmd,
+    MainMenuCmd,
+    ShowMemoryCmd,
+    0,
+    MoveWindowCmd,
+    ResizeWindowCmd,
+    ZoomWindowCmd,
+    NextWindowCmd,
+    PrevWindowCmd,
+    0,
+    SelectWindow1,
+    SelectWindow2,
+    SelectWindow3,
+    SelectWindow4,
+    SelectWindow5,
+    SelectWindow6,
+    SelectWindow7,
+    SelectWindow8,
+    0,
+    ccInsertNumber,
+    ccHexMode);
+
+type
+  String20    = string[20];
+  String20Ptr = ^String20;
+
+  KeyDescriptor = array[1..1000] of Byte;
+  CommandNameFunc = function(Cmd : Word; ksUnitCode : Byte) : string;
+  KeySelector =
+    object(ScrollingSelector)
+      ksCP        : ^CommandPacker;
+      ksCount     : Word;
+      ksPromptCol : Byte;
+      ksKD        : ^KeyDescriptor;
+      ksWidth     : Byte;
+      ksConColor  : Byte;
+      ksConMono   : Byte;
+      ksModColor  : Byte;
+      ksModMono   : Byte;
+      ksUnitCode  : Byte;
+      ksCmdNameFunc : CommandNameFunc;
+
+      constructor Init(X1, Y1, X2, Y2 : Byte;
+                       var CP : CommandPacker;
+                       DescCount : Word;
+                       var Descriptor;
+                       UnitCode : Byte;
+                       PromptCol, ColWidth : Byte;
+                       Col1, Col2, Col3 : Byte);
+        {-Initialize the selector}
+      constructor InitCustom(X1, Y1, X2, Y2 : Byte;
+                             var Colors : ColorSet;
+                             Options : LongInt;
+                             var CP : CommandPacker;
+                             DescCount : Word;
+                             var Descriptor;
+                             UnitCode : Byte;
+                             PromptCol, ColWidth, Col1, Col2, Col3 : Byte);
+        {-Initialize a selector with custom window options}
+
+      function FindKeyRec(ID : Word) : KeyRecPtr;
+        {-Find the key rec for the specified field}
+      procedure SetCommandNameFunc(CNF : CommandNameFunc);
+        {-Set function to get command name}
+      procedure PositionOnFirstConflict;
+        {-Position cursor on first conflict}
+
+      procedure SetModifiedAttr(Color, Mono : Byte);
+        {-Set colors for modified commands}
+      procedure SetConflictAttr(Color, Mono : Byte);
+        {-Set colors for commands with conflicts}
+
+      procedure asUpdate; virtual;
+        {-Called when entire screen is being redrawn}
+      procedure asDrawKnownField(SFP : SelectFieldPtr); virtual;
+        {-Draw the field}
+      function slGetField(ID : Word; NeedPrompt : Boolean) : string; virtual;
+        {-Get the string/prompt for the specified field}
+      function ksCommandName(Cmd : Word) : string; virtual;
+        {-Get the name for Cmd}
+    end;
+
+  procedure DisplayCentered(Msg : string; Row : Byte);
+    {-Display Msg centered on specified Row}
+  var
+    SM : Boolean;
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(SM);
+    {$ENDIF}
+
+    with dpiColors do
+      FastWrite(Center(Msg, ScreenWidth), Row, 1,
+                ColorMono(BlockColor, BlockMono));
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SM);
+    {$ENDIF}
+  end;
+
+  procedure DisplayCopyright;
+    {-Display copyright notice}
+  begin
+    DisplayCentered(Copyright, 1);
+  end;
+
+  procedure ErrorMessage(Msg : string);
+    {-Display Msg centered on specified Row}
+  var
+    SM : Boolean;
+    K : Word;
+    CursorXY, CursorSL : Word;
+    SaveS : string;
+  begin
+    {save cursor position}
+    GetCursorState(CursorXY, CursorSL);
+
+    {save text on status line}
+    FastRead(ScreenWidth, ScreenHeight, 1, SaveS);
+
+    Msg := Center(Msg+'. Press any key...', ScreenWidth);
+
+    {$IFDEF UseMouse}
+    HideMousePrim(SM);
+    {$ENDIF}
+
+    with dpiColors do
+      FastWrite(Msg, ScreenHeight, 1, ColorMono(BlockColor, BlockMono));
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SM);
+    {$ENDIF}
+
+    {Position cursor and make sure it's visible}
+    GotoXYabs(Length(TrimTrail(Msg))+2, ScreenHeight);
+    NormalCursor;
+
+    RingBell;
+
+    {$IFNDEF UseMouse}     {!!.01}
+    K := ReadKeyWord;
+    {$ELSE}
+    K := ReadKeyOrButton;
+    {$ENDIF}
+
+    {restore text of status line}
+    FastText(SaveS, ScreenHeight, 1);
+
+    {Restore cursor position and shape}
+    RestoreCursorState(CursorXY, CursorSL);
+  end;
+
+  procedure InsufficientMemory;
+  begin
+    ErrorMessage(emInsufficientMemory);
+  end;
+
+  function YesNo(Msg : String; Default : Char) : Boolean;
+    {-Get a response to a yes-no question}
+  var
+    SM, Done : Boolean;
+    K : Word;
+    Ch : Char absolute K;
+    CursorXY, CursorSL : Word;
+  begin
+    {save cursor position}
+    GetCursorState(CursorXY, CursorSL);
+
+    Msg := Center(Msg+' ['+Default+']', ScreenWidth);
+
+    {$IFDEF UseMouse}
+    HideMousePrim(SM);
+    {$ENDIF}
+
+    with dpiColors do
+      FastWrite(Msg, ScreenHeight, 1, ColorMono(BlockColor, BlockMono));
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SM);
+    {$ENDIF}
+
+    {Position cursor and make sure it's visible}
+    GotoXYabs(Length(TrimTrail(Msg))+2, ScreenHeight);
+    NormalCursor;
+
+    Done := True;
+    repeat
+      {$IFNDEF UseMouse}     {!!.01}
+      K := ReadKeyWord;
+      {$ELSE}
+      K := ReadKeyOrButton;
+      {$ENDIF}
+
+      case Upcase(Ch) of
+        {$IFDEF UseMouse}
+        #0 : if K = MouseLft then
+               YesNo := (Default = 'Y')
+             else
+               Done := False;
+        {$ENDIF}
+        'Y' : YesNo := True;
+        'N', #27 : YesNo := False;
+        ^M : YesNo := (Default = 'Y');
+      end;
+    until Done;
+
+    {Restore cursor position and shape}
+    RestoreCursorState(CursorXY, CursorSL);
+  end;
+
+{$IFDEF VIRTUALPASCAL}
+{$OrgName+}
+  {$L VPQKREF.OBJ}
+  {$L VPSCAN.OBJ}
+{$ELSE}
+  {$L OPQKREF.OBJ}
+  {$L OPSCAN.OBJ}
+{$ENDIF}
+
+  {$F+}
+  function EscapeSequence(B : Byte) : String20Ptr; external;
+    {-Return a pointer to a text string representing extended scan code B}
+  function GetScanCodeName(B : Byte) : String20Ptr; external;
+    {-Return a pointer to a text string representing scan code B}
+  {$F-}
+
+  procedure KeyToString(Key : Word; var S : string; SingleKey : Boolean);
+    {-Returns a string (S) representing a Key}
+  var
+    KL : Byte absolute Key;
+    KC : Char absolute Key;
+  begin
+    if Lo(Key) = 0 then
+      S := EscapeSequence(Hi(Key))^
+    else if (KC < ' ') and not SingleKey then
+      S := '^'+Char(KL+64)
+    else case KC of
+      ^H   : S := 'BkSp';    {^H, Backspace}
+      ^I   : S := 'Tab';     {Tab}
+      ^J   : S := '^Enter';  {^Enter}
+      ^M   : S := 'Enter';   {Enter}
+      ^[   : S := 'Esc';     {Escape}
+{$IFDEF VIRTUALPASCAL}
+      ^A..^G,^N..#26,#28..^_ :
+{$ELSE}
+      ^A..^_ :               {Control characters}
+{$ENDIF}
+        S := '^'+Char(KL+64);
+      ' '  : S := 'Space';   {Space}
+      #127 : S := '^BkSp';   {ASCII DEL}
+      #255 : S := '#255';    {#255}
+      else   S := KC;        {Normal character}
+    end;
+    S := '<'+S+'>';
+  end;
+
+  function KeyStringToString(Keys : KeyString; Width : Byte) : string;
+    {-Turn a key string into a printable string}
+  var
+    KLen   : Byte absolute Keys;
+    I, KW  : Word;
+    KeyStr : String20;
+    S      : string[80];
+    SLen   : Byte absolute S;
+  begin
+    I := 1;
+    SLen := 0;
+    while I <= KLen do begin
+      if Keys[I] = #0 then
+        if I = KLen then
+          KW := 0
+        else begin
+          Inc(I);
+          KW := Swap(Byte(Keys[I]));
+        end
+      else
+        KW := Byte(Keys[I]);
+      KeyToString(KW, KeyStr, KLen = 1);
+      S := S+KeyStr;
+      Inc(I);
+    end;
+
+    if SLen >= Width then begin
+      SLen := Width;
+      KeyStringToString := S;
+    end
+    else
+      KeyStringToString := Pad(S, Width);
+  end;
+
+  constructor KeySelector.Init(X1, Y1, X2, Y2 : Byte;
+                               var CP : CommandPacker;
+                               DescCount : Word;
+                               var Descriptor;
+                               UnitCode : Byte;
+                               PromptCol, ColWidth, Col1, Col2, Col3 : Byte);
+    {-Initialize the selector}
+  begin
+    if not KeySelector.InitCustom(
+      X1, Y1, X2, Y2, DefaultColorSet, DefWindowOptions, CP, DescCount,
+      Descriptor, UnitCode, PromptCol, ColWidth, Col1, Col2, Col3) then
+        Fail;
+  end;
+
+  constructor KeySelector.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                     var Colors : ColorSet;
+                                     Options : LongInt;
+                                     var CP : CommandPacker;
+                                     DescCount : Word;
+                                     var Descriptor;
+                                     UnitCode : Byte;
+                                     PromptCol, ColWidth : Byte;
+                                     Col1, Col2, Col3 : Byte);
+    {-Initialize a selector with custom window options}
+  var
+    I, Row, Col, LastCol : Word;
+    ColArray : array[1..3] of Word;
+    KD : KeyDescriptor absolute Descriptor;
+  begin
+    ksCP    := @CP;
+    ksCount := DescCount;
+    ksKD    := @Descriptor;
+    ksWidth := ColWidth;
+    ksPromptCol := PromptCol;
+    ksUnitCode := UnitCode;
+    @ksCmdNameFunc := nil;
+
+    with Colors do begin
+      ksConColor  := HighlightColor;
+      ksConMono   := HighlightMono;
+      ksModColor  := FieldColor;
+      ksModMono   := FieldMono;
+    end;
+
+    {check the number of columns}
+    LastCol := CP.cpCols;
+    if (LastCol = 0) or (LastCol > 3) then
+      Fail;
+
+    if not ScrollingSelector.InitCustom(X1, Y1, X2, Y2, Colors, Options) then
+      Fail;
+
+    {initialize ColArray}
+    ColArray[1] := Col1;
+    ColArray[2] := Col2;
+    ColArray[3] := Col3;
+
+    {add the fields automatically}
+    for Row := 1 to DescCount do
+      if KD[Row] <> 0 then
+        for Col := 1 to LastCol do
+          {store the command code in the help index}
+          AddField(Row, ColArray[Col], 0, Row, ColArray[Col], ColWidth, KD[Row]);
+
+    {allocate a virtual screen}
+    AllocateScreen;
+
+    {check for error}
+    if RawError <> 0 then begin {!!.01}
+      InitStatus := RawError;   {!!.01}
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure KeySelector.SetCommandNameFunc(CNF : CommandNameFunc);
+    {-Set function to get command name}
+  begin
+    ksCmdNameFunc := CNF;
+  end;
+
+  function KeySelector.FindKeyRec(ID : Word) : KeyRecPtr;
+    {-Find the key rec for the specified field}
+  var
+    Cmd, Col : Word;
+  begin
+    {calculate the column}
+    Col := Succ(ID mod ksCP^.cpCols);
+
+    {find the command code}
+    Cmd := FindField(ID)^.sfHelpIndex;
+
+    {find the key rec}
+    FindKeyRec := ksCP^.GetKeyRecPtr(Cmd, Col);
+  end;
+
+  function KeySelector.slGetField(ID : Word; NeedPrompt : Boolean) : string;
+    {-Get the string/prompt for the specified field}
+  begin
+    if NeedPrompt then
+      slGetField := ''
+    else with FindKeyRec(ID)^ do
+      slGetField := KeyStringToString(Keys, ksWidth);
+  end;
+
+  function StdCommandName(Cmd : Word) : string;
+    {-Return standard name for Cmd}
+
+    function Ascii(B : Byte) : Char;
+    begin
+      Ascii := Char( Ord('0')+B );
+    end;
+
+  begin
+    case Cmd of
+      ccCtrlChar    : StdCommandName := 'Insert control character';
+      ccSelect      : StdCommandName := 'Select';
+      ccQuit        : StdCommandName := 'Quit';
+      ccMouseSel    : StdCommandName := 'Mouse select';
+      ccRestore     : StdCommandName := 'Restore default';
+      ccHome        : StdCommandName := 'Cursor to start of line';
+      ccEnd         : StdCommandName := 'Cursor to end of line';
+      ccLeft        : StdCommandName := 'Cursor left';
+      ccRight       : StdCommandName := 'Cursor right';
+      ccUp          : StdCommandName := 'Cursor up';
+      ccDown        : StdCommandName := 'Cursor down';
+      ccScrollUp    : StdCommandName := 'Scroll window up';
+      ccScrollDn    : StdCommandName := 'Scroll window down';
+      ccWordLeft    : StdCommandName := 'Cursor left one word';
+      ccWordRight   : StdCommandName := 'Cursor right one word';
+      ccPageUp      : StdCommandName := 'Scroll up one page';
+      ccPageDn      : StdCommandName := 'Scroll down one page';
+      ccScreenTop   : StdCommandName := 'Top of screen';
+      ccScreenBot   : StdCommandName := 'Bottom of screen';
+      ccTopOfFile   : StdCommandName := 'Top of file';
+      ccEndOfFile   : StdCommandName := 'End of file';
+      ccBack        : StdCommandName := 'Delete previous char';
+      ccDel         : StdCommandName := 'Delete char at cursor';
+      ccDelEol      : StdCommandName := 'Delete to end of line';
+      ccDelBol      : StdCommandName := 'Delete from start of line';
+      ccDelLine     : StdCommandName := 'Delete line';
+      ccDelWord     : StdCommandName := 'Delete word';
+      ccIns         : StdCommandName := 'Toggle insert mode';
+      ccHelp        : StdCommandName := 'Request help';
+      ccTab         : StdCommandName := 'Insert tab';
+      ccBackTab     : StdCommandName := 'Previous tab stop';
+      ccIndent      : StdCommandName := 'Toggle indent mode';
+      ccWordWrap    : StdCommandName := 'Toggle word wrap';
+      ccReformatP   : StdCommandName := 'Reformat paragraph';
+      ccReformatG   : StdCommandName := 'Global reformat';
+      ccIncChoice   : StdCommandName := 'Increment choice';
+      ccDecChoice   : StdCommandName := 'Decrement choice';
+      ccNextField   : StdCommandName := 'Next field';
+      ccPrevField   : StdCommandName := 'Previous field';
+      ccNextRec     : StdCommandName := 'Next record';
+      ccPrevRec     : StdCommandName := 'Previous record';
+      ccFirstFld    : StdCommandName := 'Cursor to first field';
+      ccLastFld     : StdCommandName := 'Cursor to last field';
+      ccDone        : StdCommandName := 'Done editing';
+      ccPrevTopic   : StdCommandName := 'Display last help topic';
+      ccIndex       : StdCommandName := 'Display help topic index';
+      ccSetMark0..ccSetMark9 :
+                      StdCommandName := 'Set marker '+Ascii(Cmd-ccSetMark0);
+      ccJmpMark0..ccJmpMark9 :
+                      StdCommandName := 'Jump to marker '+Ascii(Cmd-ccJmpMark0);
+      ccMarkToggle  : StdCommandName := 'Toggle marker display';
+      ccBlkBegin    : StdCommandName := 'Mark start of block';
+      ccBlkEnd      : StdCommandName := 'Mark end of block';
+      ccBlkBottom   : StdCommandName := 'Mark end of block (bottom)';
+      ccBlkToggle   : StdCommandName := 'Toggle block display';
+      ccBlkRead     : StdCommandName := 'Read block';
+      ccBlkWrite    : StdCommandName := 'Write block';
+      ccBlkCopy     : StdCommandName := 'Copy block';
+      ccBlkMove     : StdCommandName := 'Move block';
+      ccBlkDelete   : StdCommandName := 'Delete block';
+      ccBlkWord     : StdCommandName := 'Mark current word as block';
+      ccBlkUCase    : StdCommandName := 'Change block to upper case';
+      ccBlkLCase    : StdCommandName := 'Change block to lower case';
+      ccBlkTCase    : StdCommandName := 'Toggle case of block';
+      ccBlkIndent   : StdCommandName := 'Indent marked block';
+      ccBlkUnindent : StdCommandName := 'Unindent marked block';
+      ccSetIndent   : StdCommandName := 'Set level for block indent';
+      ccPrevPos     : StdCommandName := 'Cursor to prev position';
+      ccJmpBegin    : StdCommandName := 'Jump to block begin';
+      ccJmpEnd      : StdCommandName := 'Jump to block end';
+      ccJmpLine     : StdCommandName := 'Jump to line';
+      ccInsertLine  : StdCommandName := 'Insert line';
+      ccCenterLine  : StdCommandName := 'Center line';
+      ccSearch      : StdCommandName := 'Search';
+      ccReplace     : StdCommandName := 'Search and replace';
+      ccReSearch    : StdCommandName := 'Search again';
+      ccHexMode     : StdCommandName := 'Toggle hex mode';
+      ccTabExpand   : StdCommandName := 'Toggle tab expansion';
+      ccTabToggle   : StdCommandName := 'Toggle smart/fixed tabs';
+      ccTabSize     : StdCommandName := 'Set size of fixed tabs';
+      ccRtMargin    : StdCommandName := 'Set right margin';
+      ccStripHigh   : StdCommandName := 'Toggle high bit stripping';
+      ccNewFile     : StdCommandName := 'Read new file';
+      ccSaveFile    : StdCommandName := 'Save file';
+      ccSaveNamed   : StdCommandName := 'Save file under new name';
+      ccSaveExit    : StdCommandName := 'Save file and exit';
+      ccSaveSwitch  : StdCommandName := 'Save and switch files';
+      ccAbandonFile : StdCommandName := 'Abandon file';
+      ccBlkPrint    : StdCommandName := 'Print block';
+      ccToggle      : StdCommandName := 'Toggle item selection';
+      else            StdCommandName := '';
+    end;
+  end;
+
+  function KeySelector.ksCommandName(Cmd : Word) : string;
+    {-Get the name for Cmd}
+  var
+    S : string;
+  begin
+    if @ksCmdNameFunc = nil then
+      S := ''
+    else
+      S := ksCmdNameFunc(Cmd, ksUnitCode);
+
+    if S <> '' then
+      ksCommandName := S
+    else
+      ksCommandName := StdCommandName(Cmd);
+  end;
+
+  procedure KeySelector.asUpdate;
+    {-Called when entire screen is being redrawn}
+  var
+    I, Cmd : Word;
+    A : Byte;
+    {$IFDEF UseMouse}
+    SM : Boolean;
+    {$ENDIF}
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(SM);
+    {$ENDIF}
+
+    with asColors do
+      A := ColorMono(PromptColor, PromptMono);
+
+    for I := 1 to ksCount do begin
+      Cmd := ksKD^[I];
+      if Cmd = 0 then
+        {draw a divider}
+        FastFill(VirtualWidth, DividerChar, I, 1, A)
+      else
+        {display the command name}
+        FastWrite(ksCommandName(Cmd), I, ksPromptCol, A);
+    end;
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SM);
+    {$ENDIF}
+  end;
+
+  procedure KeySelector.SetModifiedAttr(Color, Mono : Byte);
+    {-Set colors for modified commands}
+  begin
+    ksModColor := Color;
+    ksModMono := MapMono(Color, Mono);
+  end;
+
+  procedure KeySelector.SetConflictAttr(Color, Mono : Byte);
+    {-Set colors for commands with conflicts}
+  begin
+    ksConColor := Color;
+    ksConMono := MapMono(Color, Mono);
+  end;
+
+  procedure KeySelector.asDrawKnownField(SFP : SelectFieldPtr);
+    {-Draw the field}
+  var
+    FA : Byte;
+    Row, Col : Integer;
+    KRP : KeyRecPtr;
+    S : String;
+    {$IFDEF UseMouse}
+    SaveMouse : Boolean;
+    {$ENDIF}
+  begin
+    with SFP^ do begin
+      {don't draw if field is invisible}
+      if LongFlagIsSet(sfOptions, sfInvisible) then
+        Exit;
+
+      {$IFDEF UseMouse}
+      HideMousePrim(SaveMouse);
+      {$ENDIF}
+
+      if sfID = asCurID then
+        {selected field}
+        FA := ColorMono(sfSelFieldColor, sfSelFieldMono)
+      else begin
+        KRP := FindKeyRec(sfID);
+        if KRP^.Conflict then
+          {conflict color}
+          FA := ColorMono(ksConColor, ksConMono)
+        else if KRP^.Modified then
+          {modified color}
+          FA := ColorMono(ksModColor, ksModMono)
+        else
+          {plain color}
+          FA := ColorMono(sfFieldColor, sfFieldMono);
+      end;
+
+      {get the field value}
+      S := slGetField(sfID, False);
+
+      {make sure the virtual screen isn't already active}
+      if VirtualSegment <> ssVS.vsVideoSeg then begin
+        {activate virtual screen}
+        ssVS.Activate;
+
+        {draw it on the virtual screen}
+        FastWrite(S, sfFRow, sfFCol, FA);
+
+        {switch to physical screen}
+        ssVS.Deactivate;
+      end;
+
+      {draw the field}
+      if asFixCoordinates(sfFRow, sfFCol, sfFWidth, sfFHeight, Row, Col) then
+        FastWrite(S, Row, Col, FA);
+
+      {$IFDEF UseMouse}
+      ShowMousePrim(SaveMouse);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure KeySelector.PositionOnFirstConflict;
+    {-Position cursor on first conflict}
+  var
+    ID : Word;
+    KRP : KeyRecPtr;
+  begin
+    for ID := 0 to asCount do begin
+      KRP := FindKeyRec(ID);
+      if KRP^.Conflict then begin
+        SetNextField(ID);
+        Exit;
+      end;
+    end;
+  end;
+
+{-------------- popup hotkey selection -------------------}
+
+const
+  RtShift = $01;
+  LtShift = $02;
+  Ctrl    = $04;
+  Alt     = $08;
+
+  {$F+}
+
+  procedure ShiftChoice(Item : Word; Mode : pkMode;
+                        var IType : pkItemType;
+                        var IString : string;
+                        PickPtr : PickListPtr);
+
+    procedure Add(Mask : Byte; S : string);
+    begin
+      if Item and Mask <> 0 then
+        if IString = '' then
+          IString := S
+        else
+          IString := IString+'+'+S;
+    end;
+
+  begin
+    IString := '';
+    Add(Alt,     'Alt');
+    Add(Ctrl,    'Ctrl');
+    Add(LtShift, 'LtShift');
+    Add(RtShift, 'RtShift');
+    IString := ' '+IString+' ';
+  end;
+
+  procedure ScanChoice(Item : Word; Mode : pkMode;
+                       var IType : pkItemType;
+                       var IString : string;
+                       PickPtr : PickListPtr);
+  begin
+    if Item >= $55 then
+      Inc(Item, 2);
+    IString := ' '+GetScanCodeName(Item)^+' ';
+  end;
+
+  {$F-}
+
+  function EditHotKey(var HK : Word) : Boolean;
+    {-Edit a hot key}
+  var
+    PL : PickList;
+    HC, LC : Word;
+    Cmd : Word;
+  begin
+    EditHotKey := False;
+
+    with PL do begin
+      if not InitCustom(
+        28, 5, 53, 19, dpiColors, DefWindowOptions or wBordered, 26, 15,
+        ShiftChoice, PickVertical, SingleChoice) then
+          Exit;
+
+      wFrame.SetFrameType(MainFrame);
+      wFrame.AddShadow(shBR, shSeeThru);
+
+      {add a header centered at the top of the frame}
+      wFrame.AddHeader(' Shift Flags ', heTC);
+
+      {$IFDEF UseScrollBars}
+      {add horizontal scroll bar}
+      wFrame.AddCustomScrollBar(
+        frRR, 1, MaxLongInt, 1, 1, 'ฒ', 'ฐ', dpiColors);
+      {$ENDIF}
+
+      HC := Hi(HK) and $0F;
+      if HC <> 0 then
+        SetInitialChoice(HC);
+
+      Process;
+
+      Cmd := GetLastCommand;
+
+      if Cmd = ccSelect then
+        HC := GetLastChoice;
+
+      Erase;
+      Done;
+      if (Cmd = ccError) or (Cmd = ccQuit) then
+        Exit;
+
+      if not InitCustom(
+        8, 7, 72, 22, dpiColors, DefWindowOptions or wBordered, 9, $56,
+        ScanChoice, PickSnaking, SingleChoice) then
+          Exit;
+
+      wFrame.SetFrameType(MainFrame);
+      wFrame.AddShadow(shBR, shSeeThru);
+
+      {add a header centered at the top of the frame}
+      wFrame.AddHeader(' Scan Codes ', heTC);
+
+      {$IFDEF UseScrollBars}
+      {add horizontal scroll bar}
+      wFrame.AddCustomScrollBar(
+        frRR, 1, MaxLongInt, 1, 1, 'ฒ', 'ฐ', dpiColors);
+      {$ENDIF}
+
+      LC := Lo(HK);
+      case LC of
+        $57, $58 : Dec(LC, 2);
+      end;
+      if (LC <> 0) and (LC <= $56) then
+        SetInitialChoice(LC);
+
+      Process;
+
+      Cmd := GetLastCommand;
+
+      if Cmd = ccSelect then begin
+        LC := GetLastChoice;
+        case LC of
+          $55, $56 : Inc(LC, 2);
+        end;
+      end;
+
+      Erase;
+      Done;
+
+      case Cmd of
+        ccError, ccQuit :
+          Exit;
+        ccSelect :
+          HK := (HC shl 8)+LC;
+      end;
+
+      EditHotKey := True;
+    end;
+  end;
+
+{----------------- popup key editor ----------------------}
+
+type
+  KeyEditor =
+    object(CommandWindow)
+      keKeyRec : ^KeyRec;
+      keIndex  : Byte;
+
+      constructor Init(X1, Y1, X2, Y2 : Byte; var KR : KeyRec);
+        {-Create a key editor with default options and colors}
+      constructor InitCustom(X1, Y1, X2, Y2 : Byte;
+                             var Colors : ColorSet;
+                             Options : LongInt;
+                             var KR : KeyRec);
+        {-Create a key editor with custom options}
+
+      procedure UpdateContents; virtual;
+        {-Update the contents of the currently displayed window}
+      procedure ProcessSelf; virtual; {!!.01}
+        {-Process commands}
+
+      procedure SetKeyRec(var KR : KeyRec);
+        {-Set key record to edit}
+    end;
+
+const
+  ccScrollLock = ccUser0;
+
+  KeyEditMax = 50;
+  KeyEditSet : array[0..KeyEditMax] of Byte = (
+   {length keys         command type      key sequence}
+    3,     $00, $00,    ccQuit,          {^Break}
+    2,     $03,         ccDelLine,       {^C}
+    2,     $08,         ccBack,          {^H, Bksp}
+    2,     $0D,         ccSelect,        {^M, Enter}
+    2,     $12,         ccRestore,       {^R}
+    2,     $19,         ccDelLine,       {^Y}
+    2,     $1B,         ccQuit,          {Esc}
+    2,     $7F,         ccBack,          {^Bksp}
+    3,     $11, $0C,    ccRestore,       {^Q^L}
+  {$IFDEF UseMouse}
+    3,     $00, $EE,    ccQuit,          {click right  = ESC}
+    3,     $00, $ED,    ccScrollLock,    {click both   = ScrollLock}
+    3,     $00, $EF,    ccSelect,        {click left   = Enter}
+  {$ELSE}
+                            0, 0,        {30}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,        {40}
+  {$ENDIF}
+    {-----------pad to end of array----------}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0);       {50}
+
+  ScrollLockBit  = $10;
+  ComStr : string[9] = ' Command ';
+  LitStr : string[9] = ' Literal ';
+var
+{$IFNDEF VIRTUALPASCAL}
+  KbdFlags : Word absolute $40 : $17;
+{$ENDIF}
+  KeyEditCommands : CommandProcessor;
+
+{$IFDEF VIRTUALPASCAL}
+Procedure SetKeyboardState( Bit : SmallWord; _Or : Boolean );
+  Var
+    StatData : KbdInfo;
+
+  begin
+    StatData.cb := Sizeof( StatData );
+    KbdGetStatus( StatData, 0 );
+    StatData.fsMask  := StatData.fsMask OR keyboard_modify_State;
+    If _Or then
+      StatData.fsState := StatData.fsState OR Bit
+    else
+      StatData.fsState := StatData.fsState AND NOT Bit;
+    {Note: Only works in fullscreen mode}
+    KbdSetStatus( StatData, 0 );
+  end;
+
+Function GetKeyboardState( Bit : SmallWord ) : Boolean;
+  Var
+    StatData : KbdInfo;
+
+  begin
+    StatData.cb := Sizeof( StatData );
+    KbdGetStatus( StatData, 0 );
+    GetKeyboardState := ( StatData.fsMask AND Bit <> 0 );
+  end;
+
+  function ScrollLock : Boolean;
+  begin
+    ScrollLock := GetKeyboardState( ScrollLockBit );
+  end;
+
+  Procedure SetScrollLock(On : Boolean);
+  begin
+    SetKeyboardState( ScrollLockBit, On );
+  end;
+{$ELSE}
+
+  function ScrollLock : Boolean;
+    {-Return scroll lock state}
+  begin
+    ScrollLock := FlagIsSet(KbdFlags, ScrollLockBit);
+  end;
+
+  procedure SetScrollLock(On : Boolean);
+    {-Set scroll lock state}
+  begin
+    if On then
+      SetFlag(KbdFlags, ScrollLockBit)
+    else
+      ClearFlag(KbdFlags, ScrollLockBit);
+  end;
+{$ENDIF}
+
+  {$F+}
+  function ReadKeyWordSpecial : Word;
+    {-Special readkey function}
+  var
+    KW : Word;
+    SaveScrollLock : Boolean;
+  begin
+    SaveScrollLock := ScrollLock;
+
+    KW := $FFFF;
+    repeat
+      {$IFDEF UseMouse}
+      if KeyOrButtonPressed then
+        KW := ReadKeyOrButton;
+      {$ELSE}
+      if KeyPressed then
+        KW := ReadKeyWord;
+      {$ENDIF}
+    until (KW <> $FFFF) or (ScrollLock <> SaveScrollLock);
+
+    ReadKeyWordSpecial := KW;
+  end;
+  {$F-}
+
+  constructor KeyEditor.Init(X1, Y1, X2, Y2 : Byte; var KR : KeyRec);
+    {-Create a key editor with default options and colors}
+  begin
+    if not KeyEditor.InitCustom(X1, Y1, X2, Y2, DefaultColorSet,
+                                DefWindowOptions, KR) then
+      Fail;
+  end;
+
+  constructor KeyEditor.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                   var Colors : ColorSet;
+                                   Options : LongInt;
+                                   var KR : KeyRec);
+    {-Create a key editor with custom options}
+  begin
+    {set this in case init fails}
+    keKeyRec := @KR;
+
+    {initialize command processor}
+    KeyEditCommands.Init(@KeyEditSet, KeyEditMax);
+
+    {$IFDEF UseMouse}
+    {enable mouse support}
+    KeyEditCommands.cpOptionsOn(cpEnableMouse);
+    {$ENDIF}
+
+    {use special readkey routine to catch changes to <ScrollLock>}
+    KeyEditCommands.SetGetKeyProc(ReadKeyWordSpecial);
+
+    {initialize command window}
+    if not CommandWindow.InitCustom(X1, Y1, X2, Y2, Colors,
+                                    Options or (wBordered+wUserContents),
+                                    KeyEditCommands, ucNone) then
+      Fail;
+
+    {add header for Command/Literal}
+    wFrame.AddHeader(ComStr, heBR);
+    if RawError <> 0 then begin {!!.01}
+      InitStatus := RawError;   {!!.01}
+      Done;
+      Fail;
+    end;
+    keIndex := wFrame.GetLastHeaderIndex;
+  end;
+
+  procedure KeyEditor.SetKeyRec(var KR : KeyRec);
+    {-Set key record to edit}
+  begin
+    keKeyRec := @KR;
+  end;
+
+  procedure KeyEditor.UpdateContents;
+    {-Update the contents of the currently displayed window}
+  var
+    Redraw, SM : Boolean;
+    S : string;
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(SM);
+    {$ENDIF}
+
+    {redraw the key string}
+    with keKeyRec^ do
+      S := KeyStringToString(Keys, Width);
+    FastWrite(S, wYL, wXL, ColorMono(wTextColor, wTextMono));
+
+    {position the cursor}
+    GotoXY(Length(Trim(S))+1, 1);
+
+    {update command vs. literal header}
+    if ScrollLock then
+      S := LitStr
+    else
+      S := ComStr;
+    wFrame.ChangeHeaderString(keIndex, S, Redraw);
+    wFrame.DrawHeader(keIndex);
+
+    StackWindow.UpdateContents; {!!.01}
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SM);
+    {$ENDIF}
+  end;
+
+  procedure KeyEditor.ProcessSelf;     {!!.01}
+    {-Edit one keystroke sequence}
+  var
+    Ch       : Char absolute cwKey;
+    KeySt    : KeyString;
+    KLen     : Byte absolute KeySt;
+    SaveKeys : KeyString;
+    Finished : Boolean;
+
+    function AddKey(Ch : Char) : Char;
+      {-Map alpha characters to control key equivalents if appropriate}
+    begin
+      Ch := System.Upcase(Ch);
+      if (Ch >= 'A') and (Ch <= 'Z') and (KLen > 1) then
+        AddKey := Char(Ord(Ch)-64)
+      else
+        AddKey := Ch;
+    end;
+
+  begin
+    (*                            {!!.01}
+    cwCmd := ccError;
+    if cwGetLastError <> 0 then
+      Exit;
+    *)
+
+    {Draw initial screen if not already done}
+    Draw;
+    if RawError <> 0 then begin {!!.01}
+      {GotError(wNotCurrent, emNullError);} {!!.01}
+      Exit;
+    end;
+
+    KeySt := keKeyRec^.Keys;
+    SaveKeys := KeySt;
+
+    Finished := False;
+    repeat
+      repeat
+        {redraw}
+        keKeyRec^.Keys := KeySt;
+        UpdateContents;
+
+        {get next command}
+        GetNextCommand;
+      until (cwKey <> $FFFF);
+
+      if ScrollLock then
+        {Literal mode}
+        if Ch <> #0 then
+          if KLen = KeyLength then
+            RingBell
+          else
+            KeySt := KeySt+AddKey(Ch)
+        else if KLen+1 < KeyLength then
+          KeySt := KeySt+#0+Char(Hi(cwKey))
+        else
+          RingBell
+      {Command mode}
+      else case cwCmd of
+        ccScrollLock :
+          SetScrollLock(not ScrollLock);
+        ccBack :
+          if KLen > 0 then begin
+            Dec(KLen);
+            if (KLen > 0) and (KeySt[KLen] = #0) then
+              Dec(KLen);
+          end;
+        ccSelect :
+          Finished := True;
+        ccQuit :
+          begin
+            KeySt := SaveKeys;
+            Finished := True;
+          end;
+        ccDelLine :
+          KLen := 0;
+        ccRestore :
+          KeySt := SaveKeys;
+        else case Ch of
+          #0 : {Extended key}
+            if KLen+1 < KeyLength then
+              KeySt := KeySt+#0+Char(Hi(cwKey))
+            else
+              RingBell;
+          'A'..'Z', 'a'..'z' :
+            {alpha keys-map to control chars}
+            if KLen = KeyLength then
+              RingBell
+            else
+               KeySt := KeySt+AddKey(Ch);
+          else if KLen = KeyLength then
+            RingBell
+          else
+            KeySt := KeySt+Ch;
+        end;
+      end;
+    until Finished;
+
+    with keKeyRec^ do begin
+      Keys := KeySt;
+      Modified := (KeySt <> SaveKeys);
+      if Modified then
+        Conflict := False;
+    end;
+
+    UpdateContents;
+  end;
+
+{----------------- help file generation ----------------------}
+
+type
+  AltNameFunc = function(Cmd : Word; UnitCode : Byte) : string;
+var
+  F       : Text;
+  BufPtr  : Pointer;
+  BufSize : Word;
+
+  function OpenHelpFile(Name : PathStr) : Boolean;
+    {-Open a help file}
+  var
+    M : LongInt;
+  begin
+    OpenHelpFile := False;
+    BufPtr := nil;
+
+    Name := ForceExtension(Name, 'HLP');
+
+    Assign(F, Name);
+    Rewrite(F);
+    if IoResult = 0 then begin
+      OpenHelpFile := True;
+      M := MaxAvail;
+      if M > 61440 then
+        BufSize := 61440
+      else if BufSize < 128 then
+        BufSize := 0
+      else
+        BufSize := M;
+      if BufSize > 0 then
+        if not GetMemCheck(BufPtr, BufSize) then
+          BufSize := 0;
+      if BufPtr <> nil then
+        SetTextBuf(F, BufPtr^, BufSize);
+    end;
+  end;
+
+  procedure WriteHelp(Title : string;
+                      var Keys; MaxIndex : Word;
+                      var UK : UnpackedCmdTable;
+                      var CP : CommandPacker;
+                      UnitCode : Byte;
+                      DescCount : Word; var Descriptor;
+                      ANF : AltNameFunc);
+    {-Write a help file}
+  var
+    Desc : array[1..1000] of Byte absolute Descriptor;
+    S : string;
+    I, Cmd : Word;
+
+    function GetKeyString(Cmd, Col : Word) : string;
+    var
+      N : Word;
+    begin
+      N := (Pred(Cmd)*3)+Col;
+      GetKeyString := KeyStringToString(UK[N].Keys, 14);
+    end;
+
+  begin
+    if not CP.Init(@Keys, ccUser55, MaxIndex, @UK, 3, False) then
+      Exit;
+
+    {write title}
+    WriteLn(F, 'ออ', PadCh(' '+Title+ ' ', 'อ', 71));
+    WriteLn(F);
+
+    for I := 1 to DescCount do begin
+      Cmd := Desc[I];
+      if Cmd = 0 then
+        WriteLn(F, CharStr('ฤ', 73))
+      else begin
+        S := ANF(Cmd, UnitCode);
+        if S = '' then
+          S := StdCommandName(Cmd);
+        WriteLn(F, Pad(S, 29), GetKeyString(Cmd, 1), ' ',
+                   GetKeyString(Cmd, 2), ' ', GetKeyString(Cmd, 3));
+      end;
+    end;
+
+    WriteLn(F);
+
+    CP.Done;
+  end;
+
+  procedure CloseHelpFile;
+    {-Close the help file}
+  begin
+    Close(F);
+    if IoResult <> 0 then ;
+
+    FreeMemCheck(BufPtr, BufSize);
+  end;
+

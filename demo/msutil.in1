@@ -1,0 +1,2043 @@
+{*********************************************************}
+{*                   MSUTIL.IN1 1.30                     *}
+{*     Copyright (c) TurboPower Software 1989, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+{!!.20 Library was renamed to OpLibrary throughout}
+
+  function InitPopup(Header : String; Wid : Byte) : Boolean;
+    {-Initialize popup window}
+  var
+    XL, YL, XH : Byte;
+  begin
+    InitPopup := False;
+
+    if Header <> '' then
+      Header := ' '+Header+' ';
+    Wid := MaxWord(Wid, Length(Header));
+
+    XL := ((ScreenWidth-Wid) shr 1)+1;
+    XH := XL+Pred(Wid);
+    YL := ScreenHeight shr 1;
+
+    if not Popup.Init(XL, YL, XH, YL) then
+      Exit;
+
+    Popup.wFrame.AddShadow(shBR, shSeeThru);
+
+    if Header <> '' then begin
+      {add the header}
+      Popup.wFrame.AddHeader(Header, heTC);
+      if Popup.GetLastError <> 0 then begin
+        Popup.Done;
+        Exit;
+      end;
+    end;
+
+    Popup.Draw;
+
+    InitPopup := True;
+  end;
+
+  procedure ClosePopup;
+    {-Close popup window}
+  {$IFDEF UseMouse}
+  var
+    SaveMouse : Boolean;
+  {$ENDIF}
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(SaveMouse);
+    {$ENDIF}
+
+    Popup.Erase;
+    Popup.Done;
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SaveMouse);
+    {$ENDIF}
+  end;
+
+  function GetTextAttr : Byte;
+    {-Get default text attribute}
+  begin
+    with MakeScrnColors do
+      GetTextAttr := ColorMono(TextColor, TextMono);
+  end;
+
+  procedure PopupMessagePrim(Header, Msg : string;
+                             Bell : Boolean; DelayCount : Word);
+    {-Display a message in a popup window}
+  const
+    PressKeyMsg = '. Press any key...';
+  var
+    I : Word;
+    {$IFDEF UseMouse}
+    SaveMouse : Boolean;
+    {$ENDIF}
+  begin
+    if DelayCount = 0 then
+      if Length(Msg)+Length(PressKeyMsg) <= ScreenWidth-6 then
+        Msg := Msg+PressKeyMsg;
+
+    if InitPopup(Header, Length(Msg)+2) then begin
+      {$IFDEF UseMouse}
+      HideMousePrim(SaveMouse);
+      {$ENDIF}
+
+      {calculate column offset}
+      I := ((Popup.Width-Length(Msg)) shr 1)+1;
+
+      {display the message centered in the window}
+      Popup.wFastWrite(Msg, 1, I, GetTextAttr);
+
+      {$IFDEF UseMouse}
+      ShowMousePrim(SaveMouse);
+      {$ENDIF}
+
+      {ring bell if requested}
+      if Bell then
+        RingBell;
+
+      {move the cursor to the end of the string}
+      GotoXY(I+Length(Msg), 1);
+
+      if DelayCount <> 0 then
+        Delay(DelayCount)
+      else
+        I := EntryCommands.cpGetKey;
+
+      {close popup window}
+      ClosePopup;
+    end
+    else
+      RingBell;
+  end;
+
+  procedure PopupErrorMessage(Msg : string);
+    {-Display an error message in a popup window}
+  begin
+    PopupMessagePrim('Error', Msg, True, 0);
+  end;
+
+  procedure InsufficientMemory;
+    {-Display an 'insufficient memory' error message in a popup window}
+  begin
+    PopupErrorMessage(emInsufficientMemory);
+  end;
+
+  procedure OverlapError;
+    {-Display an error message about overlapping fields}
+  begin
+    PopupErrorMessage('Cannot add one field on top of another');
+  end;
+
+  procedure PopupMessage(Header, Msg : string);
+    {-Display a non-error message in a popup window}
+  begin
+    PopupMessagePrim(Header, Msg, False, 0);
+  end;
+
+  procedure PopupDelayMessage(Msg : string);
+    {-Display a non-error message in a popup window for 3/4 of a second}
+  begin
+    PopupMessagePrim('', Msg, False, 750);
+  end;
+
+  function PopupGetString(Header, Prompt : string;
+                          ForceUp, TrimBlanks : Boolean;
+                          MaxLen : Byte;
+                          var S : string) : Boolean;
+    {-Prompt for a string within a popup window}
+  var
+    LE : LineEditor;
+    Wid : Word;
+  begin
+    PopupGetString := False;
+
+    if Prompt <> '' then
+      Prompt := ' '+Prompt;
+    if Length(Prompt)+MaxLen > (ScreenWidth-4) then
+      Wid := (ScreenWidth-4)-Length(Prompt)-1
+    else
+      Wid := MaxLen;
+
+    if not InitPopup(Header, Length(Prompt)+Wid+1) then begin
+      RingBell;
+      Exit;
+    end;
+
+    with LE do begin
+      Init(MakeScrnColors);
+
+      if ForceUp then
+        leEditOptionsOn(leForceUpper)
+      else
+        leEditOptionsOff(leForceUpper+leMapCtrls);
+      if TrimBlanks then
+        leEditOptionsOn(leTrimBlanks)
+      else
+        leEditOptionsOff(leTrimBlanks);
+
+      ReadString(Prompt, 1, 1, MaxLen, Wid, S);
+
+      PopupGetString := (GetLastCommand <> ccQuit);
+    end;
+
+    {close popup window}
+    ClosePopup;
+  end;
+
+  function GetFileByList(var S : String) : Word;
+    {-Let the user choose a filename from a list}
+  var
+    DL : DirList;
+    St : string;
+    O : Word;
+  begin
+    GetFileByList := 0;
+
+    with DL do begin
+      {initialize the directory list}
+      O := DefWindowOptions or wBordered;
+      if not InitCustom(
+        15, 5, 66, 20, MakeScrnColors, O, 6000, PickSnaking, SingleFile) then begin
+          GetFileByList := InitStatus;
+          Exit;
+        end;
+
+      wFrame.AddShadow(shBR, shSeeThru);
+
+      {add scroll bar}
+      wFrame.AddCustomScrollBar(
+        frRR, 0, MaxLongInt, 1, 1, SliderChar, ScrollBarChar, MakeScrnColors);
+
+      {set basic options}
+      SetCursor(cuHidden);
+      diOptionsOn(diOptimizeSize+diExitIfOne);
+      pkOptionsOn(pkDrawActive+pkMousePage);
+
+      {set display options}
+      SetPadSize(1, 1);
+
+      {set format, sort, search options}
+      SetNameFormat;
+      SetSortOrder(SortDirName);
+      SetSearchMode(PickCharSearch);
+
+      {add header}
+      AddMaskHeader(True, 1, 40, heTC);
+
+      {get a filename}
+      GetFileByList := GetFileName(S, Directory, S);
+
+      {deallocate}
+      Done;
+    end;
+  end;
+
+  function PopupGetFilePrim(Header, Prompt : string; MaxLen : Byte;
+                            DefExt : string; var S : string;
+                            MustExist : Boolean) : Boolean;
+    {-Prompt for a filename within a popup window}
+  var
+    Status : Word;
+  begin
+    PopupGetFilePrim := False;
+    if (S = '') then
+      if (DefExt <> '') then
+        S := '*.'+DefExt
+      else
+        S := '*.*';
+    if PopupGetString(Header, Prompt, True, True, MaxLen, S) then begin
+      if (S <> '') then
+        S := DefaultExtension(S, DefExt);
+
+      Status := GetFileByList(S);
+      case Status mod 10000 of
+        0 : PopupGetFilePrim := True;
+        ecFileNotFound :
+          if MustExist then
+            PopupErrorMessage(emFileNotFound)
+          else
+            PopupGetFilePrim := True;
+        ecNoPickSelection : ; {No selection made}
+        ecOutOfMemory : InsufficientMemory;
+        ecNoMoreFiles : PopupErrorMessage(emNoMoreFiles);
+        ecPathNotFound : PopupErrorMessage(emPathNotFound);
+        else PopupErrorMessage('Error '+Long2Str(Status)+' getting filename');
+      end;
+    end;
+  end;
+
+
+  function PopupGetFileName(Header, Prompt : string; MaxLen : Byte;
+                            DefExt : string; var S : string) : Boolean;
+    {-Prompt for a filename within a popup window}
+  begin
+    PopupGetFileName :=
+      PopupGetFilePrim(Header, Prompt, MaxLen, DefExt, S, False);
+  end;
+
+  function PopupGetExistingFile(Header, Prompt : string; MaxLen : Byte;
+                                DefExt : string; var S : string) : Boolean;
+    {-Prompt for name of an existing file within a popup window}
+  begin
+    PopupGetExistingFile :=
+      PopupGetFilePrim(Header, Prompt, MaxLen, DefExt, S, True);
+  end;
+
+  function PopupGetLong(Header, Prompt : string; var L : LongInt;
+                        LLo, LHi : LongInt) : Boolean;
+    {-Prompt for a longint within a popup window}
+  var
+    LE : LineEditor;
+  begin
+    PopupGetLong := False;
+
+    Prompt := ' '+Prompt;
+    if not InitPopup(Header, Length(Prompt)+11) then begin
+      RingBell;
+      Exit;
+    end;
+
+    with LE do begin
+      Init(MakeScrnColors);
+      ReadLongInt(Prompt, 1, 1, 10, LLo, LHi, L);
+      PopupGetLong := (GetLastCommand <> ccQuit);
+    end;
+
+    {close popup window}
+    ClosePopup;
+  end;
+
+  function PopupGetWord(Header, Prompt : string; var W : Word;
+                        WLo, WHi : Word) : Boolean;
+  var
+    L : LongInt;
+  begin
+    L := W;
+    PopupGetWord := PopupGetLong(Header, Prompt, L, WLo, WHi);
+    W := L;
+  end;
+
+  function PopupGetByte(Header, Prompt : string; var B : Byte;
+                        BLo, BHi : Byte) : Boolean;
+  var
+    L : LongInt;
+  begin
+    L := B;
+    PopupGetByte := PopupGetLong(Header, Prompt, L, BLo, BHi);
+    B := L;
+  end;
+
+  function PopupYesNo(Header, Prompt : string; Default : Char;
+                      var Escaped : Boolean) : Boolean;
+    {-Prompt for a response to a yes-no question within a popup window}
+  var
+    LE : LineEditor;
+  begin
+    PopupYesNo := False;
+    Escaped := True;
+
+    Prompt := ' '+Prompt;
+
+    if not InitPopup(Header, Length(Prompt)+7) then begin
+      RingBell;
+      Exit;
+    end;
+
+    with LE do begin
+      Init(MakeScrnColors);
+
+      leEditOptionsOn(leAllowEscape+leDefaultAccepted+leForceUpper);
+
+      PopupYesNo := YesOrNo(Prompt, 1, 1, Default);
+
+      Escaped := (GetLastCommand = ccQuit);
+    end;
+
+    {close popup window}
+    ClosePopup;
+  end;
+
+  function PopupGetChar(Header, Prompt : string;
+                        ValidChars : CharSet;
+                        var Ch : Char) : Boolean;
+    {-Prompt for a character within a popup window}
+  var
+    LE : LineEditor;
+  begin
+    PopupGetChar := False;
+
+    Prompt := ' '+Prompt;
+
+    if not InitPopup(Header, Length(Prompt)+7) then begin
+      RingBell;
+      Exit;
+    end;
+
+    with LE do begin
+      Init(MakeScrnColors);
+
+      leEditOptionsOn(leAllowEscape+leDefaultAccepted);
+
+      ReadChar(Prompt, 1, 1, ValidChars, Ch);
+
+      PopupGetChar := (GetLastCommand <> ccQuit);
+    end;
+
+    {close popup window}
+    ClosePopup;
+  end;
+
+  function ConfirmAction(Header : string) : Boolean;
+    {-Confirm an action}
+  var
+    Esc : Boolean;
+  begin
+    ConfirmAction :=
+      PopupYesNo(Header, 'Are you sure?', NoChar, Esc) and not Esc;
+  end;
+
+  function ExistCheck(FName : PathStr) : Boolean;
+    {-Returns True if FName doesn't exist or may be overwritten}
+  const
+    FileExistsMsg = 'File exists. Overwrite it?';
+  var
+    Esc : Boolean;
+  begin
+    ExistCheck := False;
+    if ExistFile(FName) then begin
+      if not PopupYesNo(JustFilename(FName), FileExistsMsg, NoChar, Esc) then
+        Exit;
+      if Esc then
+        Exit;
+    end;
+    ExistCheck := True;
+  end;
+
+  procedure OurErrorProc(UnitCode : Byte; var ErrCode : Word; Msg : string);
+    {-Error handler}
+  begin
+    {make sure there's a message}
+    if Msg = '' then
+      Msg := 'Internal error '+Long2Str(ErrCode);
+
+    if VideoSegment = VirtualSegment then  {!!.01}
+      {display the error message}
+      PopupErrorMessage(Msg);
+  end;
+
+  function AbleToRewrite(var OutF : Text; var Name : PathStr) : Boolean;
+    {-Return True if able to Rewrite the specified file}
+  const
+    ErrorMsg = 'Error creating ';
+  var
+    Esc : Boolean;
+  begin
+    AbleToRewrite := False;
+
+    {exit if file exists and shouldn't be overwritten}
+    if not ExistCheck(Name) then
+      Exit;
+
+    Assign(OutF, Name);
+    Rewrite(OutF);
+    if IoResult <> 0 then
+      PopupErrorMessage(ErrorMsg+Name)
+    else
+      AbleToRewrite := True;
+  end;
+
+  function ZeroPad(L : LongInt) : string;
+    {-Return L as a zero-padded string}
+  begin
+    ZeroPad := LeftPadCh(Long2Str(L), '0', 3);
+  end;
+
+  procedure ClearScreen(Ch : Char; Attr : Byte);
+    {-Clear the screen to a specified attribute}
+  begin
+    ClearWindow(1, 1, ScreenWidth, ScreenHeight, Ch, Attr);
+  end;
+
+  procedure GridBackdrop;
+    {-Draw an informative grid on the screen}
+  var
+    R, C : Word;
+    Ch : char;
+  begin
+    ClearScreen(' ', BackdropAttr);
+    for R := 1 to ScreenHeight do begin
+      FastText(Char(Byte('0')+(R div 10)), R, 1);
+      FastText(Char(Byte('0')+(R mod 10)), R, 2);
+      for C := 3 to ScreenWidth do begin
+        case C mod 10 of
+          0 : if R mod 5 = 0 then
+                Ch := Char(Byte('0')+((C div 10) mod 10))
+              else
+                Ch := #7;
+          5 : Ch := 'ù';
+          else
+            Ch := 'ú';
+        end;
+        FastText(Ch, R, C);
+      end;
+    end;
+  end;
+
+  procedure DrawBackdrop;
+    {-Draw the backdrop for the object being designed}
+  begin
+    case DefBackdrop of
+      bdPlain : ClearScreen(' ', BackdropAttr);
+      bdCanvas : ClearScreen(BackdropChar, BackdropAttr);
+      bdGrid : GridBackdrop;
+    end;
+  end;
+
+  procedure ToggleBackdrop;
+    {-Switch to a new backdrop}
+  var
+    WP : WindowPtr;
+  begin
+    if DefBackdrop = bdGrid then
+      DefBackdrop := bdPlain
+    else
+      Inc(DefBackdrop);
+
+    if wStack.PeekTop = nil then
+      WP := nil
+    else
+      WP := Pointer(wStack.Peek(1));
+    if WP = nil then
+      DrawBackdrop
+    else with WP^ do begin
+      wStack.OptimizeTiled(False); {!!.03}
+      ActivateWrite;
+      Erase;
+      DrawBackdrop;
+      Draw;
+      DeactivateWrite;
+      wStack.OptimizeTiled(True);  {!!.03}
+    end;
+  end;
+
+  function MergeEntryScreen : Boolean;
+    {-Load an existing entry screen}
+  var
+    I : Word;
+    Code, Ver : SmallWord;
+  begin
+    MergeEntryScreen := False;
+    with Lib do begin
+      {get the type code for the object we're loading}
+      GetCodeAndVersion(ObjName, Code, Ver);
+      if Code <> otCustomEntryScreen then begin
+        PopupErrorMessage('Not a valid entry screen');
+        Exit;
+      end;
+
+      {load the entry screen}
+      GetEntry(ObjName, CES);
+      I := GetStatus;
+      if I = 0 then
+        MergeEntryScreen := True
+      else
+        PopupErrorMessage('Internal error '+Long2Str(I)+' loading entry screen');
+    end;
+  end;
+
+  procedure SaveEntryScreen;
+    {-Save the current entry screen}
+  var
+    I : Word;
+  begin
+    if not Modified then
+      PopupDelayMessage('Object does not need to be saved...')
+    else
+      with CES, Lib do begin
+        {store the object}
+        PutEntry(ObjName, CES);
+
+        I := GetStatus;
+        if I = 0 then begin
+          PopupDelayMessage('Object saved successfully...');
+          Modified := False;
+          if FlushDosBuffers(Handle) then {};  {!!.03};
+        end
+        else
+          PopupErrorMessage('Internal error '+Long2Str(I)+' writing entry screen');
+      end;
+  end;
+
+  function CreateEntryScreen : Boolean;
+    {-Create a new entry screen}
+  begin
+    CreateEntryScreen := False;
+
+    {initialize a default window}
+    if not CES.InitCustom(defXL, defYL, defXH, defYH, DefColors, DefOptions) then begin
+      InsufficientMemory;
+      Exit;
+    end;
+
+    {install default error handler}
+    CES.SetErrorProc(OurErrorProc);
+
+    {add a dummy field to the entry screen}
+    CES.AddDummyField;
+
+    {let user adjust the size and location of the entry screen}
+    CES.Draw;
+    if MoveOrResize(CES, False, Modified) then begin
+      Modified := True;
+      CreateEntryScreen := True;
+    end
+    else begin
+      InsufficientMemory;
+      CES.Erase;
+    end;
+  end;
+
+  function CreateLibrary : Boolean;
+    {-Create a new library}
+  const
+    Entries : Word = DefLibEntries;
+    Prompt  = 'Number of entries in directory [5-100]: ';
+  begin
+    CreateLibrary := False;
+
+    {get number of directory entries}
+    if not PopupGetWord(LibName, Prompt, Entries, 5, 100) then
+      Exit;
+
+    {try to create the library}
+    if Lib.Create(LibName, 4096, '', Entries) then
+      CreateLibrary := True
+    else
+      PopupErrorMessage('Unable to create library');
+  end;
+
+  function OpenLibrary(Name : PathStr) : Boolean;
+    {-Open the library of the specified name, or create it if necessary}
+  var
+    Create, Esc : Boolean;
+  begin
+    HaveLib := False;
+
+    {apply default extension}
+    LibName := StUpcase(Name);
+    LibName := DefaultExtension(LibName, DefLibExt);
+
+    {try to open the file}
+    if not ExistFile(LibName) then begin
+      {not found--create it?}
+      Create := PopupYesNo(LibName, 'File does not exist. Create it?', YesChar, Esc);
+      if Create and not Esc then
+        HaveLib := CreateLibrary;
+    end
+    {try to open the file}
+    else if Lib.Init(LibName, SOpen, 4096, '') then
+      HaveLib := True
+    else
+      PopupErrorMessage('Unable to open library');
+
+    if HaveLib then begin                         {!!.03}
+      {register everything}
+      Lib.RegisterHier(CustomEntryScreenStream);
+      Lib.RegisterHier(LoadableColorSetStream);   {!!.03}
+    end;                                          {!!.03}
+
+    OpenLibrary := HaveLib;
+  end;
+
+  procedure DisposeEntryScreen;
+    {-Dispose of an entry screen}
+  begin
+    if HaveCES then
+      with CES do begin
+        {erase the status line}
+        if Status.IsActive then
+          Status.EraseHidden;
+
+        {erase it}
+        EraseHidden;
+
+        {get rid of it}
+        Done;
+        HaveCES := False;
+        Modified := False;
+      end;
+  end;
+
+  procedure CloseLibrary;
+    {-Close the current library}
+  begin
+    if HaveLib then begin
+      {get rid of entry screen}
+      DisposeEntryScreen;
+
+      {close the library}
+      Lib.Done;
+
+      {reset status flags}
+      HaveLib := False;
+      HaveCES := False;
+      Modified := False;
+    end;
+  end;
+
+  procedure DeleteObjects;
+    {-Display a list of objects and delete/undelete the one chosen}
+  var
+    LS : OpLibrarySelector;
+    DEP : DirEntryPtr;
+    I : Word;
+  begin
+    if not HaveLib then
+      Exit;
+
+    {check for empty directory}
+    if (Lib.AvailableEntries = Lib.MaxEntries) then begin
+      PopupErrorMessage('Library''s directory is empty');
+      Exit;
+    end;
+
+    {initialize the library selector}
+    if not LS.InitMulti(30, 6, 51, 21, Lib, [], False) then begin
+      InsufficientMemory;
+      Exit;
+    end;
+
+    LS.wFrame.AddShadow(shBR, shSeeThru);
+    LS.wFrame.AddHeader(' <Esc> Exit ', heBC);
+
+    {change the attribute of the column labels}
+    with MakeScrnColors do
+      LS.SetLabelAttr(HighItemColor, HighItemMono);
+
+    {mark deletions}
+    LS.Process;
+
+    {do the deletions}
+    LS.DeleteMarkedItems;
+
+    LS.Erase;
+    LS.Done;
+  end;
+
+  procedure RenameObject(MakeNewObj : Boolean);
+    {-Rename the current object or save it under new name}
+  const
+    MaxLen = SizeOf(DirEntryName)-1;
+  var
+    Header : string[30];
+    NewName : DirEntryName;
+    OK : Boolean;
+    DEP : DirEntryPtr;
+  begin
+    MakeNewObj := MakeNewObj or (Lib.FindAnyDirectoryIndex(ObjName) = 0);
+    if MakeNewObj and (Lib.AvailableEntries = 0) then begin
+      PopupErrorMessage('Library''s directory is full');
+      Exit;
+    end;
+
+    if MakeNewObj then
+      Header := 'Save As'
+    else
+      Header := 'Rename';
+
+    NewName := ObjName;
+    repeat
+      {prompt for a name}
+      if (not PopupGetString(Header, 'New name: ', True, True, MaxLen, NewName)) or
+         (NewName = '') or (NewName = ObjName) then
+           Exit;
+
+      {check for conflict with existing name}
+      OK := Lib.FindAnyDirectoryIndex(NewName) = 0;
+      if not OK then
+        PopupErrorMessage('Name is already in use');
+    until OK;
+
+    if not MakeNewObj then begin
+      DEP := Lib.FindAnyDirectoryEntry(ObjName);
+      if (DEP <> nil) then
+        DEP^.Rename(NewName);
+    end;
+
+    ObjName := NewName;
+    Status.Display;
+    Modified := True;
+    SaveEntryScreen;
+  end;
+
+  procedure ShowLibraryInfo;
+    {-Display info about the current library}
+  var
+    LI : OpLibraryInfo;
+  begin
+    if HaveLib then
+      with LI do
+        if not Init(24, 6, Lib, LibName) then
+          InsufficientMemory
+        else begin
+          wFrame.AddShadow(shBR, shSeeThru);
+          Process;
+          Erase;
+          Done;
+        end;
+  end;
+
+  procedure PackLibrary;
+    {-Pack the current library}
+  begin
+    if HaveLib then
+      if Lib.FileNeedsPacking then begin
+        Lib.Pack;
+        if Lib.GetStatus <> 0 then
+          PopupErrorMessage('Error packing library')
+        else
+          PopupDelayMessage('Library packed successfully...');
+      end
+      else
+        PopupDelayMessage('Library does not need packing...');
+  end;
+
+  function OkToQuit : Boolean;
+    {-Returns True if OK to quit program}
+  var
+    Save, Esc : Boolean;
+  begin
+    OkToQuit := True;
+    if Modified then begin
+      Save := PopupYesNo(ObjName, SavePrompt, YesChar, Esc);
+      if Esc then
+        OkToQuit := False
+      else if Save then
+        SaveEntryScreen;
+    end;
+  end;
+                                                    {!!.03}
+  function EditChar(Header : string; var Ch : Char; MustChange : Boolean) : Boolean;
+    {-Edit the specified character}
+  var
+    CHS : CharSelector;
+  begin
+    EditChar := False;
+    if not CHS.Init(4, 5, 76, 20) then
+      InsufficientMemory
+    else with CHS do begin
+      wFrame.AddShadow(shBR, shSeeThru);
+      wFrame.AddHeader(' '+Header+' ', heTC);
+      wFrame.AddCustomScrollBar(
+        frBB, 0, MaxLongInt, 1, 1, SliderChar, ScrollBarChar, MakeScrnColors);
+      SetInitialCharChoice(Ch);
+      Process;
+      if (GetLastCommand <> ccQuit) then          {!!.03}
+        if (GetLastCharChoice <> Ch) then begin
+          Ch := GetLastCharChoice;
+          Modified := True;
+          EditChar := True;
+        end
+        else                                      {!!.03}
+          EditChar := not MustChange;             {!!.03}
+      Erase;
+      Done;
+    end;
+  end;
+
+  function EditDelims : Boolean;
+    {-Edit field delimiters}
+  var
+    CHS : CharSelector;
+    Redraw : Boolean;
+  begin
+    EditDelims := False;
+    if not CHS.Init(4, 5, 76, 20) then
+      InsufficientMemory
+    else with CHS do begin
+      wFrame.AddShadow(shBR, shSeeThru);
+      wFrame.AddHeader(' Left Delimiter ', heTC);
+      wFrame.AddCustomScrollBar(
+        frBB, 0, MaxLongInt, 1, 1, SliderChar, ScrollBarChar, MakeScrnColors);
+      SetInitialCharChoice(CES.esLeftD);
+      Process;
+      if (GetLastCommand <> ccQuit) then begin
+        if (GetLastCharChoice <> CES.esLeftD) then begin
+          Modified := True;
+          EditDelims := True;
+          CES.esLeftD := GetLastCharChoice;
+        end;
+
+        SetInitialCharChoice(CES.esRightD);
+        with wFrame do
+          ChangeHeaderString(GetLastHeaderIndex, ' Right Delimiter ', Redraw);
+        ActivateWrite;
+        Erase;
+        Draw;
+        DeactivateWrite;
+        Process;
+        if (GetLastCommand <> ccQuit) then
+          if (GetLastCharChoice <> CES.esRightD) then begin
+            Modified := True;
+            EditDelims := True;
+            CES.esRightD := GetLastCharChoice;
+          end;
+      end;
+
+      Erase;
+      Done;
+    end;
+  end;
+
+  procedure DisposeScrollBar(FET : FrameEdgeType);
+    {-Dispose of the specified scroll bar}
+  begin
+    with CES, wFrame do
+      if HaveScrollBar(FET) then begin
+        Dispose(frBars[FET], Done);
+        frBars[FET] := nil;
+      end;
+  end;
+
+  procedure ToggleScrollBar(FET : FrameEdgeType);
+    {-Toggle the specified scroll bar}
+  var
+    ET : FrameEdgeType;
+    SaveEdges : array[FrameEdgeType] of Boolean;
+    E : Word;
+  begin
+    with CES do
+      if not HasFrame then
+        PopupErrorMessage('Object must be framed')
+      else begin
+        ActivateWrite;
+        Erase;
+
+        {get rid of existing scroll bars}
+        for ET := frTT to frRR do begin
+          SaveEdges[ET] := HaveScrollBar(ET);
+          if SaveEdges[ET] then
+            DisposeScrollBar(ET);
+        end;
+
+        {get rid of hot spots}
+        wFrame.frHotSpots.Done;
+
+        {toggle the one we're interested in}
+        SaveEdges[FET] := not SaveEdges[FET];
+
+        {add scroll bars}
+        for ET := frTT to frRR do
+          if SaveEdges[ET] then begin
+            ExchangeStructs(DefArrows, cesArrows, SizeOf(ArrowArray));
+            wFrame.AddCustomScrollBar(
+              ET, 1, MaxLongInt, 1, 1, cesSliderChar, cesBarChar, asColors);
+            ExchangeStructs(DefArrows, cesArrows, SizeOf(ArrowArray));
+          end;
+
+        E := RawError;         {!!.01}
+        ClearErrors;           {!!.01}
+        asSetupForScrollBars;
+        Draw;
+        DeactivateWrite;
+
+        if E <> 0 then
+          PopupErrorMessage('Error toggling scroll bar');
+
+        Modified := True;
+      end;
+  end;
+
+  procedure ToggleShadows;
+    {-Toggle shadows}
+  var
+    SDT : ShadowDrawType;
+    E : Word;
+  begin
+    with CES do begin
+      ActivateWrite;
+      Erase;
+
+      SDT := ShadowType;
+      case SDT of
+        shNone :
+          {add a see-through shadow}
+          wFrame.AddShadow(shBR, shSeeThru);
+        shSeeThru :
+          begin
+            {switch to overwriting shadows}
+            RemoveShadows;
+            wFrame.AddShadow(shBR, shOverWrite);
+          end;
+        shOverWrite :
+          {no shadows}
+          RemoveShadows;
+      end;
+
+      E := RawError; {!!.01}
+      ClearErrors;           {!!.01}
+      Draw;
+      DeactivateWrite;
+
+      if E <> 0 then
+        PopupErrorMessage('Error adding shadows');
+
+      Modified := True;
+    end;
+  end;
+
+  function EditColor(HSt : string; var Color, Mono : Byte) : Boolean; {!!.03}
+    {-Edit the specified pair of colors}
+  var
+    CS : ColorSelector;
+    Redraw : Boolean;
+  begin
+    EditColor := False;
+    if not CS.Init(43, 6, False) then
+      InsufficientMemory
+    else with CS do begin
+      wFrame.AddShadow(shBR, shSeeThru);
+      wFrame.AddHeader(HSt+' Color ', heTC); {!!.03}
+      SetBoxAttr($1F, $0F);
+
+      SetColor(Color);
+      Process;
+      if (GetLastCommand <> ccQuit) then begin
+        if (GetColor <> Color) then begin
+          Modified := True;
+          EditColor := True;
+          Color := GetColor;
+        end;
+
+        SetColor(Mono);
+        with wFrame do
+          ChangeHeaderString(GetLastHeaderIndex, HSt+' Mono ', Redraw);
+        ActivateWrite;
+        Erase;
+        Draw;
+        DeactivateWrite;
+        Process;
+        if (GetLastCommand <> ccQuit) and (GetColor <> Mono) then begin
+          Modified := True;
+          EditColor := True;
+          Mono := GetColor;
+        end;
+      end;
+
+      Erase;
+      Done;
+    end;
+  end;
+
+  procedure EditAttr(HSt : string; var A : Byte; IsColor : Boolean);
+    {-Edit the specified attribute}
+  var
+    CS : ColorSelector;
+    Redraw : Boolean;
+  begin
+    if not CS.Init(28, 4, False) then
+      InsufficientMemory
+    else with CS do begin
+      wFrame.AddShadow(shBR, shSeeThru);
+      if HSt <> '' then
+        HSt := Hst+' ';
+      if IsColor then
+        HSt := HSt+'Color'
+      else
+        HSt := HSt+'Mono';
+      wFrame.AddHeader(' '+HSt+' ', heTC);
+      SetBoxAttr($1F, $0F);
+
+      SetColor(A);
+      Process;
+      if (GetLastCommand <> ccQuit) then
+        A := GetColor;
+
+      Erase;
+      Done;
+    end;
+  end;
+
+  function ChooseHeader(var HP : HeaderPtr) : Boolean;
+    {-Choose a header to edit}
+  var
+    HS : HeaderSelector;
+  begin
+    ChooseHeader := False;
+    HP := nil;
+    if not CES.HasHeaders then
+      PopupErrorMessage('Frame has no headers')
+    else if not HS.Init(17, 13, 76, 23, 15, CES.wFrame) then
+      InsufficientMemory
+    else with HS do begin
+      {change the attribute of the column labels}
+      with MakeScrnColors do
+        SetLabelAttr(HighItemColor, HighItemMono);
+
+      wFrame.AddShadow(shBR, shSeeThru);
+      wFrame.AddHeader(' Select Header ', heTC);
+      Process;
+      if GetLastCommand <> ccQuit then begin
+        HP := GetLastHeader;
+        ChooseHeader := True;
+      end;
+      Erase;
+      Done;
+    end;
+  end;
+
+  function ChooseHeaderType(var HPT : HeaderPosType) : Boolean;
+    {-Choose a header type}
+  var
+    HTS : HeaderTypeSelector;
+  begin
+    ChooseHeaderType := False;
+    if not CES.HasFrame then
+      PopupErrorMessage('Entry screen has no frame')
+    else if not HTS.Init(17, 11, 31, 16) then
+      InsufficientMemory
+    else with HTS do begin
+      wFrame.AddShadow(shBR, shSeeThru);
+      wFrame.AddHeader(' Header Type ', heTC);
+      Process;
+      if GetLastCommand <> ccQuit then begin
+        HPT := GetLastHeaderType;
+        ChooseHeaderType := True;
+      end;
+      Erase;
+      Done;
+    end;
+  end;
+
+  procedure RemoveHeader;
+    {-Remove a header}
+  var
+    HP : HeaderPtr;
+  begin
+    if ChooseHeader(HP) and ConfirmAction('Delete Header') then
+      with CES do begin
+        ActivateWrite;
+        Erase;
+        wFrame.frHeaders.Delete(HP);
+        Draw;
+        DeactivateWrite;
+        Modified := True;
+      end;
+  end;
+
+  procedure EditHeaderPrim(HP : HeaderPtr);
+    {-Edit a header}
+  var
+    S : string;
+    Redraw : Boolean;
+    E : Word;
+  begin
+    {edit the header string}
+    S := HP^.heName^;
+    if not PopupGetString('', 'Header: ', False, False, CES.Width, S) then
+      Exit;
+
+    {check for no change}
+    Redraw := (S <> HP^.heName^);
+
+    {check for empty header}
+    if (S = '') and not ConfirmAction('Delete Header') then
+      Exit
+    else
+      Redraw := True;
+
+    {change the colors}
+    if (S <> '') then
+      with HP^ do
+        if EditColor('', heAttrColor, heAttrMono) then {!!.03}
+          Redraw := True;
+
+    if Redraw then
+      with CES do begin
+        ActivateWrite;
+        Erase;
+        if S = '' then
+          wFrame.frHeaders.Delete(HP)
+        else
+          wFrame.frChangeHeaderString(HP, S, Redraw);
+        E := RawError; {!!.01}
+        ClearErrors;           {!!.01}
+
+        Draw;
+        DeactivateWrite;
+
+        if E <> 0 then
+          PopupErrorMessage('Error modifying header');
+
+        Modified := True;
+      end;
+  end;
+
+  procedure EditHeader;
+    {-Edit a header}
+  var
+    HP : HeaderPtr;
+  begin
+    if ChooseHeader(HP) then
+      EditHeaderPrim(HP);
+  end;
+
+  procedure AddHeader;
+    {-Add a header}
+  var
+    HPT : HeaderPosType;
+    HP : HeaderPtr;
+    S : string;
+    Color, Mono : Byte;
+    E : Word;
+  begin
+    {select the location of the header}
+    if not ChooseHeaderType(HPT) then
+      Exit;
+    if CES.HasHeaderType(HPT, HP) then
+      EditHeaderPrim(HP)
+    else begin
+      S := '';
+      if not PopupGetString('', 'Header: ', False, False, CES.Width, S) then
+        Exit;
+
+      {check for empty string}
+      if (S = '') then
+        Exit;
+
+      with CES do begin
+        Color := wFrame.frHeaderColor;
+        Mono := wFrame.frHeaderMono;
+        if EditColor('', Color, Mono) then ; {!!.03}
+
+        wStack.OptimizeTiled(False); {!!.11}
+        ActivateWrite;
+        Erase;
+
+        ExchangeBytes(Color, wFrame.frHeaderColor);
+        ExchangeBytes(Mono, wFrame.frHeaderMono);
+
+        wFrame.AddHeader(S, HPT);
+        E := RawError; {!!.01}
+        ClearErrors;           {!!.01}
+
+        ExchangeBytes(Color, wFrame.frHeaderColor);
+        ExchangeBytes(Mono, wFrame.frHeaderMono);
+
+        Draw;
+        DeactivateWrite;
+        wStack.OptimizeTiled(True); {!!.11}
+
+        if E <> 0 then
+          PopupErrorMessage('Error adding header');
+
+        Modified := True;
+      end;
+    end;
+  end;
+
+  function EditFramePrim(var FR : FrameArray; Left : Byte) : Boolean; {!!.03}
+    {-Select a frame type}
+  var
+    FS : FrameSelector;
+  begin
+    EditFramePrim := False;
+    if not FS.Init(Left, 8, Left+11, 23) then
+      InsufficientMemory
+    else begin
+      FS.wFrame.AddShadow(shBR, shSeeThru);
+      FS.wFrame.AddCustomScrollBar(
+        frRR, 0, MaxLongInt, 5, 1, SliderChar, ScrollBarChar, MakeScrnColors);
+      FS.SetInitialFrameChoice(FR);
+      FS.Process;
+      FS.GetLastFrameChoice(FR);
+      case FS.GetLastCommand of
+        ccQuit, ccError : ;
+        else EditFramePrim := True;
+      end;
+      FS.Done;
+    end;
+  end;
+
+  procedure EditFrame;          {!!.03} {rewritten}
+    {-Select a frame type}
+  var
+    FR : FrameArray;
+    SDT : ShadowDrawType;
+    E : Word;
+    CouldNotAdd : Boolean;
+  begin
+    with CES, wFrame do begin
+      FR := frChars;
+      if EditFramePrim(FR, 16) and (FR <> frChars) then begin
+        CouldNotAdd := False;
+        wStack.OptimizeTiled(False); {!!.11}
+        ActivateWrite;
+        Erase;
+        SDT := ShadowType;
+        frShadows.Done;
+        if FR = NoWindowFrame then begin
+          frHeaders.Done;
+          DisposeScrollBar(frBB);
+          DisposeScrollBar(frRR);
+          frHotSpots.Done;
+          wOptionsOff(wBordered);
+        end
+        else begin
+          wOptionsOn(wBordered);
+          E := RawError; {!!.01}
+          ClearErrors;   {!!.01}
+          if wOptionsAreOn(wBordered) and (E = 0) then {!!.01}
+            frChars := FR
+          else begin
+            CouldNotAdd := True;
+            frChars := NoWindowFrame;
+          end;
+        end;
+        if SDT <> shNone then
+          AddShadow(shBR, SDT);
+        E := RawError; {!!.01}
+        ClearErrors;   {!!.01}
+        DeactivateWrite;
+        wStack.OptimizeTiled(True); {!!.11}
+
+        if CouldNotAdd then
+          PopupErrorMessage('Unable to add frame')
+        else if E <> 0 then
+          PopupErrorMessage('Error modifying frame');
+
+        Modified := True;
+      end;
+    end;
+  end;
+
+  {-----------------}
+
+  constructor StatusWindow.Init;
+    {-Create a status window}
+  begin
+    if not StackWindow.InitCustom(
+      1, ScreenHeight, ScreenWidth, ScreenHeight, MakeScrnColors,
+      wClear+wSaveContents+wUserContents) then
+       Fail;
+    swPos := spBottom {spHidden};
+  end;
+
+  procedure StatusWindow.UpdateContents;
+    {-Called to update the window's contents}
+  const
+    StatusForm1 : string[80] =
+    {         1         2         3         4         5         6         7         8}
+    {12345678901234567890123456789012345678901234567890123456789012345678901234567890}
+    '<Enter> Edit  <AltT> Test  <F2> Save  <F10> Menu ³ N             Row x   Col x  ';
+    StatusForm2 : string[80] =
+    {         1         2         3         4         5         6         7         8}
+    {12345678901234567890123456789012345678901234567890123456789012345678901234567890}
+    '<Esc> Exit  <^Enter> Done  <AltS> Toggle status  ³ N             f              ';
+  var
+    Status : string[127];
+    Testing : Boolean;
+
+    procedure MergeString(Src : string; Col : Byte);
+    begin
+      Move(Src[1], Status[Col], Length(Src));
+    end;
+
+    procedure MergeNumber(L : LongInt; Col : Byte);
+    var
+      S : string[20];
+    begin
+      MergeString(Long2Str(L), Col);
+    end;
+
+  begin
+    {are we testing?}
+    Testing := TypeOf(CES) = TypeOf(ScrollingEntryScreen);
+
+    {get a copy of the raw status line}
+    if Testing then
+      Status := StatusForm2
+    else
+      Status := StatusForm1;
+
+    {plug in status stuff}
+    MergeString(ObjName,   52);
+    if Testing then
+      MergeString(FieldName(EntryFieldPtr(CES.asCurrent)), 66)
+    else begin
+      MergeNumber(CES.cesY,  70);
+      MergeNumber(CES.cesX,  78);
+    end;
+
+    {draw the status line}
+    FastWrite(Status, wYL, 1, ColorMono(wTextColor, wTextMono)); {!!.01}
+
+    StackWindow.UpdateContents; {!!.01}
+  end;
+
+  procedure StatusWindow.SetStatusPos(NSP : StatusPos);
+    {-Set the position of the status line}
+  var
+    NewRow : Integer;
+    WP : WindowPtr;
+  begin
+    if NSP = spTop then
+      NewRow := 1
+    else
+      NewRow := ScreenHeight;
+
+    if not HaveCES then begin
+      if (NSP <> spHidden) and (NewRow <> wYL) then
+        MoveWindow(0, NewRow-Integer(wYL));
+    end
+    else case NSP of
+      spHidden :
+        if IsActive then
+          EraseHidden;
+      spBottom,
+      spTop :
+        if IsActive then begin
+          wStack.OptimizeTiled(False); {!!.03}
+          ActivateWrite;
+          MoveWindow(0, NewRow-Integer(wYL));
+          UpdateContents;
+          DeactivateWrite;
+          wStack.OptimizeTiled(True); {!!.03}
+        end
+        else begin
+          {move the window into place}
+          if NewRow <> wYL then
+            MoveWindow(0, NewRow-Integer(wYL));
+
+          with wStack do
+            {put the status window at the bottom of the stack}
+            if (Size > 0) then begin
+              WP := Pointer(Peek(1));
+              DrawHidden(WP^);
+            end
+            else
+              Draw;
+        end;
+    end;
+
+    swPos := NSP;
+  end;
+
+  procedure StatusWindow.Toggle;
+    {-Toggle the status line}
+  begin
+    case swPos of
+      spHidden : SetStatusPos(spBottom);
+      spBottom : SetStatusPos(spTop);
+      spTop    : SetStatusPos(spHidden);
+    end;
+  end;
+
+  function StatusWindow.IsTiled : Boolean;
+    {-Returns True if no other windows overlap the status window}
+  var
+    I, Last : Word;
+    WP : WindowPtr;
+    X1, Y1, X2, Y2 : Byte;
+  begin
+    IsTiled := False;
+    Last := wStack.SP;
+    for I := 1 to Last do begin
+      WP := WindowPtr(wStack.Peek(I));
+      if WP <> @Self then begin
+        WP^.Extent(X1, Y1, X2, Y2, True);
+        if (wYL >= Y1) and (wYL <= Y2) then
+          Exit;
+      end;
+    end;
+    IsTiled := True;
+  end;
+
+  procedure StatusWindow.FastUpdate(KPP : KeyPressedProc);
+    {-Update the status window as rapidly as possible}
+  begin
+    if not IsActive then
+      Exit;
+
+    {is cursor on the status line?}
+    if WhereYabs = wYL then begin
+      {move the status window to avoid the cursor}
+      if swPos = spTop then
+        SetStatusPos(spBottom)
+      else
+        SetStatusPos(spTop);
+    end
+    else if IsTiled then
+      UpdateContents
+    else if not KPP then begin
+      ActivateWrite;
+      UpdateContents;
+      DeactivateWrite;
+    end;
+  end;
+
+  procedure StatusWindow.Display;
+    {-Display the status window}
+  begin
+    SetStatusPos(swPos);
+  end;
+
+
+  {-----------------------------}
+
+  {$IFDEF UseBcd}
+type
+  BcdRec =
+    record
+      case Byte of
+        0 : (S : string);
+        1 : (L : Byte; B : Bcd);
+      end;
+  BcdDict =
+    object(StringDict)
+      bdCount : Integer;
+
+      constructor Init;
+        {-Allocate hash pool for a BCD dictionary}
+      procedure Add(var B : BCD);
+        {-Add BCD to dictionary}
+      function Member(var B : BCD; var Value : LongInt) : Boolean;
+        {-Return true and associated value if B is element of dictionary}
+      function FindMember(Value : LongInt; var B : Bcd) : Boolean;
+        {-Return the BCD corresponding to Value}
+      function Equal(var S, T : String) : Boolean; virtual;
+    end;
+
+var
+  Bcds : BcdDict;
+
+  constructor BcdDict.Init;
+    {-Allocate hash pool for a BCD dictionary}
+  begin
+    bdCount := -2;
+
+    if not StringDict.Init then
+      Fail;
+
+    Add(MinBCD);  {MinBCD  = -2}
+    Add(MaxBcd);  {MaxBcd  = -1}
+    Add(ZeroBcd); {ZeroBcd =  0}
+
+    if GetStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure BcdDict.Add(var B : BCD);
+    {-Add BCD to dictionary}
+  var
+    BR : BcdRec;
+  begin
+    if sdStatus <> 0 then
+      Exit;
+
+    BR.L := SizeOf(BCD);
+    BR.B := B;
+
+    StringDict.Add(BR.S, bdCount);
+    Inc(bdCount);
+  end;
+
+  function BcdDict.Member(var B : BCD; var Value : LongInt) : Boolean;
+    {-Return true and associated value if B is element of dictionary}
+  var
+    BR : BcdRec;
+  begin
+    BR.L := SizeOf(BCD);
+    BR.B := B;
+    Member := StringDict.Member(BR.S, Value);
+  end;
+
+  function BcdDict.FindMember(Value : LongInt; var B : Bcd) : Boolean;
+    {-Return the BCD corresponding to Value}
+  var
+    SP : StringPtr;
+    L : LongInt;
+    I : Word;
+  begin
+    FindMember := True;
+
+    for I := 0 to sdSize do begin
+      SP := sdPool^[I];
+      if SP <> nil then begin
+        {Return the longint beyond the string}
+        Move(SP^[Length(SP^)+1], L, SizeOf(LongInt));
+        if L = Value then begin
+          Move(SP^[1], B, SizeOf(Bcd));
+          Exit;
+        end;
+      end;
+    end;
+
+    FindMember := False;
+  end;
+
+  function BcdDict.Equal(var S, T : String) : Boolean;
+  var
+    SBR : BcdRec absolute S;
+    TBR : BcdRec absolute T;
+  begin
+    Equal := EqualBcd(SBR.B, TBR.B);
+  end;
+
+  {$ENDIF}
+
+  function GetTypeCode(EFP : EntryFieldPtr) : Byte;
+    {-Get the type code for the field}
+  var
+    VmtPtr : ^Word absolute EFP;
+    Id : IdNodePtr;
+  begin
+    Id := Lib.idRegistered.FindByVmt(VmtPtr^);
+    GetTypeCode := Id^.idCode;
+  end;
+
+  function GetEditor(EFP : EntryFieldPtr) : Byte;
+    {-Get the editor for the field}
+  begin
+    with EFP^ do
+      {determine the editor}
+      if LongFlagIsSet(sfFlags, ifSimple) then
+        GetEditor := edSimple
+      else if LongFlagIsSet(sfFlags, ifNumeric) then
+        GetEditor := edNumeric
+      else
+        GetEditor := edNormal;
+  end;
+
+  function FieldName(EFP : EntryFieldPtr) : string;
+    {-Return the user record field name for an entry field}
+  begin
+    with EFP^ do
+      if sfFieldName = nil then
+        FieldName := 'Field'+ZeroPad(sfID)
+      else
+        FieldName := sfFieldName^;
+  end;
+
+  function SymName(EFP : EntryFieldPtr) : string;
+    {-Return the constant symbol name for an entry field}
+  begin
+    SymName := 'id'+FieldName(EFP);
+  end;
+
+  function HelpName(EFP : EntryFieldPtr) : string;
+    {-Return the constant symbol name for an entry field's help index}
+  begin
+    if GenHelpNames then
+      HelpName := 'hi'+FieldName(EFP)
+    else
+      HelpName := Long2Str(EFP^.sfID+1);
+  end;
+
+  function TypeCode2Str(TypeCode : Byte) : string;
+    {-Convert a type code to a string}
+  begin
+    case TypeCode of
+      otStringEField   : TypeCode2Str := 'String';
+      otArrayEField    : TypeCode2Str := 'Array of char';
+      otCharEField     : TypeCode2Str := 'Char';
+      otBooleanEField  : TypeCode2Str := 'Boolean';
+      otYesNoEField    : TypeCode2Str := 'Yes-no';
+      otLongIntEField  : TypeCode2Str := 'LongInt';
+      otWordEField     : TypeCode2Str := 'Word';
+      otIntegerEField  : TypeCode2Str := 'Integer';
+      otByteEField     : TypeCode2Str := 'Byte';
+      otShortIntEField : TypeCode2Str := 'ShortInt';
+      otRealEField     : TypeCode2Str := 'Real';
+    {$IFDEF UseBcd}
+      otBcdEField      : TypeCode2Str := 'Bcd';
+    {$ENDIF}
+    {$IFOPT N+}
+      otExtendedEField : TypeCode2Str := 'Extended';
+      otDoubleEField   : TypeCode2Str := 'Double';
+      otSingleEField   : TypeCode2Str := 'Single';
+      otCompEField     : TypeCode2Str := 'Comp';
+    {$ENDIF}
+    {$IFDEF UseDates}
+      otDateEField     : TypeCode2Str := 'Date';
+      otDateStEField   : TypeCode2Str := 'Date string';
+      otTimeEField     : TypeCode2Str := 'Time';
+    {$ENDIF}
+    end;
+  end;
+
+  function FixExpReal(S : string) : string;
+  var
+    I, J : Integer;
+  begin
+    I := Pos('E', S);
+    J := I;
+    while S[J-1] = '0' do
+      Dec(J);
+    if S[J-1] = '.' then
+      Dec(J);
+    Delete(S, J, I-J);
+    FixExpReal := S;
+  end;
+
+  {--------------------- code generation ---------------}
+
+  procedure BlankLine;
+  begin
+    WriteLn(OutF);
+  end;
+
+  procedure GenLine(Indent : Byte; S : string);
+  begin
+    WriteLn(OutF, '':Indent, S);
+  end;
+
+  procedure WriteString(S : string);
+  begin
+    Write(OutF, S);
+  end;
+
+  procedure GenRegisterHier(Indent : Byte; S : String);
+  begin
+    GenLine(Indent, 'S.RegisterHier('+S+'Stream);');
+  end;
+
+  procedure GenRegisterPointer(Indent : Byte; Id : LongInt; S : String);
+  begin
+    WriteLn(OutF, '':Indent, 'S.RegisterPointer(', Id, ', @', S, ');');
+  end;
+
+{$F+}
+  procedure WriteFieldConstant(EFP : EntryFieldPtr; var D; ESP : EntryScreenPtr);
+    {-Write field ID constant for specified item}
+  var
+    S : string[26];         {!!.02}
+    LEFP : EntryFieldPtr;
+  begin {!!.01} {changed routine}
+    LEFP := Pointer(EFP^.dlPrev);
+    if LEFP = nil then
+      S := '0'
+    else
+      S := SymName(LEFP)+' + 1';
+    WriteLn(OutF, '  ', Pad(SymName(EFP), 22), ' = ', S, ';');
+  end;
+
+  procedure WriteHelpConstant(EFP : EntryFieldPtr; var D; ESP : EntryScreenPtr);
+    {-Write help constant for specified item}
+  var
+    S : string[26];         {!!.02}
+    LEFP : EntryFieldPtr;
+  begin  {!!.01} {changed routine}
+    LEFP := Pointer(EFP^.dlPrev);
+    if LEFP = nil then
+      S := '1'
+    else
+      S := HelpName(LEFP)+' + 1';
+    WriteLn(OutF, '  ', Pad(HelpName(EFP), 22), ' = ', S, ';');
+  end;
+
+  procedure WriteCaseLabel(EFP : EntryFieldPtr; var D; ESP : EntryScreenPtr);
+    {-Write case label for specified item}
+  begin
+    WriteLn(OutF, '':6, Pad(SymName(EFP), 22), ' : ;');
+  end;
+
+  procedure CheckFieldType(EFP : EntryFieldPtr; var D; ESP : EntryScreenPtr);
+    {-Mark this field's type as used}
+  begin
+    RegisteredTypes[GetTypeCode(EFP), GetEditor(EFP)] := True;
+  end;
+{$F-}
+
+  function TypeName(EFP : EntryFieldPtr) : string;
+    {-Return a type declaration for the entry field}
+  var
+    TypeCode : Byte;
+    St : string;
+  begin
+    with EFP^ do begin
+      TypeCode := GetTypeCode(EFP);
+      case TypeCode of
+        otStringEField, otDateStEField :
+          St := 'string['+Long2Str(efMaxLen)+']';
+        otArrayEField :
+          St := 'array[1..'+Long2Str(efMaxLen)+'] of Char';
+        otYesNoEField :
+          St := TypeCode2Str(otBooleanEField);
+        else
+          St := TypeCode2Str(TypeCode);
+      end;
+    end;
+    TypeName := St;
+  end;
+
+{$F+}
+  procedure WriteFieldDeclaration(EFP : EntryFieldPtr; var D; ESP : EntryScreenPtr);
+    {-Write field name/type declaration}
+  begin
+    WriteLn(OutF, '':6, Pad(FieldName(EFP), 20), ' : ', TypeName(EFP), ';');
+  end;
+
+  procedure HaveTypeCodePrim(EFP : EntryFieldPtr; var D; ESP : EntryScreenPtr);
+    {-See if this field is of a particular type}
+  var
+    TCP : TypeCodePacket absolute D;
+  begin
+    if GetTypeCode(EFP) = TCP.TC then
+      TCP.B := True;
+  end;
+
+{$IFDEF UseBcd}
+  procedure AddBcdRange(EFP : EntryFieldPtr; var D; ESP : EntryScreenPtr);
+    {-Add upper and lower limits of a BCD field to a set of constants}
+  var
+    Status : Word absolute D;
+    L : LongInt;
+  begin
+    if Status = 0 then
+      if GetTypeCode(EFP) = otBcdEField then
+        with EFP^ do begin
+          if not Bcds.Member(efRangeLo.rtBCD, L) then begin
+            Bcds.Add(efRangeLo.rtBCD);
+            Status := Bcds.GetStatus;
+            if Status <> 0 then
+              Exit;
+          end;
+          if not Bcds.Member(efRangeHi.rtBCD, L) then begin
+            Bcds.Add(efRangeHi.rtBCD);
+            Status := Bcds.GetStatus;
+            if Status <> 0 then
+              Exit;
+          end;
+        end;
+  end;
+{$ENDIF}
+
+{$F-}
+
+  function HaveTypeCode(TypeCode : Byte) : Boolean;
+    {-Return True if any fields are of the specified type}
+  var
+    TCP : TypeCodePacket;
+  begin
+    TCP.TC := TypeCode;
+    TCP.B := False;
+
+    CES.VisitAllEntryFields(HaveTypeCodePrim, TCP);
+
+    HaveTypeCode := TCP.B;
+  end;
+
+{$IFDEF UseBcd}
+
+  procedure GenerateBcdConstants;
+    {-Generate list of BCD constants}
+  var
+    I : Integer;
+    B : Bcd;
+
+    function MakeBcd(B : Bcd) : string;
+      {-Return a typed constant representing the current BCD real of interest}
+    var
+      I : Word;
+      S : string;
+    begin
+      S := '(';
+      for I := 1 to SizeOf(BCD) do
+        S := S+'$'+HexB(B[I])+',';
+      S[Length(S)] := ')';
+      MakeBcd := S;
+    end;
+
+  begin
+    if Bcds.bdCount <= 1 then
+      Exit;
+
+    GenLine(0, '{BCD constants}'^M^J'const');
+    for I := 1 to Pred(Bcds.bdCount) do
+      if Bcds.FindMember(I, B) then
+        WriteLn(OutF, '  BcdVal', ZeroPad(I), ' : BCD = ', MakeBcd(B),
+                '; {', FixExpReal(StrExpBCD(B, 6)), '}')
+      else
+        RingBell;
+    BlankLine;
+  end;
+
+{$ENDIF}
+
+  procedure GenerateColorConstants;
+    {-Generate list of color constants}
+  var
+    PW, Index : Word;
+    TempColors : ColorSet;
+    ColorArray : array[1..SizeOf(ColorSet)] of Byte absolute TempColors;
+  begin
+    {make a local copy of the main color set}
+    TempColors := CES.asColors;
+
+    if GenColorNames then
+      PW := 20
+    else
+      PW := 5;
+
+    {Write the ColorSet constant}
+    GenLine(0, '{Color set used by entry screen}'^M^J'const');
+    GenLine(2,   'EsColors : ColorSet = (');
+    for Index := 1 to NamesInColorSet do begin
+      Write(OutF, '    ',
+            Pad(ColorSetNames[Index]+'Color', 16),
+            ': ', Pad(ColorName(ColorArray[2*Index-1])+'; ', PW),
+            Pad(ColorSetNames[Index]+'Mono', 16),
+            ': ', ColorName(ColorArray[2*Index]));
+      if Index <> NamesInColorSet then
+        WriteString(';');
+      BlankLine;
+    end;
+    GenLine(2, ');'^M^J);
+  end;
+
+  procedure GenerateFrameConstant;
+    {-Generate a frame constant}
+  begin
+    GenLine(0, 'const');
+    GenLine(2, 'Frame1 = '+PascalFrame(CES.wFrame.frChars)+';');
+  end;
+
+  procedure GenerateScrollBars(Indent : Word);
+    {-Generate calls to draw scroll bars}
+  const
+    ESt : array[FrameEdgeType] of string[2] = ('TT', 'BB', 'LL', 'RR');
+  var
+    FET : FrameEdgeType;
+    SetColor : Boolean;
+  begin
+    with CES, wFrame do
+      if HasScrollBars then begin
+        {change default arrows if necessary}
+        if cesArrows <> DefArrows then begin
+          GenLine(Indent, '{change default arrow characters}');
+          GenLine(Indent, 'DefArrows := '+PascalCtrlString(cesArrows)+';');
+        end;
+
+        for FET := frTT to frRR do
+          if HaveScrollBar(FET) then
+            with frBars[FET]^ do
+              WriteLn(OutF, '':Indent,
+                'wFrame.AddCustomScrollBar(fr', ESt[FET],
+                ', 1, MaxLongInt, 1, 1, ',
+                PascalChar(cesSliderChar), Comma,
+                PascalChar(cesBarChar), ', EsColors);');
+      end;
+  end;
+
+  procedure GenerateFieldOptions(NewO, DefO : LongInt);
+    {-Generate calls to esFieldOptionsOn and esFieldOptionsOff based on
+      the differences between NewO and DefO}
+  const
+    MinBit = 0;
+    MaxBit = 31;
+    FieldOptionNames : array[MinBit..MaxBit] of string[17] = (
+      'Protected', 'Hidden', 'MapCtrls', 'MultChoice', 'Invisible',
+      'AutoAdvanceChar', '', 'AutoAdvanceCursor', '', 'InsertPushes',
+      'RightJustify', 'PasswordMode', 'CursorToEnd', 'TrimBlanks',
+      'ClearFirstChar', 'ForceOvertype', 'ForceMode', 'ClickExit',
+      'BeepOnError', 'AutoNumLock', 'ParensForMinus', 'ExitAtEdges',
+      'Required', '', 'HouseCursorAtEnd', 'ForceUpper', 'ForceLower',
+      'AllowEscape', 'ShowReadChar', 'HideCursor', 'DefaultAccepted',
+      'MapExtended');
+  var
+    Bit : Word;
+    Flag : LongInt;
+    SOn : string;
+    SOff : string;
+
+    procedure FixAuto(var L : LongInt);
+    begin
+      if LongFlagIsSet(L, efAutoAdvanceChar) then
+        SetLongFlag(L, efAutoAdvanceChar);
+      if LongFlagIsSet(L, efAutoAdvanceCursor) then
+        SetLongFlag(L, efAutoAdvanceCursor);
+    end;
+
+    function BitName(Bit : Word) : string;
+    begin
+      if FieldOptionNames[Bit] = '' then
+        BitName := ''
+      else
+        BitName := 'ef'+FieldOptionNames[Bit];
+    end;
+
+  begin
+    SOn := '';
+    SOff := '';
+    FixAuto(NewO);
+    FixAuto(DefO);
+    for Bit := MinBit to MaxBit do begin
+      Flag := LongInt(1) shl Bit;
+      if LongFlagIsSet(NewO, Flag) then begin
+        {don't set it if it's ON by default}
+        if not LongFlagIsSet(DefO, Flag) then begin
+          if (SOn <> '') and (BitName(Bit) <> '') then
+            SOn := SOn+'+';
+          SOn := SOn+BitName(Bit);
+        end;
+      end
+      else if LongFlagIsSet(DefO, Flag) then begin
+        {don't clear it if it's OFF by default}
+        if (SOff <> '') and (BitName(Bit) <> '') then
+          SOff := SOff+'+';
+        SOff := SOff+BitName(Bit);
+      end;
+    end;
+    if Length(SOn) <> 0 then
+      GenLine(4, 'esFieldOptionsOn('+SOn+');');
+    if Length(SOff) <> 0 then
+      GenLine(4, 'esFieldOptionsOff('+SOff+');');
+  end;
+
+  procedure GenerateSecFieldOptions(NewO, DefO : LongInt);
+    {-Generate calls to esSecFieldOptionsOn and esSecFieldOptionsOff based on
+      the differences between NewO and DefO}
+  const
+    MinBit = 26;
+    MaxBit = 31;
+    SecFieldOptionNames : array[MinBit..MaxBit] of string[15] = (
+      'BlankNotCurrent', 'PadCurrentOnly', 'SuppressZero',
+      'NoFieldMovement', 'WindowRelative', 'InsertByDefault');
+  var
+    Bit : Word;
+    Flag : LongInt;
+    SOn : string;
+    SOff : string;
+  begin
+    SOn := '';
+    SOff := '';
+    for Bit := MinBit to MaxBit do begin
+      Flag := LongInt(1) shl Bit;
+      if LongFlagIsSet(NewO, Flag) then begin
+        {don't set it if it's ON by default}
+        if not LongFlagIsSet(DefO, Flag) then begin
+          if (SOn <> '') then
+            SOn := SOn+'+';
+          SOn := SOn+'sef'+SecFieldOptionNames[Bit];
+        end;
+      end
+      else if LongFlagIsSet(DefO, Flag) then begin
+        {don't clear it if it's OFF by default}
+        if (SOff <> '') then
+          SOff := SOff+'+';
+        SOff := SOff+'sef'+SecFieldOptionNames[Bit];
+      end;
+    end;
+    if Length(SOn) <> 0 then
+      GenLine(4, 'esSecFieldOptionsOn('+SOn+');');
+    if Length(SOff) <> 0 then
+      GenLine(4, 'esSecFieldOptionsOff('+SOff+');');
+  end;

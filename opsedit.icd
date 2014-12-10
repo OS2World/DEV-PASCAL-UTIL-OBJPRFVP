@@ -1,0 +1,62 @@
+{*********************************************************}
+{*                   OPSEDIT.ICD 1.30                    *}
+{*    Copyright (c) TurboPower Software 1989, 1992.      *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {.F-}
+const
+  SimpEditKeyMax = 150;   {last available slot in SimpEditKeySet}
+  {ID string for installation programs}
+  SimpEditKeyID : string[16] = 'opsedit keys 1.0';
+  {default key assignments}
+  SimpEditKeySet : array[0..SimpEditKeyMax] of Byte = (
+   {length keys         command type      key sequence}
+    3,     $00, $00,    ccQuit,          {^Break}
+    3,     $00, $3B,    ccHelp,          {F1}
+    3,     $00, $47,    ccHome,          {Home}
+    3,     $00, $4B,    ccLeft,          {Left}
+    3,     $00, $4D,    ccRight,         {Right}
+    3,     $00, $4F,    ccEnd,           {End}
+    3,     $00, $52,    ccIns,           {Ins}
+    3,     $00, $53,    ccDel,           {Del}
+    3,     $00, $73,    ccWordLeft,      {^Left}
+    3,     $00, $74,    ccWordRight,     {^Right}
+    3,     $00, $75,    ccDelEol,        {^End}
+    3,     $00, $77,    ccDelBol,        {^Home}
+    2,     $01,         ccWordLeft,      {^A}
+    2,     $04,         ccRight,         {^D}
+    2,     $06,         ccWordRight,     {^F}
+    2,     $07,         ccDel,           {^G}
+    2,     $08,         ccBack,          {^H, Bksp}
+    2,     $0D,         ccSelect,        {^M, Enter}
+    2,     $10,         ccCtrlChar,      {^P}
+    2,     $12,         ccRestore,       {^R}
+    2,     $13,         ccLeft,          {^S}
+    2,     $14,         ccDelWord,       {^T}
+    2,     $16,         ccIns,           {^V}
+    2,     $19,         ccDelLine,       {^Y}
+    2,     $1B,         ccQuit,          {Esc}
+    2,     $7F,         ccBack,          {^Bksp}
+    3,     $11, $04,    ccEnd,           {^Q^D}
+    3,     $11, $0C,    ccRestore,       {^Q^L}
+    3,     $11, $13,    ccHome,          {^Q^S}
+    3,     $11, $19,    ccDelEol,        {^Q^Y}
+  {$IFDEF UseMouse}
+    3,     $00, $EC,    ccSelect,        {click center = Enter}
+    3,     $00, $EE,    ccQuit,          {click right  = ESC}
+    3,     $00, $ED,    ccHelp,          {click both   = help}
+    3,     $00, $EF,    ccMouseSel,      {click left   = mouse selection}
+  {$ELSE}
+                   0, 0, 0, 0, 0,        {110}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,        {120}
+    0,                                   {130}
+  {$ENDIF}
+    {-----------pad to end of array----------}
+       0, 0, 0, 0, 0, 0, 0, 0, 0,        {130}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,        {140}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0);       {150}
+{.F+}
+
+const
+  SimpEditCfgEnd : Byte = 0;

@@ -1,0 +1,1546 @@
+  {*********************************************************}
+  {*                    OPPICK.IN1 1.30                    *}
+  {*      Copyright (c) TurboPower Software 1987,1992.     *}
+  {*                 All rights reserved.                  *}
+  {*********************************************************}
+
+  procedure NoPickString(Item : Word;
+                         Mode : pkMode;
+                         var IType : pkItemType;
+                         var IString : String;
+                         PickPtr : PickListPtr);
+    {-Default user string proc must be overridden}
+  begin
+    Abstract;
+  end;
+
+  procedure NoMoveAction(P : PickListPtr);
+    {-User hook routine called just before getting each pick command}
+  begin
+    {Does nothing}
+  end;
+
+  procedure DoLower(var Source : Word; MaxVal : Word);
+    {-Reduce Source to at most MaxVal}
+  begin
+    if Source > MaxVal then
+      Source := MaxVal;
+  end;
+
+  procedure Decrease(var Source : Word; Amount, MinVal : Word);
+    {-Decrease Source by Amount, but no lower than MinVal}
+  begin
+    if Source > MinVal+Amount then
+      Dec(Source, Amount)
+    else
+      Source := MinVal;
+  end;
+
+  procedure DoRaise(var Source : Word; MinVal : Word);
+    {-Increase Source to at least MinVal}
+  begin
+    if Source < MinVal then
+      Source := MinVal;
+  end;
+
+  procedure Increase(var Source : Word; Amount, MaxVal : Word);
+    {-Increase Source by Amount, but no higher than MaxVal}
+  begin
+    if Source+Amount < MaxVal then
+      Inc(Source, Amount)
+    else
+      Source := MaxVal;
+  end;
+
+  function PickList.IsProtected(Item : Word) : Boolean;
+    {-Return true if an item is protected}
+  var
+    IType : pkItemType;
+    S : String;
+  begin
+    if Item <= pkItems then begin
+      IType := pkNormal;
+      CompleteItemString(Item, pkGetType, IType, S);
+      IsProtected := (IType = pkProtected);
+    end else
+      IsProtected := True;
+  end;
+
+  function PickList.IsSemiProtected(Item : Word) : Boolean; {!!.03}
+    {-Return true if an item is semi-protected}
+  var
+    IType : pkItemType;
+    S : String;
+  begin
+    if Item <= pkItems then begin
+      IType := pkNormal;
+      CompleteItemString(Item, pkGetType, IType, S);
+      IsSemiProtected := (IType = pkSemiProtected);
+    end else
+      IsSemiProtected := True;
+  end;
+
+  procedure PickList.pkGetUnprotected(Cmd : Word);
+    {-Increment choice number until a pickable item is found}
+  var
+    InitChoice : Word;
+  begin
+    InitChoice := pkChoice;
+    repeat
+      case Cmd of
+        ccDown, ccPageDn, ccRight, ccEnd :
+          begin
+            Dec(pkChoice);
+            if pkChoice < 1 then
+              pkChoice := pkItems;
+          end;
+      else
+        Inc(pkChoice);
+        if pkChoice > pkItems then
+          pkChoice := 1;
+      end;
+    until not IsProtected(pkChoice) or (pkChoice = InitChoice);
+    if pkChoice = InitChoice then begin
+      {All items protected, fail gracefully}
+      pkChoice := 1;
+      pkFirst := 1;
+    end else
+      pkSetCurrent(pkChoice, pkFirst, @Self);
+  end;
+
+  procedure PickList.pkCommonValidation;
+    {-Perform choice validation common to all orientations}
+  begin
+    if (pkChoice < 1) or (pkChoice > pkItems) then begin
+      pkChoice := 1;
+      pkFirst := 1;
+    end;
+    if IsProtected(pkChoice) then
+      pkGetUnprotected(ccNone);
+    DoRaise(pkFirst, 1);
+    DoLower(pkFirst, pkChoice);
+  end;
+
+  function PickList.pkValidPos(Row, Col : Word) : Boolean;
+    {-Return true if <pkFirst, Row, Col> indicates a valid item}
+  begin
+    pkValidPos := (pkGetCurrent(pkFirst, Row, Col, @Self) <= pkItems);
+  end;
+
+  procedure PickList.pkValidateChoiceColFirst;
+    {-Assure implied choice is within range}
+  begin
+    while not pkValidPos(pkRow, pkCol) do
+      if pkCol > 1 then
+        Dec(pkCol)
+      else begin
+        pkCol := pkCols;
+        Dec(pkRow);
+      end;
+  end;
+
+  procedure PickList.pkValidateChoiceRowFirst;
+    {-Assure implied choice is within range}
+  begin
+    while not pkValidPos(pkRow, pkCol) do
+      if pkRow > 1 then
+        Dec(pkRow)
+      else begin
+        Dec(pkCol);
+        pkRow := pkHeight;
+      end;
+  end;
+
+  procedure PickList.pkLowerFirstChoice;
+    {-Reduce the first choice or wrap}
+  begin
+    if pkFirst > 1 then
+      Decrease(pkFirst, pkScroll, 1)
+    else if FlagIsSet(pkSecFlags, pkItemWrap) then {!!.01}
+      pkFirst := pkMaxFirst;
+  end;
+
+  procedure PickList.pkRaiseFirstChoice;
+    {-Increase the first choice or wrap}
+  begin
+    if pkFirst < pkMaxFirst then
+      Increase(pkFirst, pkScroll, pkMaxFirst)
+    else if FlagIsSet(pkSecFlags, pkItemWrap) then {!!.01}
+      pkFirst := 1;
+  end;
+
+  procedure PickList.pkSetUpperLeft;
+    {-Set cursor to upper left corner of window}
+  begin
+    pkRow := 1;
+    pkCol := 1;
+  end;
+
+  procedure PickList.pkSetLowerRight;
+    {-Set cursor to lower right corner of window}
+  begin
+    pkRow := pkHeight;
+    pkCol := pkCols;
+  end;
+
+  procedure ShiftColumnLeft(P : PickListPtr);
+    {-pkRow should be 1 when this is called}
+  begin
+    with P^ do begin
+      if pkCol > 1 then
+        Dec(pkCol)
+      else
+        pkCol := pkCols;
+      pkRow := pkHeight;
+    end;
+  end;
+
+  procedure ShiftColumnRight(P : PickListPtr);
+    {-pkRow should be pkHeight when this is called}
+  begin
+    with P^ do begin
+      if (pkCol < pkCols) and pkValidPos(1, pkCol+1) then
+        Inc(pkCol)
+      else
+        pkCol := 1;
+      pkRow := 1;
+    end;
+  end;
+
+  procedure ShiftRowUp(P : PickListPtr);
+    {-pkCol should be 1 when this is called}
+  begin
+    with P^ do begin
+      if pkRow > 1 then
+        Dec(pkRow)
+      else
+        pkRow := pkHeight;
+      pkCol := pkCols;
+      pkValidateChoiceColFirst;
+    end;
+  end;
+
+  procedure ShiftRowDown(P : PickListPtr);
+    {-pkCol should be pkCols when this is called}
+  begin
+    with P^ do begin
+      if (pkRow < pkHeight) and pkValidPos(pkRow+1, 1) then
+        Inc(pkRow)
+      else
+        pkRow := 1;
+      pkCol := 1;
+    end;
+  end;
+
+  procedure LeftShift(P : PickListPtr);
+    {-Left arrow on upper left corner}
+  begin
+    with P^ do begin
+      if pkFirst > 1 then
+        pkCol := pkCols;
+      pkLowerFirstChoice;
+      if FlagIsSet(pkSecFlags, pkItemWrap) and (pkFirst = pkMaxFirst) then {!!.01}
+        ShiftRowUp(P);
+    end;
+  end;
+
+  procedure RightShift(P : PickListPtr);
+    {-Right arrow on lower right corner}
+  begin
+    with P^ do begin
+      if pkFirst < pkMaxFirst then
+        pkCol := 1;
+      pkRaiseFirstChoice;
+      if FlagIsSet(pkSecFlags, pkItemWrap) and (pkFirst = 1) then {!!.01}
+        ShiftRowDown(P);
+    end;
+  end;
+
+  procedure UpShift(P : PickListPtr);
+    {-Up arrow on upper edge of vertical pick}
+  begin
+    with P^ do begin
+      pkLowerFirstChoice;
+      if FlagIsSet(pkSecFlags, pkItemWrap) and (pkFirst = pkMaxFirst) then {!!.01}
+        ShiftColumnLeft(P);
+    end;
+  end;
+
+  procedure DownShift(P : PickListPtr);
+    {-Down arrow on lower edge of vertical pick}
+  begin
+    with P^ do begin
+      pkRaiseFirstChoice;
+      if FlagIsSet(pkSecFlags, pkItemWrap) and (pkFirst = 1) then {!!.01}
+        ShiftColumnRight(P);
+    end;
+  end;
+
+  procedure PgUpNormal(P : PickListPtr);
+    {-PgUp for vertical and horizontal pick}
+  begin
+    with P^ do begin
+      if pkFirst > 1 then begin
+        if FlagIsSet(pkFlags, pkAlterPageRow) then begin
+          Decrease(pkFirst, (pkHeight-(pkRow-1))*pkScroll, 1);
+          pkRow := 1;
+        end else
+          Decrease(pkFirst, pkHeight*pkScroll, 1);
+      end else if pkRow > 1 then
+        pkRow := 1
+      else if FlagIsSet(pkSecFlags, pkItemWrap) then begin {!!.01}
+        {Wrap to previous column}
+        pkFirst := pkMaxFirst;
+        pkRow := pkHeight;
+        if pkCol > 1 then
+          Dec(pkCol)
+        else
+          pkCol := pkCols;
+      end;
+    end;
+  end;
+
+  procedure PgDnNormal(P : PickListPtr);
+    {-PgDn for vertical and horizontal pick}
+  begin
+    with P^ do begin
+      if pkFirst < pkMaxFirst then begin
+        if FlagIsSet(pkFlags, pkAlterPageRow) then begin
+          Increase(pkFirst, pkRow*pkScroll, pkMaxFirst);
+          pkRow := pkHeight;
+        end else
+          Increase(pkFirst, pkHeight*pkScroll, pkMaxFirst);
+      end else if (pkRow < pkHeight) and pkValidPos(pkRow+1, pkCol) then
+        pkRow := pkHeight
+      else if FlagIsSet(pkSecFlags, pkItemWrap) then begin {!!.01}
+        pkFirst := 1;
+        pkRow := 1;
+        if (pkCol < pkCols) and pkValidPos(pkRow, pkCol+1) then
+          Inc(pkCol)
+        else
+          pkCol := 1;
+      end;
+    end;
+  end;
+
+  procedure LeftSnake(P : PickListPtr);
+    {-Left arrow in upper left corner of snake pick}
+  begin
+    with P^ do begin
+      pkLowerFirstChoice;
+      if FlagIsSet(pkSecFlags, pkItemWrap) and (pkFirst = pkMaxFirst) then begin {!!.01}
+        ShiftRowUp(P);
+        pkFirst := 1;
+      end;
+    end;
+  end;
+
+  procedure RightSnake(P : PickListPtr);
+    {-Right arrow in lower right corner of snake pick}
+  begin
+    with P^ do begin
+      pkRaiseFirstChoice;
+      if FlagIsSet(pkSecFlags, pkItemWrap) and (pkFirst = 1) then begin {!!.01}
+        ShiftRowDown(P);
+        pkFirst := pkMaxFirst;
+      end;
+    end;
+  end;
+
+  procedure DownSnake(P : PickListPtr);
+    {-Down arrow in lower right corner of snake pick}
+  begin
+    with P^ do begin
+      if FlagIsSet(pkSecFlags, pkItemWrap) or (pkFirst < pkMaxFirst) then begin {!!.01}
+        pkRow := 1;
+        if FlagIsSet(pkSecFlags, pkItemWrap) then {!!.01}
+          pkCol := 1;
+      end;
+      pkRaiseFirstChoice;
+    end;
+  end;
+
+  procedure UpSnake(P : PickListPtr);
+    {-Up arrow in upper left corner of snake pick}
+  begin
+    with P^ do begin
+      if FlagIsSet(pkSecFlags, pkItemWrap) or (pkFirst > 1) then begin {!!.01}
+        pkRow := pkHeight;
+        if FlagIsSet(pkSecFlags, pkItemWrap) then {!!.01}
+          pkCol := pkCols;
+      end;
+      pkLowerFirstChoice;
+    end;
+  end;
+
+  procedure PgUpSnake(P : PickListPtr);
+    {-Page up movement for snaking pick}
+  var
+    NotUpperLeft : Boolean;
+  begin
+    with P^ do begin
+      NotUpperLeft := (pkRow > 1) or (pkCol > 1);
+      if FlagIsSet(pkFlags, pkAlterPageRow) and NotUpperLeft then
+        pkSetUpperLeft
+      else if pkFirst > 1 then begin
+        Decrease(pkFirst, pkHeight*pkCols, 1);
+        if FlagIsSet(pkFlags, pkAlterPageRow) then
+          pkSetUpperLeft;
+      end else if not FlagIsSet(pkFlags, pkAlterPageRow) and NotUpperLeft then
+        pkSetUpperLeft
+      else if FlagIsSet(pkSecFlags, pkItemWrap) then begin {!!.01}
+        pkFirst := pkMaxFirst;
+        pkSetLowerRight;
+      end;
+    end;
+  end;
+
+  procedure PgDnSnake(P : PickListPtr);
+    {-Page down movement for snaking pick}
+  var
+    NotLowerRight : Boolean;
+  begin
+    with P^ do begin
+      if pkRow < pkHeight then
+        NotLowerRight := pkValidPos(pkRow+1, pkCol)
+      else if pkCol < pkCols then
+        NotLowerRight := pkValidPos(pkRow, pkCol+1)
+      else
+        NotLowerRight := False;
+
+      if FlagIsSet(pkFlags, pkAlterPageRow) and NotLowerRight then
+        pkSetLowerRight
+      else if pkFirst < pkMaxFirst then begin
+        Increase(pkFirst, pkHeight*pkCols, pkMaxFirst);
+        if FlagIsSet(pkFlags, pkAlterPageRow) then
+          pkSetLowerRight;
+      end else if not FlagIsSet(pkFlags, pkAlterPageRow) and NotLowerRight then
+        pkSetLowerRight
+      else if FlagIsSet(pkSecFlags, pkItemWrap) then begin {!!.01}
+        pkFirst := 1;
+        pkSetUpperLeft;
+      end;
+    end;
+  end;
+
+  function PickList.pkProcessCursorCommand(var Cmd : Word) : Boolean;
+    {-Evaluate keyboard command to return new pick state}
+  begin
+    pkProcessCursorCommand := False;
+    case Cmd of
+      ccNone :                   {Nothing}
+        Exit;
+
+      ccUp :                     {Up}
+        if pkRow > 1 then
+          Dec(pkRow)
+        else if FlagIsSet(pkFlags, pkExitAtEdges) and (pkFirst = 1) then begin
+          Cmd := ccExitAtTop;
+          pkProcessCursorCommand := True;
+        end else if pkCol = 1 then
+          pkPrimMoves[UpLeft](@Self)
+        else if pkCol = pkCols then
+          pkPrimMoves[UpRight](@Self)
+        else
+          pkPrimMoves[UpMiddle](@Self);
+
+      ccDown :                   {Down}
+        if (pkRow < pkHeight) and pkValidPos(pkRow+1, pkCol) then
+          Inc(pkRow)
+        else if FlagIsSet(pkFlags, pkExitAtEdges) and (pkFirst = pkMaxFirst) then begin
+          Cmd := ccExitAtBot;
+          pkProcessCursorCommand := True;
+        end else if pkCol = pkCols then
+          pkPrimMoves[DownRight](@Self)
+        else if pkCol = 1 then
+          pkPrimMoves[DownLeft](@Self)
+        else
+          pkPrimMoves[DownMiddle](@Self);
+
+      ccLeft :                   {Left}
+        if pkCol > 1 then
+          Dec(pkCol)
+        else if FlagIsSet(pkFlags, pkExitAtEdges) and (pkFirst = 1) then begin
+          Cmd := ccExitLeft;
+          pkProcessCursorCommand := True;
+        end else if pkRow = 1 then
+          pkPrimMoves[LeftTop](@Self)
+        else if pkRow = pkHeight then
+          pkPrimMoves[LeftBottom](@Self)
+        else
+          pkPrimMoves[LeftMiddle](@Self);
+
+      ccRight :                  {Right}
+        if (pkCol < pkCols) and pkValidPos(pkRow, pkCol+1) then
+          Inc(pkCol)
+        else if FlagIsSet(pkFlags, pkExitAtEdges) and (pkFirst = pkMaxFirst) then begin
+          Cmd := ccExitRight;
+          pkProcessCursorCommand := True;
+        end else if pkRow = pkHeight then
+          pkPrimMoves[RightBottom](@Self)
+        else if pkRow = 1 then
+          pkPrimMoves[RightTop](@Self)
+        else
+          pkPrimMoves[RightMiddle](@Self);
+
+      ccPageUp :                 {PgUp}
+        pkPrimMoves[PgUp](@Self);
+
+      ccPageDn :                 {PgDn}
+        pkPrimMoves[PgDn](@Self);
+
+      ccHome :                   {Home}
+        begin
+          pkFirst := 1;
+          pkSetUpperLeft;
+        end;
+
+      ccEnd :                    {End}
+        begin
+          pkFirst := pkMaxFirst;
+          pkSetLowerRight;
+        end;
+
+      ccNextXref :   {!!.03}     {Tab, when pick list used in help}
+        if pkChoice < pkItems then
+          pkSetCurrent(pkChoice+1, pkFirst, @Self); {!!.13}
+
+      ccPrevXref :   {!!.03}     {ShiftTab, when pick list used in help}
+        if pkChoice > 1 then
+          pkSetCurrent(pkChoice-1, pkFirst, @Self); {!!.13}
+
+    else             {!!.13}
+      Exit;          {!!.13}
+    end;
+    pkValidateChoiceRowFirst;
+    pkChoice := pkGetCurrent(pkFirst, pkRow, pkCol, @Self);
+  end;
+
+  {---------------------- Vertical Orientation ----------------------}
+
+  function GetVert(First, Row, Col : Word; P : PickListPtr) : Word;
+    {-Get item number given <First, Row, Col>}
+  begin
+    with P^ do
+      GetVert := (Col-1)*pkItemRows+First+(Row-1);
+  end;
+
+  procedure SetVert(Choice, First : Word; P : PickListPtr);
+    {-Set valid <pkFirst, pkRow, pkCol> given Choice and First}
+  var
+    RowBase : Word;
+  begin
+    with P^ do begin
+      pkChoice := Choice;
+      pkFirst := First;
+      pkCommonValidation;
+
+      {Force pkFirst into a valid range}
+      pkFirst := ((pkFirst-1) mod pkItemRows)+1;
+      DoLower(pkFirst, pkItemRows-pkHeight+1);
+
+      {Assure pkFirst is in a range to make pkChoice visible}
+      RowBase := ((pkChoice-1) mod pkItemRows)+1;
+      if pkFirst > RowBase then
+        pkFirst := RowBase
+      else if pkFirst+pkHeight <= RowBase then
+        pkFirst := RowBase-pkHeight+1;
+
+      {Compute the row and column}
+      pkRow := RowBase-pkFirst+1;
+      pkCol := ((pkChoice-RowBase) div pkItemRows)+1;
+    end;
+  end;
+
+  procedure ReinitVertical(P : PickListPtr);
+    {-Reinitialize some fields based on width, height and orientation}
+  begin
+    with P^ do begin
+      {pkMaxFirst controls how much scrolling, if any, is possible}
+      pkMaxFirst := pkItemRows-pkHeight+1;
+      {Amount to change pkFirst by when scrolling}
+      pkScroll := 1;
+      {$IFDEF UseScrollBars}
+      {Set up for scroll bars}
+      ChangeAllScrollBars(1, pkCols, 1, pkItemRows);
+      {$ENDIF}
+    end;
+  end;
+
+  {$IFDEF UseScrollBars}
+  procedure UpdScrollVertical(P : PickListPtr);
+    {-Update scroll bars for vertical orientation}
+  begin
+    with P^ do
+      DrawAllSliders(pkCol, pkFirst+pkRow-1);
+  end;
+
+  procedure SetScrollVertical(FramePos : FramePosType;
+                              MPosX, MPosY : Byte;
+                              UserVal : LongInt; P : PickListPtr);
+    {-Set pick position based on slider position}
+  var
+    nFirst : {Integer} LongInt; {!!.03}
+  begin
+    with P^ do begin
+      case FramePos of
+        frLL, frRR :   {Vertical scroll bar}
+          begin
+            UserVal := TweakSlider(FramePos, MPosY, UserVal, 1);
+            {!!.02} {Following section of code reworked for smoother operation}
+            if (UserVal < pkFirst) or (UserVal >= pkFirst+pkHeight) then begin
+              {Vertical scrolling required}
+              nFirst := UserVal-pkRow+1;
+              if nFirst <= 1 then
+                pkFirst := 1
+              else if nFirst >= pkMaxFirst then
+                pkFirst := pkMaxFirst
+              else
+                pkFirst := nFirst;
+            end;
+            pkRow := UserVal-pkFirst+1;
+            pkValidateChoiceRowFirst;
+          end;
+      else
+        UserVal := TweakSlider(FramePos, MPosX, UserVal, 1);
+        if UserVal < 1 then
+          pkCol := 1
+        else if UserVal > pkCols then
+          pkCol := pkCols
+        else
+          pkCol := UserVal;
+        pkValidateChoiceColFirst;
+      end;
+      pkChoice := pkGetCurrent(pkFirst, pkRow, pkCol, P);
+    end;
+  end;
+  {$ENDIF}
+
+  function ScrolledVertical(pChoice, pFirst : Word; pRow, pCol : Byte;
+                            P : PickListPtr) : Boolean;
+    {-Perform a one-element optimized scroll if possible}
+  begin
+    with P^ do
+      if pFirst+pkScroll = pkFirst then begin
+        pkScrollDown(pChoice, pRow, pCol);
+        ScrolledVertical := True;
+      end else if pkFirst+pkScroll = pFirst then begin
+        pkScrollUp(pChoice, pRow, pCol);
+        ScrolledVertical := True;
+      end else
+        ScrolledVertical := False;
+  end;
+
+  procedure PickVertical(P : PickListPtr);
+    {-Initialize pick for items arranged vertically}
+  begin
+    with P^ do begin
+      pkOrient := pkVertical;
+      pkGetCurrent := GetVert;
+      pkSetCurrent := SetVert;
+      pkReinit := ReinitVertical;
+      {$IFDEF UseScrollBars}
+      pkUpdScrBar := UpdScrollVertical;
+      pkSetScroll := SetScrollVertical;
+      {$ENDIF}
+      pkScrolled := ScrolledVertical;
+
+      pkPrimMoves[UpLeft] := UpShift;
+      pkPrimMoves[UpMiddle] := UpShift;
+      pkPrimMoves[UpRight] := UpShift;
+      pkPrimMoves[DownLeft] := DownShift;
+      pkPrimMoves[DownMiddle] := DownShift;
+      pkPrimMoves[DownRight] := DownShift;
+      pkPrimMoves[LeftTop] := LeftShift;
+      pkPrimMoves[LeftMiddle] := ShiftRowUp;
+      pkPrimMoves[LeftBottom] := ShiftRowUp;
+      pkPrimMoves[RightTop] := ShiftRowDown;
+      pkPrimMoves[RightMiddle] := ShiftRowDown;
+      pkPrimMoves[RightBottom] := RightShift;
+      pkPrimMoves[PgUp] := PgUpNormal;
+      pkPrimMoves[PgDn] := PgDnNormal;
+    end;
+  end;
+
+  {---------------------- Horizontal Orientation ----------------------}
+
+  function GetHoriz(First, Row, Col : Word; P : PickListPtr) : Word;
+    {-Get item number given <First, Row, Col>}
+  begin
+    with P^ do
+      GetHoriz := (Row-1)*pkCols+First+(Col-1);
+  end;
+
+  procedure SetHoriz(Choice, First : Word; P : PickListPtr);
+    {-Set <pkChoice, pkFirst, pkRow, pkCol> given Choice and First}
+  begin
+    with P^ do begin
+      pkChoice := Choice;
+      pkFirst := First;
+      pkCommonValidation;
+
+      {Make pkFirst a valid multiple of pkCols}
+      Dec(pkFirst, (pkFirst-1) mod pkCols);
+
+      {Assure pkFirst is large enough to make pkChoice visible}
+      if pkFirst+pkHeight*pkCols <= pkChoice then
+        pkFirst := pkChoice-((pkChoice-1) mod pkCols);
+
+      {Assure pkFirst is small enough to fill the window with choices}
+      if pkItems > 0 then
+        while ((pkFirst > pkCols) and
+               (pkFirst+pkCols*(pkHeight-1) > pkItems)) do
+          Dec(pkFirst, pkCols);
+
+      {Compute the row and column}
+      pkRow := ((pkChoice-pkFirst) div pkCols)+1;
+      pkCol := ((pkChoice-1) mod pkCols)+1;
+    end;
+  end;
+
+  procedure ReinitHorizontal(P : PickListPtr);
+    {-Reinitialize some fields based on width, height and orientation}
+  begin
+    with P^ do begin
+      {pkMaxFirst controls how much scrolling, if any, is possible}
+      pkMaxFirst := (pkItemRows-pkHeight)*pkCols+1;
+      {Amount to change pkFirst by when scrolling}
+      pkScroll := pkCols;
+      {$IFDEF UseScrollBars}
+      {Set up for scroll bars}
+      ChangeAllScrollBars(1, pkCols, 1, pkMaxFirst+(pkHeight-1)*pkCols);
+      {$ENDIF}
+    end;
+  end;
+
+  {$IFDEF UseScrollBars}
+  procedure UpdScrollHorizontal(P : PickListPtr);
+    {-Update scroll bars for horizontal orientation}
+  begin
+    with P^ do
+      DrawAllSliders(pkCol, pkFirst+(pkRow-1)*pkCols);
+  end;
+
+  procedure SetScrollHorizontal(FramePos : FramePosType;
+                                MPosX, MPosY : Byte;
+                                UserVal : LongInt; P : PickListPtr);
+    {-Set pick position based on slider position}
+  var
+    nFirst : {Integer} LongInt; {!!.03}
+  begin
+    with P^ do begin
+      case FramePos of
+        frLL, frRR :   {Vertical scroll bar}
+          begin
+            UserVal := TweakSlider(FramePos, MPosY, UserVal, 1);
+            {!!.02} {Following section of code reworked for smoother operation}
+            if (UserVal < pkFirst) or (UserVal >= pkFirst+pkHeight*pkCols) then begin
+              {Vertical scrolling required}
+              nFirst := UserVal-pkCols*(pkRow-1);
+              if nFirst <= 1 then
+                pkFirst := 1
+              else if nFirst > pkMaxFirst then
+                pkFirst := pkMaxFirst
+              else begin
+                {Make nFirst a valid multiple of pkCols}
+                Dec(nFirst, (nFirst-1) mod pkCols);
+                if nFirst < 1 then
+                  nFirst := 1;
+                pkFirst := nFirst;
+              end;
+            end;
+            pkRow := ((UserVal-pkFirst) div pkCols)+1;
+            pkValidateChoiceRowFirst;
+          end;
+      else
+        UserVal := TweakSlider(FramePos, MPosX, UserVal, 1);
+        if UserVal < 1 then
+          pkCol := 1
+        else if UserVal > pkCols then
+          pkCol := pkCols
+        else
+          pkCol := UserVal;
+        pkValidateChoiceColFirst;
+      end;
+      pkChoice := pkGetCurrent(pkFirst, pkRow, pkCol, P);
+    end;
+  end;
+  {$ENDIF}
+
+  function ScrolledHorizontal(pChoice, pFirst : Word; pRow, pCol : Byte;
+                              P : PickListPtr) : Boolean;
+    {-Perform a one-element optimized scroll if possible}
+  begin
+    with P^ do
+      if pFirst+pkScroll = pkFirst then begin
+        pkScrollDown(pChoice, pRow, pCol);
+        ScrolledHorizontal := True;
+      end else if pkFirst+pkScroll = pFirst then begin
+        pkScrollUp(pChoice, pRow, pCol);
+        ScrolledHorizontal := True;
+      end else
+        ScrolledHorizontal := False;
+  end;
+
+  procedure PickHorizontal(P : PickListPtr);
+    {-Initialize pick for items arranged horizontally}
+  begin
+    with P^ do begin
+      pkOrient := pkHorizontal;
+      pkGetCurrent := GetHoriz;
+      pkSetCurrent := SetHoriz;
+      pkReinit := ReinitHorizontal;
+      {$IFDEF UseScrollBars}
+      pkUpdScrBar := UpdScrollHorizontal;
+      pkSetScroll := SetScrollHorizontal;
+      {$ENDIF}
+      pkScrolled := ScrolledHorizontal;
+
+      pkPrimMoves[UpLeft] := UpShift;
+      pkPrimMoves[UpMiddle] := UpShift;
+      pkPrimMoves[UpRight] := UpShift;
+      pkPrimMoves[DownLeft] := DownShift;
+      pkPrimMoves[DownMiddle] := DownShift;
+      pkPrimMoves[DownRight] := DownShift;
+      pkPrimMoves[LeftTop] := LeftShift;
+      pkPrimMoves[LeftMiddle] := ShiftRowUp;
+      pkPrimMoves[LeftBottom] := ShiftRowUp;
+      pkPrimMoves[RightTop] := ShiftRowDown;
+      pkPrimMoves[RightMiddle] := ShiftRowDown;
+      pkPrimMoves[RightBottom] := RightShift;
+      pkPrimMoves[PgUp] := PgUpNormal;
+      pkPrimMoves[PgDn] := PgDnNormal;
+    end;
+  end;
+
+  {---------------------- Snaky Orientation ----------------------}
+
+  function GetSnake(First, Row, Col : Word; P : PickListPtr) : Word;
+    {-Return item number given First, Row, Col}
+  begin
+    with P^ do
+      GetSnake := (Col-1)*pkHeight+First+(Row-1);
+  end;
+
+  procedure SetSnake(Choice, First : Word; P : PickListPtr);
+    {-Return valid <FirstChoice, Row, Col> given Choice and FirstChoice}
+  var
+    LeftOver : Word;
+  begin
+    with P^ do begin
+      pkChoice := Choice;
+      pkFirst := First;
+      pkCommonValidation;
+
+      {If needed, set pkFirst so pkChoice shows}
+      if pkFirst+pkHeight*pkCols <= pkChoice then
+        pkFirst := pkChoice-pkHeight*pkCols+1;
+
+      {Assure pkFirst is on a valid boundary}
+      if pkFirst > pkMaxFirst then
+        pkFirst := pkMaxFirst;
+      LeftOver := (pkFirst-1) mod pkHeight;
+      if LeftOver <> 0 then
+        Inc(pkFirst, pkHeight-LeftOver);
+      while (pkFirst > 1) and (pkFirst > pkChoice) do
+        Dec(pkFirst, pkHeight);
+
+      pkRow := ((pkChoice-pkFirst) mod pkHeight)+1;
+      pkCol := ((pkChoice-pkFirst) div pkHeight)+1;
+    end;
+  end;
+
+  procedure ReinitSnake(P : PickListPtr);
+    {-Reinitialize some fields based on width, height and orientation}
+  var
+    LeftOver : Word;
+  begin
+    with P^ do begin
+      {pkMaxFirst controls how much scrolling, if any, is possible}
+      if pkItems <= pkHeight*pkCols then
+        pkMaxFirst := 1
+      else begin
+        pkMaxFirst := pkItems-pkHeight*pkCols+1;
+        LeftOver := pkItems mod pkHeight;
+        if LeftOver <> 0 then
+          Inc(pkMaxFirst, pkHeight-LeftOver);
+      end;
+      {Amount to change pkFirst by when scrolling}
+      pkScroll := pkHeight;
+      {$IFDEF UseScrollBars}
+      {Set up for scroll bars}
+      ChangeAllScrollBars(1, pkMaxFirst+pkHeight*(pkCols-1), 1, pkHeight);
+      {$ENDIF}
+    end;
+  end;
+
+  {$IFDEF UseScrollBars}
+  procedure UpdScrollSnake(P : PickListPtr);
+    {-Update scroll bars for snake orientation}
+  begin
+    with P^ do
+      DrawAllSliders(pkFirst+pkHeight*(pkCol-1), pkRow);
+  end;
+
+  procedure SetScrollSnake(FramePos : FramePosType;
+                           MPosX, MPosY : Byte;
+                           UserVal : LongInt; P : PickListPtr);
+    {-Set pick position based on slider position}
+  var
+    nFirst : {Integer} LongInt; {!!.03}
+    LeftOver : Word; {!!.02}
+  begin
+    with P^ do begin
+      case FramePos of
+        frLL, frRR :   {Vertical scroll bar}
+          begin
+            UserVal := TweakSlider(FramePos, MPosY, UserVal, 1);
+            if UserVal < 1 then
+              pkRow := 1
+            else if UserVal > pkHeight then
+              pkRow := pkHeight
+            else
+              pkRow := UserVal;
+            pkValidateChoiceRowFirst;
+          end;
+      else
+        UserVal := TweakSlider(FramePos, MPosX, UserVal, 1);
+        {!!.02} {Following section of code reworked for smoother operation}
+        if (UserVal < pkFirst) or (UserVal >= pkFirst+pkHeight*pkCols) then begin
+          {Horizontal scrolling required}
+          nFirst := UserVal-pkHeight*(pkCol-1);
+          if nFirst <= 1 then
+            pkFirst := 1
+          else if nFirst > pkMaxFirst then
+            pkFirst := pkMaxFirst
+          else begin
+            {Assure nFirst is on a valid boundary}
+            LeftOver := (nFirst-1) mod pkHeight;
+            if LeftOver <> 0 then
+              Inc(nFirst, pkHeight-LeftOver);
+            if nFirst > pkMaxFirst then
+              nFirst := pkMaxFirst;
+            pkFirst := nFirst;
+          end;
+        end;
+        pkCol := ((UserVal-pkFirst) div pkHeight)+1;
+        pkValidateChoiceColFirst;
+      end;
+      pkChoice := pkGetCurrent(pkFirst, pkRow, pkCol, P);
+    end;
+  end;
+  {$ENDIF}
+
+  function ScrolledSnake(pChoice, pFirst : Word; pRow, pCol : Byte;
+                         P : PickListPtr) : Boolean;
+    {-Perform a one-element optimized scroll if possible}
+  begin
+    with P^ do
+      if pFirst+pkScroll = pkFirst then begin
+        pkScrollRight(pChoice, pRow, pCol);
+        ScrolledSnake := True;
+      end else if pkFirst+pkScroll = pFirst then begin
+        pkScrollLeft(pChoice, pRow, pCol);
+        ScrolledSnake := True;
+      end else
+        ScrolledSnake := False;
+  end;
+
+  procedure PickSnaking(P : PickListPtr);
+    {-Initialize pick for items arranged vertically, snaking}
+  begin
+    with P^ do begin
+      pkOrient := pkSnaking;
+      pkGetCurrent := GetSnake;
+      pkSetCurrent := SetSnake;
+      pkReinit := ReinitSnake;
+      {$IFDEF UseScrollBars}
+      pkUpdScrBar := UpdScrollSnake;
+      pkSetScroll := SetScrollSnake;
+      {$ENDIF}
+      pkScrolled := ScrolledSnake;
+
+      pkPrimMoves[UpLeft] := UpSnake;
+      pkPrimMoves[UpMiddle] := ShiftColumnLeft;
+      pkPrimMoves[UpRight] := ShiftColumnLeft;
+      pkPrimMoves[DownLeft] := ShiftColumnRight;
+      pkPrimMoves[DownMiddle] := ShiftColumnRight;
+      pkPrimMoves[DownRight] := DownSnake;
+      pkPrimMoves[LeftTop] := LeftSnake;
+      pkPrimMoves[LeftMiddle] := LeftSnake;
+      pkPrimMoves[LeftBottom] := LeftSnake;
+      pkPrimMoves[RightTop] := RightSnake;
+      pkPrimMoves[RightMiddle] := RightSnake;
+      pkPrimMoves[RightBottom] := RightSnake;
+      pkPrimMoves[PgUp] := PgUpSnake;
+      pkPrimMoves[PgDn] := PgDnSnake;
+    end;
+  end;
+
+  {---------------------- Common routines --------------------------}
+
+  procedure PickList.pkInitPickSize1;
+    {-Initialize pick parameters based on window size, part 1}
+    {!!.13 modified for dividers}
+  var
+    Wid : Byte;
+  begin
+    if pkReqdWidth > pkWidth then
+      {Clip width as required by window size}
+      pkItemWidth := pkWidth
+    else
+      pkItemWidth := pkReqdWidth;
+
+    {Compute number of columns of items, and number of items in each column}
+    if pkDividers then
+      Wid := pkWidth+1
+    else
+      Wid := pkWidth;
+    pkCols := Wid div pkItemWidth;
+    pkItemRows := (pkItems+pkCols-1) div pkCols;
+
+    {Limit rows as appropriate}
+    DoRaise(pkItemRows, pkMinRows);
+    DoLower(pkItemRows, pkItems);
+    DoRaise(pkItemRows, 1);     {!!.03}
+    if pkHeight > pkMaxRows then
+      pkHeight := pkMaxRows;
+    if pkHeight > pkItemRows then
+      pkHeight := pkItemRows;
+  end;
+
+  procedure PickList.pkInitPickSize2;
+    {-Initialize pick parameters based on window size and video mode, part 2}
+  begin
+    {Set up color pointer}
+    pkColorPtr := @pkColors[UseColor];
+
+    {Should cursor wrap at edges of list?}
+    ClearFlag(pkSecFlags, pkItemWrap); {!!.01}
+    if not FlagIsSet(pkFlags, pkExitAtEdges) then
+      if (pkMaxFirst = 1) or not FlagIsSet(pkFlags, pkStick) then
+        SetFlag(pkSecFlags, pkItemWrap); {!!.01}
+
+    {Set up for specified choice}
+    pkSetCurrent(pkChoice, pkFirst, @Self);
+
+    {Reset More indicator, if any}
+    pkResetMoreRec(pkMoreRec, (pkItemRows > pkHeight));
+  end;
+
+  function PickList.pkScanForMatch(var Item : Word) : Boolean;
+    {-Return true if match found in list, starting at Item}
+  var
+    SItem : Word;
+    SMatch : Boolean;
+    IType : pkItemType;
+    S : String;
+  begin
+    SMatch := False;
+    SItem := Item;
+    repeat
+      if SItem > pkItems then
+        {Wrap at end}
+        SItem := 0
+      else begin
+        {Compare current string}
+        IType := pkNormal;
+        CompleteItemString(SItem, pkSearch, IType, S);
+        if IType = pkProtected then
+          SMatch := False
+        else begin
+          {S := TrimLead(S);}                       {!!.03}
+          S := Copy(S, pkSearchStart, 255);
+          S := StUpcase(S);
+          SMatch := (Pos(pkSearchStr, S) = 1);
+        end;
+      end;
+      if not SMatch then
+        Inc(SItem);
+    until SMatch or (SItem = Item);
+    Item := SItem;
+    pkScanForMatch := SMatch;
+  end;
+
+  procedure PickList.pkResetSearchStr;
+    {-Set search string to empty and update screen}
+  begin
+    pkSearchStr := '';
+    {Update status header}
+    if rwValidMainHeader(pkSearchHdr) then      {!!.01}
+    begin                                       {!!.30}
+      ChangeHeader(pkSearchHdr, pkSearchStr);   {!!.30}
+      UpdateContents;                           {!!.30}
+    end;                                        {!!.30}
+  end;
+
+  procedure PickList.pkUpdateSearch;
+    {-Update the search string display if activated}
+  begin
+    if rwValidMainHeader(pkSearchHdr) then {!!.01}
+      ChangeHeader(pkSearchHdr, Copy(pkSearchStr, 1, pkSearchLen));
+  end;
+
+  function PickNoSearch(P : PickListPtr) : Boolean;
+    {-No searching mode}
+  begin
+    PickNoSearch := False; {Can't exit pick by searching in this mode}
+  end;
+
+  function PickStringSearch(P : PickListPtr) : Boolean;
+    {-String searching mode}
+  var
+    Ch : Char;
+    SItem : Word;
+  begin
+    with P^ do begin
+      PickStringSearch := False; {Can't exit pick by searching in this mode}
+      Ch := Upcase(Char(cwKey));
+      if Ch >= #32 then
+        if Length(pkSearchStr) < pkMaxSearchLen then begin
+          inc(pkSearchStr[0]);
+          pkSearchStr[Length(pkSearchStr)] := Ch;
+          {Update status header}
+          pkUpdateSearch;
+          SItem := pkChoice;
+          if pkScanForMatch(SItem) then begin
+            {Set current choice to the match}
+            pkSetCurrent(SItem, pkFirst, P);
+            Exit;
+          end;
+        end;
+      {Clear previous match, if any}
+      pkResetSearchStr;
+    end;
+  end;
+
+  function PickAltStringSearch(P : PickListPtr) : Boolean;
+    {-Alternate string searching mode}
+  var
+    Ch : Char;
+    SItem : Word;
+  begin
+    PickAltStringSearch := False; {Can't exit pick by searching in this mode}
+    with P^ do begin
+      Ch := Upcase(Char(cwKey));
+      if Ch >= #32 then
+        if Length(pkSearchStr) < pkMaxSearchLen then begin
+          inc(pkSearchStr[0]);
+          pkSearchStr[Length(pkSearchStr)] := Ch;
+          {Update status header}
+          pkUpdateSearch;
+          SItem := pkChoice;
+          if pkScanForMatch(SItem) then begin
+            {Set current choice to the match}
+            pkSetCurrent(SItem, pkFirst, P);
+            Exit;
+          end else if Length(pkSearchStr) > 1 then begin
+            {Try a new search string with the last character entered}
+            pkSearchStr := pkSearchStr[Length(pkSearchStr)];
+            {Update status header}
+            pkUpdateSearch;
+            SItem := pkChoice+1;
+            if pkScanForMatch(SItem) then begin
+              {Set current choice to the match}
+              pkSetCurrent(SItem, pkFirst, P);
+              Exit;
+            end;
+          end;
+        end;
+      {Clear previous match, if any}
+      pkResetSearchStr;
+    end;
+  end;
+
+  function PickCharSearch(P : PickListPtr) : Boolean;
+    {-Character searching mode}
+  var
+    Ch : Char;
+    SItem : Word;
+  begin
+    with P^ do begin
+      Ch := Upcase(Char(cwKey));
+      if Ch >= #32 then begin
+        pkSearchStr := Ch;
+        SItem := pkChoice+1;
+        if pkScanForMatch(SItem) then
+          {Set current choice to the match}
+          pkSetCurrent(SItem, pkFirst, P);
+      end;
+    end;
+    PickCharSearch := False; {Can't exit pick by searching in this mode}
+  end;
+
+  function PickCharExit(P : PickListPtr) : Boolean;
+    {-Character searching with exit on match}
+  var
+    pFirst : Word;
+    pChoice : Word;
+    pRow : Byte;
+    pCol : Byte;
+    SItem : Word;
+    Ch : Char;
+  begin
+    PickCharExit := False;
+    with P^ do begin
+      Ch := Upcase(Char(cwKey));
+      if Ch >= #32 then begin
+        pkSearchStr := Ch;
+        SItem := pkChoice;
+        if pkScanForMatch(SItem) then begin
+          {Set current choice to the match}
+          pFirst := pkFirst;
+          pChoice := pkChoice;
+          pRow := pkRow;
+          pCol := pkCol;
+          pkSetCurrent(SItem, pkFirst, P);
+          {Update item display before exiting}
+          pkUpdatePick(pFirst, pChoice, pRow, pCol);
+          {Make last command look like selection}
+          cwCmd := ccSelect;
+          {Force exit from Pick}
+          PickCharExit := True;
+        end;
+      end;
+    end;
+  end;
+
+  function PickAnyCharExit(P : PickListPtr) : Boolean;
+    {-Exit on any alpha character. No highlight repositioning}
+  begin
+    with P^ do
+      if Char(cwKey) >= #32 then
+        PickAnyCharExit := True
+      else
+        PickAnyCharExit := False;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor PickList.Load00(var S : IdStream);
+    {-Load a list from a stream - version 00}
+  var
+    Status : Word;
+  begin
+    {Initialize some fields so Done can be called safely}
+    pkFlags := DefPickOptions;
+    pkSecFlags := DefSecPickOptions; {!!.01}
+    pkClearMoreRec(pkMoreRec);
+
+    {Load the underlying command window}
+    if not CommandWindow.Load(S) then
+      Fail;
+
+    {set the command processor if necessary}
+    if cwCmdPtr = nil then
+      SetCommandProcessor(PickCommands);
+
+    {Read data specific to the pick list}
+    S.ReadRange(pkXL, pkMoreRec);
+
+    {Read the more record}
+    Status := pkLoadMoreRec(pkMoreRec, wFrame, S);
+    if Status <> 0 then begin
+      Done;
+      InitStatus := Status;
+      Fail;
+    end;
+
+    {Read the multi-select data}
+    S.ReadRange(pkLeftSel, pkBlkStart);
+    pkBlkStart := 0;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    if FlagIsSet(pkFlags, pkBitSetAlloc) then begin
+      S.Get(pkSelectSet);
+      if S.PeekStatus <> 0 then begin
+        Done;
+        Fail;
+      end;
+    end;
+
+    {Get orientation routine}
+    @pkOrientInit := S.ReadPointer;
+    if @pkOrientInit = nil then begin
+      {No orientation was registered with the stream}
+      Done;
+      InitStatus := epFatal+ecBadPickOrient;
+      Fail;
+    end;
+    pkOrientInit(@Self);
+    if pkOrient = pkNoOrient then begin
+      Done;
+      InitStatus := epFatal+ecBadPickOrient;
+      Fail;
+    end;
+
+    {Get the user-provided routines}
+    @pkString := S.ReadUserPointer(@NoPickString);
+    @pkMove := S.ReadUserPointer(@NoMoveAction);
+    @pkSearcher := S.ReadUserPointer(@PickNoSearch);
+    @pkCommandInit := S.ReadPointer;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+    if @pkCommandInit = nil then begin
+      {No commmand handler (single vs. multi) was registered with the stream}
+      Done;
+      InitStatus := epFatal+ecBadPickHandler;
+      Fail;
+    end;
+    pkCommandInit(@Self);
+
+    {Compute secondary flags}
+    pkSetItemCount(pkItems);                 {!!.03}
+    SetSelectMarker(pkLeftSel, pkRightSel);  {!!.03}
+    SetPadSize(pkLeftPad, pkRightPad);       {!!.03}
+    pkDividers := False;                     {!!.13}
+  end;
+
+  constructor PickList.Load(var S : IdStream);
+    {-Load a list from a stream} {!!.13 modified for dividers}
+  begin
+    if not PickList.Load00(S) then
+      Fail;
+    S.ReadRange(pkDividers, pkSecFlags);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure PickList.Store(var S : IdStream);
+    {-Store a list in a stream}
+  begin
+    {Store the underlying command window}
+    CommandWindow.Store(S);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Assure we can reconstruct pkFakingOneItem flag}  {!!.03}
+    if FlagIsSet(pkSecFlags, pkFakingOneItem) then    {!!.03}
+      pkItems := 0;                                   {!!.03}
+
+    {Write data specific to the pick list}
+    S.WriteRange(pkXL, pkMoreRec);
+    pkStoreMoreRec(pkMoreRec, S);
+    S.WriteRange(pkLeftSel, pkBlkStart);
+    if FlagIsSet(pkFlags, pkBitSetAlloc) then
+      S.Put(pkSelectSet);
+    {S.WriteRange(pkDividers, pkSecFlags);} {!!.13} {!!.20}
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Write a pointer to the desired orientation initialization routine}
+    S.WriteUserPointer(@pkOrientInit, ptNil);
+
+    {Write the user-provided routines}
+    S.WriteUserPointer(@pkString, ptNoPickString);
+    S.WriteUserPointer(@pkMove, ptPickNoMoveAction);
+    S.WriteUserPointer(@pkSearcher, ptPickNoSearch);
+    S.WriteUserPointer(@pkCommandInit, ptNil);
+
+    S.WriteRange(pkDividers, pkSecFlags); {!!.20}
+  end;
+
+  procedure PickListStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing pick lists}
+  begin
+    with SPtr^ do begin
+      CommandWindowStream(SPtr);
+      BitSetStream(SPtr);
+      RegisterType(otPickList, vePickList, TypeOf(PickList),
+                   @PickList.Store, @PickList.Load);
+      RegisterOldVersion(otPickList, 00, TypeOf(PickList),    {!!.13}
+                         @PickList.Load00);                   {!!.13}
+
+      RegisterPointer(ptNoPickString, @NoPickString);
+      RegisterPointer(ptPickNoMoveAction, @NoMoveAction);
+      RegisterPointer(ptPickNoSearch, @PickNoSearch);
+      RegisterPointer(ptPickCommands, @PickCommands);
+    end;
+  end;
+
+{$ENDIF}
+
+  constructor PickList.Init(X1, Y1, X2, Y2 : Byte;
+                            ItemWidth : Byte;
+                            NumItems : Word;
+                            StringProc : pkStringProc;
+                            Orientation : pkGenlProc;
+                            CommandHandler : pkGenlProc);
+    {-Initialize a pick window}
+  begin
+    if not PickList.InitDeluxe(X1, Y1, X2, Y2,
+                               DefaultColorSet, DefWindowOptions,
+                               ItemWidth, NumItems,
+                               StringProc, Orientation,
+                               CommandHandler, DefPickOptions) then
+      Fail;
+  end;
+
+  constructor PickList.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                  var Colors : ColorSet;
+                                  Options : LongInt;
+                                  ItemWidth : Byte;
+                                  NumItems : Word;
+                                  StringProc : pkStringProc;
+                                  Orientation : pkGenlProc;
+                                  CommandHandler : pkGenlProc);
+    {-Initialize a pick window with custom window options}
+  begin
+    if not PickList.InitDeluxe(X1, Y1, X2, Y2,
+                               Colors, Options,
+                               ItemWidth, NumItems,
+                               StringProc, Orientation,
+                               CommandHandler, DefPickOptions) then
+      Fail;
+  end;
+
+  procedure PickList.pkSetItemCount(NumItems : Word); {!!.03}
+    {-Set flags if needed to fake an item}
+  begin
+    if not FlagIsSet(pkFlags, pkProcessZero) then
+      pkItems := NumItems
+    else if NumItems = 0 then begin
+      {Fake having one item}
+      pkItems := 1;
+      SetFlag(pkSecFlags, pkFakingOneItem);
+    end else begin
+      pkItems := NumItems;
+      ClearFlag(pkSecFlags, pkFakingOneItem);
+    end;
+  end;
+
+  constructor PickList.InitDeluxe(X1, Y1, X2, Y2 : Byte;
+                                  var Colors : ColorSet;
+                                  Options : LongInt;
+                                  ItemWidth : Byte;
+                                  NumItems : Word;
+                                  StringProc : pkStringProc;
+                                  Orientation : pkGenlProc;
+                                  CommandHandler : pkGenlProc;
+                                  PickOptions : Word);
+    {-Initialize a pick window with custom window and pick options}
+  begin
+    {Initialize fields of instance}
+    pkXL := X1;
+    pkYL := Y1;
+    pkXH := X2;
+    pkYH := Y2;
+    pkFlags := PickOptions;
+    pkSecFlags := DefSecPickOptions; {!!.01}
+    pkLeftPad := 0;
+    pkRightPad := 0;
+    pkReqdWidth := ItemWidth;
+    pkItemWidth := ItemWidth;
+    pkSetItemCount(NumItems); {!!.03}
+
+    pkMinRows := 1;
+    pkMaxRows := $FFFF;
+    pkOrient := pkNoOrient;
+    pkSearchStr := '';
+    pkSearchStart := 1;
+    pkSearchHdr := 255;
+    pkChoice := 1;
+    pkInitChoice := 1;
+    pkFirst := 1;
+    pkRow := 1;
+    pkCol := 1;
+    pkString := StringProc;
+    pkCommandInit := CommandHandler;
+    CommandHandler(@Self);
+    pkMove := NoMoveAction;
+    pkSearcher := PickNoSearch;
+    pkClearMoreRec(pkMoreRec);
+    pkLeftSel := '';
+    pkRightSel := '';
+    pkBlkStart := 0;
+    pkDividers := False;   {!!.13}
+
+    {Set the colors - no flex support by default}
+    with Colors do begin
+      pkSetPickAttr(pkNormal, False, TextColor, TextMono);
+      pkSetPickAttr(pkNormal, True, SelItemColor, SelItemMono);
+      pkSetPickAttr(pkAlternate, False, AltItemColor, AltItemMono);
+      pkSetPickAttr(pkAlternate, True, AltSelItemColor, AltSelItemMono);
+      pkSetPickAttr(pkProtected, False, ProItemColor, ProItemMono);
+      pkSetPickAttr(pkProtected, True, ProItemColor, ProItemMono); {Not used}
+      pkSetPickAttr(pkSemiProtected, False, AltItemColor, AltItemMono);
+      pkSetPickAttr(pkSemiProtected, True, AltSelItemColor, AltSelItemMono);
+    end;
+
+    {Compute width and height of pick window}
+    pkWidth := X2-X1+1;
+    pkHeight := Y2-Y1+1;
+
+    {Compute size-relative fields in pick list}
+    pkInitPickSize1;
+
+    if FlagIsSet(pkFlags, pkMinHeight) then
+      if Y2-Y1+1 > pkHeight then
+        Y2 := Y1+pkHeight-1;
+
+    {Force wUserContents on}
+    SetLongFlag(Options, wUserContents);
+
+    {Initialize the window}
+    if not CommandWindow.InitCustom(X1, Y1, X2, Y2, Colors, Options,
+                                    PickCommands, ucPick) then
+      Fail;
+
+    {Initialize for selected orientation}
+    pkOrientInit := Orientation;
+    Orientation(@Self);
+    {Make sure it did something}
+    if pkOrient = pkNoOrient then begin
+      Done;
+      InitStatus := epFatal+ecBadPickOrient;
+      Fail;
+    end;
+
+    {Default to hidden cursor}
+    SetCursor(cuHidden);
+  end;
+
+  constructor PickList.InitAbstract(X1, Y1, X2, Y2 : Byte;
+                                   var Colors : ColorSet;
+                                   Options : LongInt;
+                                   ItemWidth : Byte;
+                                   NumItems : Word;
+                                   Orientation : pkGenlProc;
+                                   CommandHandler : pkGenlProc);
+     {-Constructor to be called by types derived from PickList
+       which override the StringProc methods}
+  begin
+    if not PickList.InitDeluxe(X1, Y1, X2, Y2,
+                               Colors, Options,
+                               ItemWidth, NumItems,
+                               NoPickString, Orientation,
+                               CommandHandler, DefPickOptions) then
+      Fail;
+  end;
+
+  constructor PickList.InitAbstractDeluxe(X1, Y1, X2, Y2 : Byte;
+                                          var Colors : ColorSet;
+                                          Options : LongInt;
+                                          ItemWidth : Byte;
+                                          NumItems : Word;
+                                          Orientation : pkGenlProc;
+                                          CommandHandler : pkGenlProc;
+                                          PickOptions : Word);
+     {-Constructor to be called by types derived from PickList
+       that override the StringProc method, with custom pick options}
+  begin
+    if not PickList.InitDeluxe(X1, Y1, X2, Y2,
+                               Colors, Options,
+                               ItemWidth, NumItems,
+                               NoPickString, Orientation,
+                               CommandHandler, PickOptions) then
+      Fail;
+  end;
+

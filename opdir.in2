@@ -1,0 +1,1260 @@
+{*********************************************************}
+{*                    OPDIR.IN2 1.30                     *}
+{*     Copyright (c) TurboPower Software 1987, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+{*   Compatibility with Virtual Pascal for OS/2 v1.0:    *}
+{*             Copyright (c) fPrint UK Ltd 1995          *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {--------------- general methods -----------------}
+
+  constructor DirList.Init(X1, Y1, X2, Y2 : Byte;
+                           HeapToUse : LongInt; {!!.01}
+                           PickOrientation : pkGenlProc;
+                           CommandInit : diInitCommandProc);
+    {-Initialize a directory list}
+  begin
+    if not DirList.InitCustom(X1, Y1, X2, Y2, DefaultColorSet,
+                              DefWindowOptions, HeapToUse,
+                              PickOrientation, CommandInit) then
+      Fail;
+  end;
+
+  constructor DirList.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                 var Colors : ColorSet;
+                                 Options : LongInt;
+                                 HeapToUse : LongInt; {!!.01}
+                                 PickOrientation : pkGenlProc;
+                                 CommandInit : diInitCommandProc);
+    {-Initialize a directory list with custom window options}
+  var
+    StringProc : pkStringProc;
+    CommandInitProc : pkGenlProc;
+  begin
+    {Initialize fields of instance}
+    diFlags := DefDirOptions;
+    diDPtr := nil;
+    diSPtr := nil;
+    if HeaptoUse > $FFF1 then
+      HeapToUse := $FFF1;
+    diHeapToUse := HeapToUse;
+    diMinFiles := 10;
+    diCurFiles := 0;
+    diCurItem := 0;
+    diFileAttr := 0;
+    pkLeftPad := 1;
+    pkRightPad := 1;
+    diHdrPadSize := 0;
+    diMaxHdrLen := 0;
+    diMaskHdr := 255;
+    diRejectCnt := 0;
+    diCurDir := '';
+    diMask := '';
+    diSkip := [];
+    diLeftDrive := '[';
+    diRightDrive := ':]';
+    diDirCat := pkAlternate; {!!.03}
+
+    {Set up for single or multiple file selection}
+    CommandInit(@Self, StringProc, CommandInitProc);
+
+    {No sorting or reject filters by default}
+    diSort := SortNone;
+    diReject := RejectNone;
+
+    {Initial item width and number estimates}
+    diMaxFmatLen := 13;
+    diItemWidth := diMaxFmatLen+pkLeftPad+pkRightPad;
+    diMaxFiles := FileCapacity; {Just an estimate at this point}
+
+    {Initialize pick list and window}
+    {Note: number of items and item width are estimates at this point}
+    if not PickList.InitCustom(X1, Y1, X2, Y2, Colors, Options,
+                               diItemWidth, diMaxFiles, StringProc,
+                               PickOrientation, CommandInitProc) then
+      Fail;
+
+    {Change unit code}
+    cwUnitCode := ucDir;
+
+    {Downward adjust heap space to use}
+    if diHeapToUse > MaxAvail then  {!!.01}
+      diHeapToUse := MaxAvail;      {!!.01}
+
+    {Allocate heap space for file list}
+    if (diHeapToUse = 0) or not GetMemCheck(diDPtr, diHeapToUse) then begin {!!.01}
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+
+    if FlagIsSet(pkFlags, pkMultiChoice) then begin
+      {Allocate bitset: enough bits to manage the absolute
+       maximum number of files, no matter what the format is.}
+      ClearErrors; {!!.01}
+      AllocateSelectSet(diHeapToUse div (SizeOf(DirRec)+2));
+      if RawError <> 0 then begin {!!.01}
+        Done;
+        InitStatus := epFatal+ecOutOfMemory;
+        Fail;
+      end;
+    end;
+
+    {Test for adequate capacity, assuming NameFormat (diMaxFmatLen=13)} {!!.12}
+    if FileCapacity < diMinFiles then begin                             {!!.12}
+      Done;                                                             {!!.12}
+      InitStatus := epFatal+ecOutOfMemory;                              {!!.12}
+      Fail;                                                             {!!.12}
+    end;                                                                {!!.12}
+
+    {Use name format by default}
+    SetNameFormat;
+
+    {Note that we must read the file directory first time}
+    ResetList;
+  end;
+
+  destructor DirList.Done;
+    {-Dispose of directory list}
+  begin
+    FreeMemCheck(diDPtr, diHeapToUse);
+    if diRejectCnt > 0 then
+      diRejectSet.Done;
+    PickList.Done;
+  end;
+
+  function DirList.FileCapacity : Word;
+    {-Compute the maximum number of files that can be stored in diHeapToUse}
+  var
+    Max : Word;
+  begin
+    Max := diHeapToUse div (SizeOf(DirRec)+
+                            SizeOf(DispRec)-SizeOf(String)+diMaxFmatLen+1);
+    if Max > 0 then
+      {Reduce by one for roundoff problems in partitioning the heap pool}
+      dec(Max);
+    FileCapacity := Max;
+  end;
+
+  procedure DirList.diPartitionHeapSpace;
+    {-Partition the heap block between directory records and formatted strings}
+  begin
+    diMaxFiles := FileCapacity;
+    if diMaxFiles < diMinFiles then begin
+      GotError(epFatal+ecBadParam, emNullError);
+      Exit;
+    end;
+{$IFDEF VIRTUALPASCAL}
+    diSPtr := Ptr( Word(diDPtr)+diMaxFiles*SizeOf(DirRec));
+{$ELSE}
+  {$IFDEF Dpmi}                                                           {!!.20}
+    diSPtr := Ptr(OS(diDPtr).S, OS(diDPtr).O+diMaxFiles*SizeOf(DirRec));{!!.20}
+  {$ELSE}                                                                 {!!.20}
+    diSPtr := Normalized(Ptr(OS(diDPtr).S,
+                             OS(diDPtr).O+diMaxFiles*SizeOf(DirRec)));
+  {$ENDIF}                                                                {!!.20}
+{$ENDIF}
+  end;
+
+  procedure DirList.AddMaskHeader(FullPath : Boolean;
+                                  PadSize : Byte;
+                                  MaxLen : Byte;
+                                  Posn : HeaderPosType);
+    {-Add a header to display the search mask}
+  var
+    Len : Integer;
+    HPtr : HeaderPtr;
+  begin
+    {Dispose of previous mask header, if any}
+    if diMaskHdr <> 255 then begin
+      {Just disable previous header so other header numbers aren't disturbed}
+      wFrame.DisableHeader(diMaskHdr, True);
+      diMaskHdr := 255;
+    end;
+    if FullPath then
+      SetFlag(diFlags, diFullPathHdr)
+    else
+      ClearFlag(diFlags, diFullPathHdr);
+    diHdrPadSize := PadSize;
+    Len := Integer(MaxLen)-2*PadSize;
+    if Len < 6 then
+      Len := 6;
+    diMaxHdrLen := Len;
+    with wFrame do begin
+      AddHeader('', Posn);
+      if frRes <> 0 then
+        Exit;
+      diMaskHdr := GetLastHeaderIndex;
+    end;
+  end;
+
+  procedure DirList.SetMask(Mask : String; FileAttr : Byte);
+    {-Set search mask and attribute}
+  begin
+    diMask := StUpcase(Mask);
+    diFileAttr := FileAttr;
+    {Must re-read DOS directory next time}
+    ResetList;
+  end;
+
+  procedure DirList.ResetList;
+    {-Force complete update of directory when it may have changed}
+  begin
+    SetFlag(diFlags, diReadDir+diResize+diReposition+
+                     diResort+diReformat+diUpdateHdr);
+  end;
+
+  procedure DirList.diReformatAll;
+    {-Rebuild the formatted string array}
+  var
+    I : Word;
+  begin
+    for I := 1 to diCurFiles do
+      FormatMultiFile(I);
+  end;
+
+  procedure DirList.diUpdateMaskHdr;
+    {-Update and redraw the search mask header}
+  var
+    MaxLen : Integer;
+    S : String;
+    P : String;
+  begin
+    {Update searchmask header}
+    if rwValidMainHeader(diMaskHdr) then begin {!!.01}
+      if FlagIsSet(diFlags, diFullPathHdr) then
+        S := diMask
+      else
+        S := JustFileName(diMask);
+      if Length(S) > diMaxHdrLen then
+        {Remove portions of header}
+        S := S[1]+S[2]+'...'+copy(S, Length(S)-diMaxHdrLen+6, diMaxHdrLen-5);
+      if diHdrPadSize <> 0 then begin
+        P := CharStr(' ', diHdrPadSize);
+        S := P+S+P;
+      end;
+
+      ChangeHeader(diMaskHdr, S);
+
+    end;
+    {!!.12} {Moved from above}
+    {Set a flag so a user move routine can know it has a new header}
+    SetFlag(diFlags, diUserNewHdr);
+  end;
+
+  procedure DirList.diSetupMasks;
+    {-Set up masks for file searching}
+  var
+    Mask : FileStr;
+  begin
+    if Length(diMask) = 0 then
+      diMask := '*.*'
+     {!!.01 vvvvvvvvvvvvvvvvvvvvvvvvvvvv}
+    else if not HasWildCards(diMask) and IsDirectory(diMask) then
+      diMask := AddBackslash(diMask);
+    diCurDir := CompletePath(JustPathName(diMask));
+    Mask := JustFileName(diMask);
+    if Length(Mask) = 0 then
+      Mask := '*.*';
+    diMask := diCurDir+Mask;
+  end;
+
+  procedure DirList.diSelectDir(Name : FileStr);
+    {-Select a new directory}
+  begin
+    diCurDir := CompletePath(diCurDir+StUpcase(Name)); {!!.11}
+    diMask := diCurDir+JustFileName(diMask);
+    ResetList;
+    pkResetSearchStr; {!!.10}
+  end;
+
+  procedure DirList.diSelectDrive(Name : FileStr);
+    {-Select a new drive}
+  begin
+    diCurDir := CompletePath(Name+':');
+    diMask := diCurDir+JustFileName(diMask);
+    ResetList;
+  end;
+
+  function DirList.diAddDRec(Rejectable : Boolean;
+                             var DRec : DirRec) : Boolean; {!!.01}
+    {-Add a directory record to the list. Report error and return false if full}
+  begin
+    diAddDRec := True;
+    {See if file is acceptable}
+    if not Rejectable or not Reject(DRec) then        {!!.01}
+      if diCurFiles < diMaxFiles then begin
+        {Store directory entry}
+        inc(diCurFiles);
+        diDPtr^[diCurFiles] := DRec;
+      end else begin
+        {Let caller know that there were more files than would fit}
+        GotError(epWarning+ecDirTooBig, emDirTooBig); {!!.01}
+        diAddDRec := False;
+      end;
+  end;
+
+  procedure DirList.diFindPrim(SearchString : PathStr; FileAttr : Byte);
+    {-Find one group of files - directories or non-directories}
+  var
+    ForceUpcase : Boolean;
+    SRec : SearchRec;
+    DRec : DirRec;
+  begin
+    {Find files}
+    FindFirst(SearchString, FileAttr, SRec);
+
+    while DosError = 0 do begin
+      {Accept only directories or non-directories}
+      if (SRec.Attr and Directory) = (FileAttr and Directory) then begin
+        {Transfer to a DirRec}
+        move(SRec.Attr, DRec, SizeOf(DirRec));
+        if ByteFlagIsSet(DRec.Attr, Directory) then
+          ForceUpcase := FlagIsSet(diFlags, diDirsUpcase)
+        else
+          ForceUpcase := FlagIsSet(diFlags, diFilesUpcase);
+        if ForceUpcase then
+          DRec.Name := StUpcase(DRec.Name)
+        else
+          DRec.Name := StLocase(DRec.Name);
+        if not diAddDRec(True, DRec) then {!!.01}
+          Exit;                           {!!.01}
+      end;
+      FindNext(SRec);
+    end;
+  end;
+
+  procedure DirList.diAddDrives;
+    {-Add valid drives to the file list}
+  var
+    DriveLet : Char;
+    DRec : DirRec;     {!!.01}
+  begin
+    with DRec do begin {!!.01}
+      Attr := diDriveAttr;
+      Time := 0;
+      Size := 0;
+    end;
+    for DriveLet := diFirstDrive to diLastDrive do
+      if DriveLet <> diCurDir[1] then
+        {Not the current drive}
+        if not(DriveLet in diSkip) then
+          {Not specifically excluded}
+          if ValidDrive(DriveLet) then begin
+            {A valid drive according to DOS}
+            DRec.Name := DriveLet;             {!!.01}
+            if not diAddDRec(False, DRec) then {!!.01}
+              Exit;                            {!!.01}
+          end;
+  end;
+
+  procedure DirList.diAddParent; {!!.01}
+    {-Artificially insert a '..' entry if none is found (to fix NetWare)}
+  var
+    I : Word;
+    DRec : DirRec;
+  begin
+    if Length(diCurDir) > 3 then begin
+      {Not in the root directory}
+      for I := 1 to diCurFiles do
+        if diDPtr^[I].Name = '..' then
+          Exit;
+      {Didn't find '..'}
+      with DRec do begin
+        Attr := Directory;
+        Time := 0;
+        Size := 0;
+        Name := '..';
+      end;
+      if not diAddDRec(True, DRec) then
+        Exit;
+    end;
+  end;
+
+  procedure DirList.diFindFiles;
+    {-Find files and add to dir array}
+  begin
+    {No files stored as yet}
+    diCurFiles := 0;
+
+    {Don't repeat the following work until required}
+    ClearFlag(diFlags, diReadDir);                     {!!.01}
+
+    {Get drives}
+    if FlagIsSet(diFlags, diShowDrives) then
+      diAddDrives;
+
+    {Get subdirectory entries}
+    if ByteFlagIsSet(diFileAttr, Directory) then begin {!!.01}
+      diFindPrim(diCurDir+'*.*', diFileAttr);
+      {Automatically add '..' directory when required} {!!.01}
+      diAddParent;                                     {!!.01}
+    end;                                               {!!.01}
+
+    {Get file entries}
+    diFindPrim(diMask, diFileAttr and not Directory);
+  end;
+
+  function DirList.diMatchingFileCnt(var FirstFile : Word) : Word;
+    {-Return 0, 1, or 2 matching files (non-directory) and first one}
+  var
+    I : Word;
+    Cnt : Word;
+  begin
+    Cnt := 0;
+    for I := 1 to diCurFiles do
+      with diDPtr^[I] do
+        if not ByteFlagIsSet(Attr, Directory+VolumeID) then begin
+          {Not a directory or volume ID}
+          inc(Cnt);
+          if Cnt = 1 then
+            FirstFile := I
+          else begin
+            diMatchingFileCnt := Cnt;
+            Exit;
+          end;
+        end;
+    diMatchingFileCnt := Cnt;
+  end;
+
+  procedure DirList.diSetChoiceFirstFile;
+    {-Set the initial pick choice to the first non-directory}
+  var
+    I : Word;
+  begin
+    for I := 1 to diCurFiles do
+      with diDPtr^[I] do
+        if not ByteFlagIsSet(Attr, Directory+VolumeID) then begin
+          {Not a directory or volume ID}
+          SetInitialChoice(I);
+          Exit;
+        end;
+    {No non-directories found}
+    SetChoice(1, 1);
+  end;
+
+  procedure DirList.UpdateContents;
+    {-Redraw the complete pick window}
+  begin
+    if (diCurFiles = 0) or (diDPtr = nil)  then begin
+      if pkOptionsAreOn(pkProcessZero) then {!!.03}
+        PickList.UpdateContents             {!!.03}
+      else begin                            {!!.03}
+        Clear;
+        {Update child windows if any}       {!!.01}
+        StackWindow.UpdateContents;         {!!.01}
+      end;                                  {!!.03}
+    end else if not FlagIsSet(diFlags, diUpdating) then begin
+      SetFlag(diFlags, diUpdating);
+      {Update the directory list}
+      diUpdateDirList(True);
+      if RawError = 0 then begin {!!.01}  {!!.14}
+        PickList.UpdateContents;
+        if diCurFiles > 0 then            {!!.14}
+          diCurItem := pkChoice;          {!!.14}
+      end;                                {!!.14}
+      ClearFlag(diFlags, diUpdating);
+    end;
+  end;
+
+  procedure DirList.SortList;
+    {-Sort the list of directory entries}
+  begin
+    diSort(@Self);
+  end;
+
+  function DirList.Reject(var X : DirRec) : Boolean;
+    {-Return True to exclude a particular entry from pick}
+  begin
+    {Call via the procedure pointer}
+    Reject := diReject(X, @Self);
+  end;
+
+  procedure DirList.Format(var X : DirRec; var pkCat : Byte; var S : String);
+    {-Return a formatted string and category for a directory entry}
+  begin
+    {Call via the procedure pointer}
+    diFormat(X, pkCat, S, @Self);
+  end;
+
+  procedure DirList.diUpdateFormatting(ReportError : Boolean);
+    {-Sort, reformat, resize, and reposition files as needed}
+  begin
+    {Assure the pick list knows the current item width}
+    diSetItemWidth;
+
+    {!!.20 moved up from the bottom of this method}
+    {Update header mask if needed}
+    if FlagIsSet(diFlags, diUpdateHdr) then begin
+      ClearFlag(diFlags, diUpdateHdr);
+      diUpdateMaskHdr;
+    end;
+
+    {Don't try the rest if no files}
+    if diCurFiles = 0 then
+      Exit;
+
+    if diCurFiles > diMaxFiles then begin
+      if ReportError then
+        GotError(epWarning+ecDirTooBig, emDirTooBig);
+      diCurFiles := diMaxFiles;
+      {Reinit pick window for the actual number of files}
+      ChangeNumItems(diCurFiles);
+    end;
+
+    {Sort files if needed}
+    if FlagIsSet(diFlags, diResort) then begin
+      ClearFlag(diFlags, diResort);
+      SortList;
+      SetFlag(diFlags, diReposition+diReformat);
+    end;
+
+    {Reformat files if needed}
+    if FlagIsSet(diFlags, diReformat) then begin
+      ClearFlag(diFlags, diReformat);
+      diReformatAll;
+    end;
+
+    {Reposition highlight bar if needed}
+    if FlagIsSet(diFlags, diReposition) then begin
+      ClearFlag(diFlags, diReposition);
+      if FlagIsSet(diFlags, diSetFirstFile) then
+        diSetChoiceFirstFile
+      else
+        SetChoice(1, 1);
+    end;
+
+    {Resize window if needed}
+    if FlagIsSet(diFlags, diResize) then begin
+      ClearFlag(diFlags, diResize);
+      {$IFDEF UseAdjustableWindows}
+      if FlagIsSet(diFlags, diOptimizeSize) then begin
+        {Tell pick list to optimize its size}
+        PickList.OptimizeSize;
+        if RawError <> 0 then {!!.01}
+          Exit;               {!!.01}
+      end;
+      {$ENDIF}
+    end;
+  end;
+
+  procedure DirList.diUpdateDirList(ReportError : Boolean);
+    {-Load directory list}
+  begin
+    ClearErrors; {!!.01}
+
+    {Assure heap space already allocated}
+    if diDPtr = nil then
+      Exit;
+
+    if FlagIsSet(diFlags, diReadDir) then begin
+      {Set up search mask and lead-in path}
+      diSetupMasks;
+      if diCurDir = '' then begin                               {!!.11}
+        {Invalid path passed in}                                {!!.11}
+        diCurFiles := 0;                                        {!!.11}
+        {Error code is stored in DosError}                      {!!.11}
+        if ReportError then begin                               {!!.11}
+          diCheckZeroFiles;                                     {!!.11}
+          {Prevent double reporting}                            {!!.11}
+          DosError := 0;                                        {!!.11}
+        end;                                                    {!!.11}
+      end else                                                  {!!.11}
+        {Find files and add to diDPtr array}
+        diFindFiles;
+        {Remove check for diCurFiles = 0} {!!.01}
+
+      {Reinit pick window for the actual number of files}
+      ChangeNumItems(diCurFiles);
+
+      if FlagIsSet(pkFlags, pkBitSetAlloc) then
+        {Clear the bitset if allocated}
+        ClearSelected;
+    end;
+
+    {Sort, reformat, resize, reposition}
+    diUpdateFormatting(ReportError);
+  end;
+
+  procedure DirList.diCheckZeroFiles; {!!.01}
+    {-Check for zero files found and report error if so}
+  begin
+    if diCurFiles = 0 then
+      case DosError of
+        0 : ;                                                        {!!.11}
+        2 : GotError(epWarning+ecFileNotFound, emFileNotFound);
+        3 : GotError(epWarning+ecPathNotFound, emPathNotFound);
+        15 : GotError(epWarning+ecInvalidDrive, emInvalidDrive);
+        18 : GotError(epWarning+ecNoMoreFiles, emNoMoreFiles);
+        152 : GotError(epWarning+ecDriveNotReady, emDriveNotReady);
+      else
+        GotError(epWarning+DosError, emNullError);
+      end;
+  end;
+
+  procedure DirList.PreloadDirList;
+    {-Read directory in advance, in order to estimate size}
+  begin
+    diUpdateDirList(True);
+    if not pkOptionsAreOn(pkProcessZero) then {!!.03}
+      diCheckZeroFiles;                       {!!.01}
+  end;
+
+  function DirList.GetFileName(Mask : String; FileAttr : Byte;
+                               var Name : PathStr) : Word;
+    {-Set a new mask, pick a name and return}
+  var
+    CurItem : Word;
+    Status : Word;
+    WasActive : Boolean;
+    SRec : SearchRec;
+  begin
+    GetFileName := 0;
+    Name := '';
+
+    {Set up the pick mask}
+    SetMask(Mask, FileAttr);
+
+    WasActive := IsActive;
+    if not WasActive then begin
+      {Preload the files before displaying the window}
+      diUpdateDirList(False);
+      Status := RawError;                                       {!!.01}
+      if (Status <> 0) and (Status div 10000 <> etWarning) then {!!.01}
+      begin                                                     {!!.01}
+        GetFileName := Status;                                  {!!.01}
+        Exit;
+      end;
+      ClearErrors;
+
+      if not HasWildCards(Mask) and not IsDirectory(Mask) then
+        case diMatchingFileCnt(CurItem) of
+          0 : {No matching files}
+            begin
+              FindFirst(diMask, FileAttr and not Directory, SRec);
+              case DosError of
+                0 : {No matching files}
+                  begin
+                    GetFileName := epWarning+ecNoMoreFiles;
+                    Exit;
+                  end;
+                18 : {File not found}
+                  begin
+                    GetFileName := epWarning+ecFileNotFound;
+                    Name := diMask;
+                    Exit;
+                  end;
+              else
+                GetFileName := epWarning+ecPathNotFound;
+                Exit;
+              end;
+            end;
+          1 : {Exactly one matching file}
+            if FlagIsSet(diFlags, diExitIfOne) then begin
+              {Act like a selection was made}
+              cwCmd := ccSelect;
+              cwKey := $1C0D;
+              diCurItem := CurItem;
+              Name := GetSelectedPath;
+              Exit;
+            end;
+        end
+      else if diCurFiles = 0 then begin
+        {Mask has wildcards, but still nothing matches}
+        if IsDirectory(JustPathName(Mask)) then
+          GetFileName := epWarning+ecNoMoreFiles
+        else
+          GetFileName := epWarning+ecPathNotFound;
+        Exit;
+      end;
+
+      {Display the pick window now}
+      Draw;
+    end;
+
+    {Get a selection}
+    ProcessSelf;                {!!.01}
+    if RawError <> 0 then begin {!!.01}
+      {Error in processing pick}
+      GetFileName := RawError;  {!!.01}
+      ClearErrors;              {!!.01}
+    end else if diCurFiles = 0 then
+      {No files in last directory}
+      GetFileName := epWarning+ecPathNotFound
+    else if GetLastCommand = ccSelect then
+      {Selection successfully made}
+      Name := GetSelectedPath
+    else
+      {No selection made}
+      GetFileName := epWarning+ecNoPickSelection;
+
+    {Erase the window if it wasn't originally active}
+    if not WasActive then
+      Erase;
+  end;
+
+  procedure DirList.ChangeDirectory(Mask : String; ChangeCode : Byte);
+    {-Change to specified directory, or let user browse around to do so}
+  label
+    ExitPoint;
+  var
+    CurItem : Word;
+    WasActive : Boolean;
+    SaveReject : diRejectFunc;
+  begin
+    {Try switching directly}
+    if (Length(Mask) <> 0) and not HasWildCards(Mask) then begin
+      ChDir(Mask);
+      if IoResult <> 0 then
+        GotError(epWarning+ecPathNotFound, emPathNotFound);
+      Exit;
+    end;
+
+    {Reject all but directories}
+    SaveReject := diReject;
+    diReject := RejectFiles;
+
+    {Set up the pick mask}
+    SetMask(Mask, Directory);
+
+    WasActive := IsActive;
+    if not WasActive then begin
+      {Preload the files before displaying the window}
+      diUpdateDirList(True); {!!.01}
+      if RawError <> 0 then  {!!.01}
+        goto ExitPoint
+      else if diCurFiles = 0 then begin
+        {Invalid path}
+        GotError(epWarning+ecPathNotFound, emPathNotFound);
+        goto ExitPoint;
+      end;
+      {Display the pick window now}
+      Draw;
+    end;
+
+    {Get a selection}
+    ProcessSelf; {!!.01}
+
+    if (RawError = 0) and (diCurFiles > 0) then {!!.01}
+      {Change to diCurDir directory}
+      if GetLastCommand = ChangeCode then begin
+        {Trim off trailing backslash}
+        Mask := diCurDir;
+        if (Length(Mask) > 3) and (Mask[Length(Mask)] = '\') then
+          dec(Mask[0]);
+        {Change to directory}
+        ChDir(Mask);
+        if IoResult <> 0 then
+          GotError(epWarning+ecPathNotFound, emPathNotFound);
+      end;
+
+    {Erase the window if it wasn't originally active}
+    if not WasActive then
+      Erase;
+
+ExitPoint:
+    {Restore the reject function}
+    diReject := SaveReject;
+  end;
+
+  function DirList.diSelect : Boolean;
+    {-Handle selection commands}
+  begin
+    diSelect := False;
+    case GetLastCommand of
+      ccSelect :
+        if diCurItem = 0 then     {!!.11}
+          {Selected a dummy item} {!!.11}
+          diSelect := True        {!!.11}
+        else                      {!!.11}
+          with diDPtr^[diCurItem] do
+            if (Attr = diDriveAttr) and FlagIsSet(diFlags, diShowDrives) then
+              {Selected a drive}
+              diSelectDrive(Name)
+            else if ByteFlagIsSet(Attr, Directory) then
+              {Selected a directory}
+              diSelectDir(Name)
+            else {if not FlagIsSet(pkFlags, pkMultiChoice) then} {!!.01}
+              {Selected a file}
+              diSelect := True;
+    else
+      {Any other exit command}
+      diSelect := True;
+    end;
+  end;
+
+  procedure SingleFile(DirPtr : DirListPtr;
+                       var StringProc : pkStringProc;
+                       var CommandInitProc : pkGenlProc);
+    {-Initialize for picking single files}
+  begin
+    StringProc  := DirStringProc;
+    CommandInitProc := SingleChoice;
+  end;
+
+  procedure MultipleFile(DirPtr : DirListPtr;
+                         var StringProc : pkStringProc;
+                         var CommandInitProc : pkGenlProc);
+    {-Initialize for picking multiple files}
+  begin
+    StringProc := MultiStringProc;
+    CommandInitProc := MultipleChoice;
+  end;
+
+  procedure DirList.ProcessSelf; {!!.01}
+    {-Process pick commands leading to a file choice}
+  var
+    Finished : Boolean;
+  begin
+    {Loop until a selection is made}
+    Finished := False;
+    repeat
+      {Update the directory list}
+      diUpdateDirList(True);
+      if not pkOptionsAreOn(pkProcessZero) then {!!.03}
+        diCheckZeroFiles;                       {!!.01}
+
+      if RawError = 0 then  {!!.01}
+        {Get a selection}
+        PickList.ProcessSelf; {!!.01}
+
+      {Handle the selection}
+      if RawError <> 0 then {!!.01}
+        Finished := True
+      else begin
+        diCurItem := GetLastChoice;
+        Finished := diSelect;
+      end;
+    until Finished or (cwCmd = ccError);
+  end;
+
+  function DirList.GetMatchingFileCount : Word;
+    {-Return number of files matched in last directory}
+  begin
+    GetMatchingFileCount := diCurFiles;
+  end;
+
+  function DirList.GetMatchingSize(ClusterSize : Word) : LongInt;
+    {-Return number of bytes in all matched files}
+  var
+    I : Word;
+    S : LongInt;
+  begin
+    S := 0;
+    if ClusterSize = 0 then
+      ClusterSize := 1;
+    for I := 1 to diCurFiles do
+      inc(S, DosSize(diDPtr^[I].Size, ClusterSize));
+    GetMatchingSize := S;
+  end;
+
+  function DirList.GetSelectedFile : FileStr;
+    {-Return 12-character name of selected file}
+  begin
+    GetSelectedFile := GetMultiFile(diCurItem);
+  end;
+
+  function DirList.GetSelectedPath : PathStr;
+    {-Return full pathname of selected file}
+  begin
+    GetSelectedPath := GetMultiPath(diCurItem);
+  end;
+
+  function DirList.GetSelectedDir : DirStr;
+    {-Return directory of selected file}
+  begin
+    GetSelectedDir := JustPathName(diCurDir+'NUL'); {!!.01}
+  end;
+
+  procedure DirList.GetSelectedDirRec(var D : DirRec);
+    {-Return full DirRec for selected file}
+  begin
+    GetMultiDirRec(diCurItem, D);
+  end;
+
+  function DirList.SelectedFileInCurDir : Boolean;
+    {-Return true if selected file is in current directory}
+  var
+    CurDir : PathStr;
+  begin
+    GetDir(0, CurDir);
+    SelectedFileInCurDir := (diCurDir = AddBackSlash(CurDir));
+  end;
+
+  procedure DirList.RemoveSelectedFile;
+    {-Remove current file from pick list}
+  begin
+    RemoveMultiFile(diCurItem);
+  end;
+
+  function DirList.GetMultiDirPtr(N : Word) : DirRecPtr;
+    {-Return pointer to DirRec for specified file}
+  begin
+    if (diDPtr = nil) or (N < 1) or (N > diCurFiles) then
+      GetMultiDirPtr := nil
+    else
+      GetMultiDirPtr := @diDPtr^[N];
+  end;
+
+  procedure DirList.FormatMultiFile(N : Word);
+    {-Rebuild the format string for specified file}
+  var
+    Pcat : Byte;
+    S : String;
+    Slen : Byte absolute S;
+  begin
+    {diFormat(diDPtr^[N], Pcat, S, @Self);} {!!.03}
+    Format(diDPtr^[N], Pcat, S);            {!!.03}
+    if Slen > diMaxFmatLen then
+      Slen := diMaxFmatLen;
+    with diRecPtr(N)^ do begin
+      Disp := S;
+      Cat := Pcat;
+    end;
+  end;
+
+  procedure DirList.diOptionsOn(OptionFlags : Word);
+    {-Activate multiple options}
+  begin
+    diFlags := diFlags or (OptionFlags and not BadDirOptions);
+  end;
+
+  procedure DirList.diOptionsOff(OptionFlags : Word);
+    {-Deactivate multiple options}
+  begin
+    diFlags := diFlags and not (OptionFlags and not BadDirOptions);
+  end;
+
+  function DirList.diOptionsAreOn(OptionFlags : Word) : Boolean;
+    {-Return True if all specified options are on}
+  begin
+    diOptionsAreOn := (diFlags and OptionFlags = OptionFlags);
+  end;
+
+  procedure DirList.SetFileAttr(Color, Mono : Byte);
+    {-Set attributes for files}
+  begin
+    SetPickAttr(pkNormal, False, Color, Mono);
+  end;
+
+  procedure DirList.SetSelectFileAttr(Color, Mono : Byte);
+    {-Set attributes for selected file}
+  begin
+    SetPickAttr(pkNormal, True, Color, Mono);
+  end;
+
+  procedure DirList.SetDirAttr(Color, Mono : Byte);
+    {-Set attributes for directories}
+  begin
+    SetPickAttr(pkAlternate, False, Color, Mono);
+  end;
+
+  procedure DirList.SetSelectDirAttr(Color, Mono : Byte);
+    {-Set attributes for selected directory}
+  begin
+    SetPickAttr(pkAlternate, True, Color, Mono);
+  end;
+
+  procedure DirList.SetDirCategory(DirCat : pkItemType); {!!.03}
+    {-Set the pick list category for directories and drives}
+  begin
+    diDirCat := DirCat;
+  end;
+
+  procedure DirList.SetSortOrder(SP : diSortProc);
+    {-Set alternate routine for sorting}
+  begin
+    if @diSort = @SP then
+      Exit;
+    if @SP = @SortNone then begin
+      {Must reread directory to get unsorted order}
+      ResetList;
+      {Don't resize the window, though}
+      ClearFlag(diFlags, diResize);
+    end else
+      {Assure list is resorted}
+      SetFlag(diFlags, diResort);
+    diSort := SP;
+  end;
+
+  procedure DirList.SetRejectFunc(RF : diRejectFunc);
+    {-Set alternate reject function for file selection}
+  begin
+    diReject := RF;
+  end;
+
+  procedure DirList.AddRejectString(S : String);
+    {-Add a string to the set to reject}
+  var
+    Status : Word;
+  begin
+    if diRejectCnt = 0 then
+      if not diRejectSet.Init then begin
+        GotError(epNonFatal+ecOutOfMemory, emInsufficientMemory);
+        Exit;
+      end;
+    diRejectSet.Add(S);
+    Status := diRejectSet.GetStatus;
+    if Status <> 0 then begin
+      GotError(Status, emNullError);
+      Exit;
+    end;
+    inc(diRejectCnt);
+  end;
+
+  procedure DirList.ClearRejectStrings;
+    {-Clear the set of strings to reject}
+  begin
+    if diRejectCnt > 0 then begin
+      diRejectSet.Done;
+      diRejectCnt := 0;
+      {Assure we reread the list of files}
+      ResetList;
+      {Don't resize the window, though}
+      ClearFlag(diFlags, diResize);
+    end;
+  end;
+
+  procedure DirList.SkipDrives(Drives : DriveSet);
+    {-Specify drives to skip when drive letters show}
+  begin
+    diSkip := Drives;
+  end;
+
+  procedure DirList.SetDriveDelim(Left, Right : String);
+    {-Specify delimiter strings to appear left and right of drive letters}
+  begin
+    diLeftDrive := Left;
+    diRightDrive := Right;
+  end;
+
+  procedure DirList.SelectItem(N : Word);
+    {-Select an item}
+  begin
+    with diDPtr^[N] do
+      if not ByteFlagIsSet(Attr, Directory) then
+        PickList.SelectItem(N);
+  end;
+
+  function DirList.GetMultiFile(N : Word) : FileStr;
+    {-Return 12-character name of specified file}
+  begin
+    if (diDPtr = nil) or (N < 1) or (N > diCurFiles) then
+      GetMultiFile := ''
+    else
+      GetMultiFile := StUpcase(diDPtr^[N].Name);
+  end;
+
+  function DirList.GetMultiPath(N : Word) : PathStr;
+    {-Return full pathname of specified file}
+  var
+    S : PathStr;
+  begin
+    S := GetMultiFile(N);
+    if Length(S) = 0 then
+      GetMultiPath := ''
+    else if (diDPtr^[N].Attr = diDriveAttr) and FlagIsSet(diFlags, diShowDrives) then
+      GetMultiPath := S
+    else
+      GetMultiPath := StUpcase(diCurDir+S);
+  end;
+
+  procedure DirList.GetMultiDirRec(N : Word; var D : DirRec);
+    {-Return full DirRec for specified file}
+  begin
+    if (diDPtr = nil) or (N < 1) or (N > diCurFiles) then
+      FillChar(D, SizeOf(DirRec), 0)
+    else
+      D := diDPtr^[N];
+  end;
+
+  function DirList.GetSelectedSize(ClusterSize : Word) : LongInt;
+    {-Return total size of all selected files}
+  var
+    I : Word;
+    S : LongInt;
+  begin
+    S := 0;
+    if ClusterSize = 0 then
+      ClusterSize := 1;
+    for I := 1 to diCurFiles do
+      if ItemIsSelected(I) then
+        inc(S, DosSize(diDPtr^[I].Size, ClusterSize));
+    GetSelectedSize := S;
+  end;
+
+  procedure DirList.RemoveMultiFile(N : Word);
+    {-Remove specified file from list}
+  var
+    I : Word;
+  begin
+    {Validate request}
+    if (N = 0) or (N > diCurFiles) then
+      Exit;
+
+    {Shift the data arrays down by one}
+    if N < diCurFiles then begin
+      move(diDPtr^[N+1], diDPtr^[N], (diCurFiles-N)*SizeOf(DirRec));
+      move(diRecPtr(N+1)^, diRecPtr(N)^, (diCurFiles-N)*(diMaxFmatLen+2));
+
+      {Adjust the select set}
+      if FlagIsSet(pkFlags, pkBitSetAlloc) then
+        with pkSelectSet do
+          for I := N to diCurFiles-1 do
+            if BitIsSet(I+1) then
+              SetBit(I)
+            else
+              ClearBit(I);
+    end;
+    if FlagIsSet(pkFlags, pkBitSetAlloc) then
+      pkSelectSet.ClearBit(diCurFiles);
+    Dec(diCurFiles);
+
+    {Reinit pick window for the actual number of files}
+    ChangeNumItems(diCurFiles);
+
+    {Move the highlight bar if forced to}
+    if diCurItem > diCurFiles then begin
+      diCurItem := diCurFiles;
+      if diCurFiles > 0 then
+        SetInitialChoice(diCurItem);
+    end;
+  end;
+
+  procedure DirList.RemoveSelectedFiles;
+    {-Remove all selected files from list}
+  var
+    I : Word;
+  begin
+    I := 1;
+    while I <= diCurFiles do
+      if ItemIsSelected(I) then
+        RemoveMultiFile(I)
+      else
+        Inc(I);
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor DirList.Load00(var S : IdStream); {!!.03}
+    {-Load a list from a stream}
+  begin
+    {No dynamic space allocated yet}
+    diDPtr := nil;
+    diSPtr := nil;
+    diRejectCnt := 0;
+
+    {Load the underlying pick list}
+    if not PickList.Load(S) then
+      Fail;
+
+    {Change unit code}
+    cwUnitCode := ucDir;
+
+    {Load fixed data}
+    S.ReadRange(diFlags, diRejectSet);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {Load the reject set, if any}
+    if diRejectCnt > 0 then
+      S.Get(diRejectSet);
+
+    {Load the procedure pointers}
+    @diSort := S.ReadUserPointer(@SortNone);
+    @diReject := S.ReadUserPointer(@RejectNone);
+    @diFormat := S.ReadUserPointer(@NameFormat);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {Allocate heap space for file list}
+    if not GetMemCheck(diDPtr, diHeapToUse) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+
+    {Allocate the select set if appropriate}
+    if FlagIsSet(pkFlags, pkMultiChoice) then begin
+      ClearErrors; {!!.01}
+      AllocateSelectSet(diHeapToUse div (SizeOf(DirRec)+2));
+      if RawError <> 0 then begin {!!.01}
+        Done;
+        InitStatus := epFatal+ecOutOfMemory;
+        Fail;
+      end;
+    end;
+
+    {Partition the heap space}
+    diPartitionHeapSpace;
+
+    {Must read the file directory first time}
+    ResetList;
+
+    {Set the default value for dir category} {!!.03}
+    diDirCat := pkAlternate;                 {!!.03}
+  end;
+
+  constructor DirList.Load(var S : IdStream);
+    {-Load a list from a stream}
+  begin
+    if not DirList.Load00(S) then
+      Fail;
+    {!!.03} {Read the new directory category}
+    S.Read(diDirCat, SizeOf(pkItemType));
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure DirList.Store(var S : IdStream);
+    {-Store a list in a stream}
+  begin
+    {Store the underlying pick list}
+    PickList.Store(S);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Store fixed data}
+    S.WriteRange(diFlags, diRejectSet);
+
+    {Store the reject set, if any}
+    if diRejectCnt > 0 then
+      S.Put(diRejectSet);
+
+    {Store the procedure pointers}
+    S.WriteUserPointer(@diSort, ptDirSortNone);
+    S.WriteUserPointer(@diReject, ptDirRejectNone);
+    S.WriteUserPointer(@diFormat, ptDirNameFormat);
+
+    {Store the directory category}         {!!.03}
+    S.Write(diDirCat, SizeOf(pkItemType)); {!!.03}
+  end;
+
+  procedure DirListStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing directory lists}
+  begin
+    with SPtr^ do begin
+      PickListStream(SPtr);
+      StringSetStream(SPtr);
+      RegisterType(otDirList, veDirList, TypeOf(DirList),
+                   @DirList.Store, @DirList.Load);
+      RegisterOldVersion(otDirList, 00, TypeOf(DirList),    {!!.03}
+                         @DirList.Load00);                  {!!.03}
+
+      RegisterPointer(ptDirSortNone, @SortNone);
+      RegisterPointer(ptDirRejectNone, @RejectNone);
+      RegisterPointer(ptDirNameFormat, @NameFormat);
+      RegisterPointer(ptDirStringProc, @DirStringProc);
+      RegisterPointer(ptDirMultiProc, @MultiStringProc);
+    end;
+  end;
+
+{$ENDIF}

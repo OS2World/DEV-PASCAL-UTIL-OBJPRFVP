@@ -1,0 +1,2095 @@
+  {*********************************************************}
+  {*                   OPMENU.IN2 1.30                     *}
+  {*     Copyright (c) TurboPower Software 1987, 1992.     *}
+  {*                 All rights reserved.                  *}
+  {*********************************************************}
+
+  constructor Menu.Init(X1, Y1, X2, Y2 : Byte;
+                        Orient : mnOrientation);
+    {-Create a menu with default options and colors}
+  begin
+    if not Menu.InitCustom(X1, Y1, X2, Y2, DefaultColorSet,
+                           DefWindowOptions, Orient) then
+      Fail;
+  end;
+
+  constructor Menu.InitCustom(X1, Y1, X2, Y2 : Byte;
+                              var Colors : ColorSet;
+                              Options : LongInt;
+                              Orient : mnOrientation);
+    {-Create a menu with custom window options}
+  begin
+    {Prepare for Done in case of constructor error}
+    mnItems.Init(Orient, Colors);
+    mnStack.Init(0);
+    mnSearch.Init(0);
+
+    {Force certain flags}
+    ClearLongFlag(Options, wResizeable);
+    SetLongFlag(Options, wUserContents+wClear);
+
+    if not CommandWindow.InitCustom(X1, Y1, X2, Y2, Colors, Options,
+                                    MenuCommands, ucMenu) then
+      Fail;
+
+    if not mnStack.Init(MenuDepth) or not mnSearch.Init(MenuDepth) then begin
+      Done;
+      Fail;
+    end;
+
+    mnStackPos := 0;
+    mnFlags := DefMenuOptions or mnMainSelect or mnMainHighlight;
+    mnHelpRow := 0;
+    mnHelpColor := Colors.TextColor;
+    mnHelpMono := Colors.TextMono;
+    mnLastKey := mnNotAKey;
+    mnMove := NoMoveAction;
+    mnCurrItemProc := NoCurrItemAction;
+    mnCurrItem := nil;
+
+    {Default to hidden cursor}
+    SetCursor(cuHidden);
+  end;
+
+  procedure Menu.mnOptionsOn(OptionFlags : Word);
+    {-Activate multiple options}
+  begin
+    mnFlags := mnFlags or (OptionFlags and not BadMenuOptions);
+  end;
+
+  procedure Menu.mnOptionsOff(OptionFlags : Word);
+    {-Deactivate multiple options}
+  begin
+    mnFlags := mnFlags and not (OptionFlags and not BadMenuOptions);
+  end;
+
+  function Menu.mnOptionsAreOn(OptionFlags : Word) : Boolean;
+    {-Return True if all specified options are on}
+  begin
+    mnOptionsAreOn := (mnFlags and OptionFlags = OptionFlags);
+  end;
+
+  procedure Menu.SetMoveProc(MP : mnGenlProc);
+    {-Set user move procedure}
+  begin
+    mnMove := MP;
+  end;
+
+  procedure Menu.SetCurrentItemProc(IP : mnCurrentItemProc);
+    {-Set procedure to be called whenever the active item is drawn}
+  begin
+    mnCurrItemProc := IP;
+  end;
+
+  procedure Menu.SetNormAttr(Color, Mono : Byte);
+    {-Set attributes for normal item text}
+  begin
+    if RawError = 0 then begin                {!!.01}
+      ActiveListPtr^.SetNormAttr(Color, Mono);
+      ActiveWinPtr^.SetTextAttr(Color, Mono); {!!.01}
+    end;                                      {!!.01}
+  end;
+
+  procedure Menu.SetSelectAttr(Color, Mono : Byte);
+    {-Set attributes for selected item text}
+  begin
+    if RawError = 0 then {!!.01}
+      ActiveListPtr^.SetSelectAttr(Color, Mono);
+  end;
+
+  procedure Menu.SetHighAttr(Color, Mono : Byte);
+    {-Set attributes for pick highlight text}
+  begin
+    if RawError = 0 then {!!.01}
+      ActiveListPtr^.SetHighAttr(Color, Mono);
+  end;
+
+  procedure Menu.SetProtectAttr(Color, Mono : Byte);
+    {-Set attributes for protected item text}
+  begin
+    if RawError = 0 then {!!.01}
+      ActiveListPtr^.SetProtectAttr(Color, Mono);
+  end;
+
+  procedure Menu.SetFrameAttr(Color, Mono : Byte);
+    {-Set frame attributes of all windows in menu system}
+  begin
+    if RawError = 0 then {!!.01}
+      ActiveWinPtr^.wFrame.SetFrameAttr(Color, Mono);
+  end;
+
+  procedure Menu.SetHeaderAttr(Color, Mono : Byte);
+    {-Set header attributes of all windows in menu system}
+  begin
+    if RawError = 0 then {!!.01}
+      ActiveWinPtr^.wFrame.SetHeaderAttr(Color, Mono, False);
+  end;
+
+  {$IFDEF UseShadows}
+  procedure Menu.SetShadowAttr(Color, Mono : Byte);
+    {-Set shadow attributes of all windows in menu system}
+  begin
+    if RawError = 0 then {!!.01}
+      ActiveWinPtr^.wFrame.SetShadowAttr(Color, Mono, False);
+  end;
+  {$ENDIF}
+
+  procedure Menu.SetLeftPad(LeftPad : Byte);
+    {-Set the number of characters to left pad each item when displayed}
+  begin
+    if RawError = 0 then {!!.01}
+      ActiveListPtr^.SetLeftPad(LeftPad);
+  end;
+
+  procedure Menu.SetSelectMarker(Left, Right : String);
+    {-Define strings to mark selected items}
+  begin
+    if RawError = 0 then {!!.01}
+      ActiveListPtr^.SetSelectMarker(Left, Right);
+  end;
+
+  procedure Menu.AddHeader(S : string; Posn : HeaderPosType);
+    {-Add a standard header to the current window}
+  var
+    Status : Word;
+  begin
+    if RawError = 0 then {!!.01}
+      with ActiveWinPtr^.wFrame do begin
+        AddHeader(S, Posn);
+        Status := GetLastError;
+        if Status <> 0 then
+          GotError(Status, emNullError);
+      end;
+  end;
+
+  procedure Menu.AddHeaderColor(S : string; Posn : HeaderPosType;
+                                AttrColor, AttrMono : Byte);
+    {-Add a standard header with custom color}
+  var
+    Status : Word;
+  begin
+    if RawError = 0 then {!!.01}
+      with ActiveWinPtr^.wFrame do begin
+        AddHeaderColor(S, Posn, AttrColor, AttrMono);
+        Status := GetLastError;
+        if Status <> 0 then
+          GotError(Status, emNullError);
+      end;
+  end;
+
+  procedure Menu.AddCustomHeader(S : string; Posn : FrameCornerType;
+                                 DX, DY : Integer;
+                                 AttrColor, AttrMono : Byte);
+    {-Add a custom header}
+  var
+    Status : Word;
+  begin
+    if RawError = 0 then {!!.01}
+      with ActiveWinPtr^.wFrame do begin
+        AddCustomHeader(S, Posn, DX, DY, AttrColor, AttrMono);
+        Status := GetLastError;
+        if Status <> 0 then
+          GotError(Status, emNullError);
+      end;
+  end;
+
+  {$IFDEF UseShadows}
+  procedure Menu.AddShadow(Posn : ShadowPosType; DrawType : ShadowDrawType);
+    {-Add a standard shadow}
+  var
+    Status : Word;
+  begin
+    if RawError = 0 then {!!.01}
+      with ActiveWinPtr^.wFrame do begin
+        AddShadow(Posn, DrawType);
+        Status := GetLastError;
+        if Status <> 0 then
+          GotError(Status, emNullError);
+      end;
+  end;
+
+  procedure Menu.AddShadowColor(Posn : ShadowPosType;
+                                DrawType : ShadowDrawType;
+                                AttrColor, AttrMono : Byte);
+    {-Add a standard shadow with custom color}
+  var
+    Status : Word;
+  begin
+    if RawError = 0 then {!!.01}
+      with ActiveWinPtr^.wFrame do begin
+        AddShadowColor(Posn, DrawType, AttrColor, AttrMono);
+        Status := GetLastError;
+        if Status <> 0 then
+          GotError(Status, emNullError);
+      end;
+  end;
+  {$ENDIF}
+
+  procedure Menu.EnableExplosions(StageDelay : Word);
+    {-Enable exploding windows with StageDelay milliseconds per stage}
+  begin
+    if RawError = 0 then {!!.01}
+      ActiveWinPtr^.EnableExplosions(StageDelay);
+  end;
+
+  procedure Menu.EnableNormalOpen;
+    {-Disable exploding windows or alternate draw routines}
+  begin
+    if RawError = 0 then {!!.01}
+      ActiveWinPtr^.EnableNormalOpen;
+  end;
+
+  procedure Menu.mnVisitAnItem(var List : MenuItemList;
+                               IProc : mnItemProc; var D);
+    {-Visit the items on this list and its children}
+  var
+    IPtr : MenuItemNodePtr;
+    SPtr : SubMenuPtr;
+  begin
+    {Scan list for submenus}
+    IPtr := MenuItemNodePtr(List.Head);
+    if IPtr <> nil then
+      repeat
+        {Visit the item}
+        IProc(IPtr, D, @Self);
+        SPtr := IPtr^.SubPtr;
+        if SPtr <> nil then
+          {Visit its children}
+          mnVisitAnItem(SPtr^.smItems, IProc, D);
+        IPtr := MenuItemNodePtr(List.Next(IPtr));
+      until IPtr = MenuItemNodePtr(List.Head);
+  end;
+
+  procedure Menu.VisitAllItems(IProc : mnItemProc; var D);
+    {-Call the specified procedure for all items in the menu system}
+  begin
+    mnVisitAnItem(mnItems, IProc, D);
+  end;
+
+  procedure Menu.mnVisitAWindow(var List : MenuItemList;
+                                WProc : mnWindowProc; var D);
+    {-Visit the windows on this list and its children}
+  var
+    IPtr : MenuItemNodePtr;
+    SPtr : SubMenuPtr;
+  begin
+    {Scan list for submenus}
+    IPtr := MenuItemNodePtr(List.Head);
+    if IPtr <> nil then
+      repeat
+        SPtr := IPtr^.SubPtr;
+        if SPtr <> nil then begin
+          {Visit the window}
+          WProc(SPtr, D, @Self);
+          {Visit its children}
+          mnVisitAWindow(SPtr^.smItems, WProc, D);
+        end;
+        IPtr := MenuItemNodePtr(List.Next(IPtr));
+      until IPtr = MenuItemNodePtr(List.Head);
+  end;
+
+  procedure Menu.VisitAllWindows(WProc : mnWindowProc; var D);
+    {-Call the specified procedure for all submenus in the menu system}
+  begin
+    {Call routine for main window}
+    WProc(@Self, D, @Self);
+    {Visit rest of nested windows}
+    mnVisitAWindow(mnItems, WProc, D);
+  end;
+
+  procedure EnableExplosion(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+  begin
+    WPtr^.EnableExplosions(Word(D));
+  end;
+
+  procedure Menu.EnableAllExplosions(StageDelay : Word);
+    {-Enable exploding windows with StageDelay milliseconds per stage}
+  begin
+    if RawError = 0 then {!!.01}
+      VisitAllWindows(EnableExplosion, StageDelay);
+  end;
+
+type
+  AltRec =
+    record
+      OpenProc, CloseProc : RawWindowProc;
+      StageDelay : Word;
+    end;
+
+  procedure EnableAlternate(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+  begin
+    with AltRec(D) do
+      WPtr^.EnableAlternateOpen(OpenProc, CloseProc, StageDelay);
+  end;
+
+  procedure Menu.EnableAllAlternateOpen(OpenProc, CloseProc : RawWindowProc;
+                                        StageDelay : Word);
+    {-Enable alternate draw and erase routines}
+  var
+    ARec : AltRec;
+  begin
+    if RawError = 0 then begin {!!.01}
+      ARec.OpenProc := OpenProc;
+      ARec.CloseProc := CloseProc;
+      ARec.StageDelay := StageDelay;
+      VisitAllWindows(EnableAlternate, ARec);
+    end;
+  end;
+
+  procedure EnableNormal(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+  begin
+    WPtr^.EnableNormalOpen;
+  end;
+
+  procedure Menu.EnableAllNormalOpen;
+    {-Disable exploding windows or alternate draw routines}
+  var
+    D : Byte;
+  begin
+    if RawError = 0 then {!!.01}
+      VisitAllWindows(EnableNormal, D);
+  end;
+
+{$IFDEF UseShadows}
+type
+  ShadRec =
+    record
+      MainMenu : boolean;
+      Posn : ShadowPosType;
+      DrawType : ShadowDrawType;
+    end;
+
+  procedure AddSubShadow(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+  begin
+    with ShadRec(D) do
+      if MainMenu or (WPtr <> RawWindowPtr(MPtr)) then
+        with WPtr^.wFrame do begin
+          RemoveShadows;
+          if DrawType <> shNone then
+            AddShadow(Posn, DrawType);
+        end;
+  end;
+
+  procedure Menu.AddShadows(MainMenu : boolean; Posn : ShadowPosType;
+                            DrawType : ShadowDrawType);
+    {-Add shadows to all submenus}
+  var
+    ShRec : ShadRec;
+  begin
+    if RawError = 0 then begin {!!.01}
+      ShRec.MainMenu := MainMenu;
+      ShRec.Posn := Posn;
+      ShRec.DrawType := DrawType;
+      VisitAllWindows(AddSubShadow, ShRec);
+    end;
+  end;
+{$ENDIF}
+
+  function Menu.IsCurrent : Boolean;
+    {-Return True if one of the menu system's windows is current}
+  var
+    SLevel : Word;
+  begin
+    if IsActive then begin
+      for SLevel := mnStack.SP downto 1 do
+        if RawWindowPtr(mnStack.Peek(SLevel)) = CurrentWindow then begin
+          IsCurrent := True;
+          Exit;
+        end;
+      IsCurrent := CommandWindow.IsCurrent; {!!.01}
+    end else
+      IsCurrent := False;
+  end;
+
+  procedure Menu.mnVisitAnItemList(var List : MenuItemList;
+                                   LProc : mnListProc; var D);
+    {-Visit this list and its children}
+  var
+    IPtr : MenuItemNodePtr;
+    SPtr : SubMenuPtr;
+  begin
+    {Call routine for this list}
+    LProc(@List, D, @Self);
+    {Scan list for submenus}
+    IPtr := MenuItemNodePtr(List.Head);
+    if IPtr <> nil then
+      repeat
+        SPtr := IPtr^.SubPtr;
+        if SPtr <> nil then
+          mnVisitAnItemList(SPtr^.smItems, LProc, D);
+        IPtr := MenuItemNodePtr(List.Next(IPtr));
+      until IPtr = MenuItemNodePtr(List.Head);
+  end;
+
+  procedure Menu.VisitAllItemLists(LProc : mnListProc; var D);
+    {-Call the specified procedure for all item lists in the menu system}
+  begin
+    mnVisitAnItemList(mnItems, LProc, D);
+  end;
+
+  procedure SetCustomString(LPtr : MenuItemListPtr; var D; MPtr : MenuPtr);
+    {-List visitation routine for setting customization procedure}
+  begin
+    LPtr^.SetCustomStringProc(mnCustomProc(D));
+  end;
+
+  procedure Menu.SetCustomStringProc(CP : mnCustomProc);
+    {-Set item customization procedure for entire menu system}
+  begin
+    VisitAllItemLists(SetCustomString, CP);
+  end;
+
+  {!!.21 - New}
+  procedure SetSelHighlight(LPtr : MenuItemListPtr; var D; MPtr : MenuPtr);
+  var
+    B : Boolean absolute D;
+  begin
+    with LPtr^ do
+      if B then
+        SetByteFlag(ilFlags, ilKeepHighlight)
+      else
+        ClearByteFlag(ilFlags, ilKeepHighlight);
+  end;
+
+  {!!.21 - New}
+  procedure Menu.SetSelectHighlight(IsOn : Boolean);
+  begin
+    VisitAllItemLists(SetSelHighlight, IsOn);
+  end;
+
+type
+  SelectMarkerRec =
+    record
+      Left : String[5];
+      Right : String[5];
+    end;
+
+  procedure SetSelectMark(LPtr : MenuItemListPtr; var D; MPtr : MenuPtr);
+    {-List visitation routine for setting marker strings}
+  begin
+    with SelectMarkerRec(D) do
+      LPtr^.SetSelectMarker(Left, Right);
+  end;
+
+  procedure Menu.SetAllSelectMarker(Left, Right : String);
+    {-Define strings to mark selected items in all submenus}
+  var
+    SMR : SelectMarkerRec;
+  begin
+    SMR.Left := Left;
+    SMR.Right := Right;
+    VisitAllItemLists(SetSelectMark, SMR);
+  end;
+
+type
+  AttrRec =                       {Used for setting attributes of submenus}
+    record
+      Color : Byte;
+      Mono : Byte;
+    end;
+
+  procedure SetNorm(LPtr : MenuItemListPtr; var D; MPtr : MenuPtr);
+  begin
+    with AttrRec(D) do
+      LPtr^.SetNormAttr(Color, Mono);
+  end;
+
+  procedure SetText(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+  begin
+    with AttrRec(D) do
+      WPtr^.SetTextAttr(Color, Mono);
+  end;
+
+  procedure Menu.SetAllNormAttr(Color, Mono : Byte);
+    {-Set normal attributes of all items in menu system}
+  var
+    ARec : AttrRec;
+  begin
+    ARec.Color := Color;
+    ARec.Mono := Mono;
+    VisitAllItemLists(SetNorm, ARec);
+    VisitAllWindows(SetText, ARec);
+  end;
+
+  procedure SetSelect(LPtr : MenuItemListPtr; var D; MPtr : MenuPtr);
+  begin
+    with AttrRec(D) do
+      LPtr^.SetSelectAttr(Color, Mono);
+  end;
+
+  procedure Menu.SetAllSelectAttr(Color, Mono : Byte);
+    {-Set select attributes of all items in menu system}
+  var
+    ARec : AttrRec;
+  begin
+    ARec.Color := Color;
+    ARec.Mono := Mono;
+    VisitAllItemLists(SetSelect, ARec);
+  end;
+
+  procedure SetHigh(LPtr : MenuItemListPtr; var D; MPtr : MenuPtr);
+  begin
+    with AttrRec(D) do
+      LPtr^.SetHighAttr(Color, Mono);
+  end;
+
+  procedure Menu.SetAllHighAttr(Color, Mono : Byte);
+    {-Set highlight attributes of all items in menu system}
+  var
+    ARec : AttrRec;
+  begin
+    ARec.Color := Color;
+    ARec.Mono := Mono;
+    VisitAllItemLists(SetHigh, ARec);
+  end;
+
+  procedure SetProtect(LPtr : MenuItemListPtr; var D; MPtr : MenuPtr);
+  begin
+    with AttrRec(D) do
+      LPtr^.SetProtectAttr(Color, Mono);
+  end;
+
+  procedure Menu.SetAllProtectAttr(Color, Mono : Byte);
+    {-Set protect attributes of all items in menu system}
+  var
+    ARec : AttrRec;
+  begin
+    ARec.Color := Color;
+    ARec.Mono := Mono;
+    VisitAllItemLists(SetProtect, ARec);
+  end;
+
+  procedure SetFrame(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+  begin
+    with AttrRec(D), WPtr^ do begin
+      wFrame.SetFrameAttr(Color, Mono);
+      aFrame.SetFrameAttr(Color, Mono);
+      wFrame.SetSpanAttr(Color, Mono); {!!.22}
+      aFrame.SetSpanAttr(Color, Mono); {!!.22}
+    end;
+  end;
+
+  procedure Menu.SetAllFrameAttr(Color, Mono : Byte);
+    {-Set frame attributes of all windows in menu system}
+  var
+    ARec : AttrRec;
+  begin
+    ARec.Color := Color;
+    ARec.Mono := Mono;
+    VisitAllWindows(SetFrame, ARec);
+  end;
+
+  procedure SetHeader(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+  begin
+    with AttrRec(D), WPtr^ do begin
+      wFrame.SetHeaderAttr(Color, Mono, True);
+      aFrame.SetHeaderAttr(Color, Mono, True);
+    end;
+  end;
+
+  procedure Menu.SetAllHeaderAttr(Color, Mono : Byte);
+    {-Set header attributes of all windows in menu system}
+  var
+    ARec : AttrRec;
+  begin
+    ARec.Color := Color;
+    ARec.Mono := Mono;
+    VisitAllWindows(SetHeader, ARec);
+  end;
+
+  {$IFDEF UseShadows}
+  procedure SetShadow(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+  begin
+    with AttrRec(D), WPtr^ do begin
+      wFrame.SetShadowAttr(Color, Mono, True);
+      aFrame.SetShadowAttr(Color, Mono, True);
+    end;
+  end;
+
+  procedure Menu.SetAllShadowAttr(Color, Mono : Byte);
+    {-Set frame attributes of all windows in menu system}
+  var
+    ARec : AttrRec;
+  begin
+    ARec.Color := Color;
+    ARec.Mono := Mono;
+    VisitAllWindows(SetShadow, ARec);
+  end;
+  {$ENDIF}
+
+  procedure Menu.SetHelpAttr(Color, Mono : Byte);
+    {-Set the colors for the help line}
+  begin
+    mnHelpColor := Color;
+    mnHelpMono := MapMono(Color, Mono);
+  end;
+
+  procedure Menu.GetHelpAttr(var Color, Mono : Byte);
+    {-Get the colors stored for the help line}
+  begin
+    Color := mnHelpColor;
+    Mono := mnHelpMono;
+  end;
+
+  procedure Menu.mnPushDraw(SPtr : SubMenuPtr);
+    {-Push and draw specified submenu}
+  begin
+    {Put submenu on stack}
+    mnStack.Push(SPtr);
+    {Assure current item is unprotected}
+    with SPtr^.smItems do
+      if ilCurrent <> nil then                      {!!.20}
+        if ilCurrent^.IsProtected then
+          ilSetCurrent(ilPrevUnprotected);
+    {Draw window}
+    SPtr^.Draw;
+  end;
+
+  function Menu.mnPushSubMenu : Boolean;
+    {-Push and display submenu of current item, return true if it was possible}
+  var
+    SPtr : SubMenuPtr;
+    IPtr : MenuItemNodePtr;
+  begin
+    mnPushSubMenu := False;
+    IPtr := ActiveItemPtr;
+    if IPtr <> nil then begin
+      SPtr := IPtr^.SubPtr;
+      if (SPtr <> nil) and
+         {allow zero size lists so MAKEMENU can display them}
+         ((SPtr^.smItems.Size = 0) or SPtr^.smItems.ilHasUnprotected)
+      then begin
+        mnPushDraw(SPtr);
+        mnPushSubMenu := True;
+      end;
+    end;
+  end;
+
+  procedure Menu.mnCheckSubPending;
+    {-If a submenu is pending and available, show it}
+  begin
+    if FlagIsSet(mnFlags, mnSubPending) then
+      if mnPushSubMenu then
+        {Had a submenu}
+        ClearFlag(mnFlags, mnSubPending);
+  end;
+
+  function Menu.mnParentOrient : mnOrientation;
+    {-Return orientation of parent menu of current submenu}
+  begin
+    case mnStack.SP of
+      0 : mnParentOrient := noOrient;
+      1 : mnParentOrient := mnItems.ilOrient;
+    else
+      mnParentOrient := SubMenuPtr(mnStack.Peek(mnStack.SP-1))^.smItems.ilOrient;
+    end;
+  end;
+
+  procedure Menu.mnMoveByOne(ToNext : Boolean);
+    {-Move to either the next or previous item}
+  begin
+    with ActiveListPtr^ do
+      if ToNext then
+        ilNext(ActiveWinPtr)
+      else
+        ilPrev(ActiveWinPtr);
+  end;
+
+  procedure Menu.mnArrowSelection(Orient : mnOrientation; ToNext : Boolean);
+    {-Deal with arrow key movements}
+  var
+    OK : Boolean;
+  begin
+    if ActiveListPtr^.Orientation = Orient then begin
+      {Direct item to item movement}
+      mnMoveByOne(ToNext);
+      {Automatically select a submenu if one is pending}
+      mnCheckSubPending;
+    end else if FlagIsSet(mnFlags, mnArrowSelect) then
+      {Consider selecting or switching submenus}
+      if mnParentOrient = Orient then begin
+        if mnParentHasMoreItems then
+          {Switch to next submenu of parent}
+          if mnPopSubMenu then begin
+            mnMoveByOne(ToNext);
+            if not mnPushSubMenu then
+              if FlagIsSet(mnFlags, mnAllowPending) then
+                SetFlag(mnFlags, mnSubPending);
+          end;
+      end else
+        {Try to select submenu of current item}
+        OK := mnPushSubMenu;
+  end;
+
+  function Menu.mnCharSelection : Boolean;
+    {-Select menu items by character if enabled}
+  var
+    IPtr : MenuItemNodePtr;
+    SPtr : MenuItemNodePtr; {!!.21}
+    FPtr : MenuItemNodePtr; {!!.22}
+    LPtr : MenuItemListPtr;
+  begin
+    mnCharSelection := False;
+    if FlagIsSet(mnFlags, mnAlphaMatch) then begin
+      {Search current list for next matching item}
+      LPtr := ActiveListPtr;
+      IPtr := LPtr^.FindItemByChar(Char(cwKey));
+
+      {!!.22 reorganized following block}
+      if IPtr <> nil then begin
+        {Search further if matched item is protected}
+        if IPtr^.IsProtected then begin
+          SPtr := LPtr^.ilCurrent;
+          FPtr := IPtr;
+          repeat
+            LPtr^.ilCurrent := IPtr;
+            IPtr := LPtr^.FindItemByChar(Char(cwKey));
+          until (IPtr = FPtr) or not(IPtr^.IsProtected);
+          LPtr^.ilCurrent := SPtr;
+        end;
+
+        if not IPtr^.IsProtected then begin
+          {Switch to matched item}
+          LPtr^.ilUpdateCurrent(ActiveWinPtr, IPtr);
+          if not FlagIsSet(mnFlags, mnSelectOnMatch) then
+            {Select submenu if pending}
+            mnCheckSubPending
+          else if mnSelectItem then begin
+            {Selected an item without a submenu}
+            mnCharSelection := True;
+            cwCmd := ccSelect;
+          end;
+        end;
+      end;
+    end;
+  end;
+
+  function Menu.mnAltCharSelection : Boolean; {!!.03}
+    {-Check top level menu for a match}
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    mnAltCharSelection := False;
+    {Search top level list for next matching item}
+    IPtr := mnItems.FindItemByChar(Char(cwKey));
+    if IPtr <> nil then
+      {Found a match}
+      if not IPtr^.IsProtected then begin
+        {Switch to matched item}
+        SelectItem(IPtr^.ItemKey);
+        if not FlagIsSet(mnFlags, mnSelectOnMatch) then
+          {Select submenu if pending}
+          mnCheckSubPending
+        else if mnSelectItem then begin
+          {Selected an item without a submenu}
+          mnAltCharSelection := True;
+          cwCmd := ccSelect;
+        end;
+      end;
+  end;
+
+  function Menu.mnSelectItem : Boolean;
+    {-Select an item, returning True if menu system should exit}
+  begin
+    mnSelectItem := False;                        {!!.03}
+    if not mnPushSubMenu then                     {!!.03}
+      if not ActiveItemPtr^.IsSemiProtected then  {!!.03}
+        mnSelectItem := True;                     {!!.03}
+  end;
+
+  function Menu.SelectItemByPos(X, Y : Byte) : Boolean;
+    {-Select visible item (if any) at absolute position and update screen}
+  var
+    SLevel : Word;
+    IPtr : MenuItemNodePtr;
+    LPtr : MenuItemListPtr;
+    WPtr : RawWindowPtr;
+    BarPos : LongInt;
+    FramePos : FramePosType;
+    HotCode : Byte;
+    OK : Boolean;
+  begin
+    for SLevel := mnStack.SP downto 0 do begin
+      {Evaluate the position relative to each stacked submenu}
+      if SLevel = 0 then begin
+        WPtr := @Self;
+        LPtr := @mnItems;
+      end else begin
+        WPtr := RawWindowPtr(mnStack.Peek(SLevel));
+        LPtr := @SubMenuPtr(WPtr)^.smItems;
+      end;
+
+      with WPtr^ do begin
+        EvaluatePos(X, Y);
+        BarPos := PosResults(FramePos, HotCode);
+        case FramePos of
+          frInsideActive :        {Inside window}
+            begin
+              {See whether a particular item should be selected}
+              IPtr := LPtr^.FindItemByPos(X-wXL+1, Y-wYL+1, WPtr);
+              if IPtr <> nil then
+                {Found an item at this location}
+                if not IPtr^.IsProtected then begin
+                  {Item isn't protected}
+                  {Erase submenus until appropriate menu is active}
+                  while ActiveListPtr <> LPtr do
+                    OK := mnPopSubMenu;
+                  LPtr^.ilSetCurrent(IPtr);
+                  LPtr^.Draw(WPtr, True, True);
+                  mnMarkCurrentItem; {!!.01}
+                  SelectItemByPos := True;
+                  Exit;
+                end;
+            end;
+        end; {case FramePos}
+      end; {with WPtr^}
+    end; {for SLevel}
+
+    SelectItemByPos := False;
+  end;
+
+  {$IFDEF UseMouse}
+  {!!.03} {Reorganization to support mouse dragging}
+  function Menu.mnMouseSelection : Boolean;
+    {-Select menu items by mouse if enabled}
+  var
+    SLevel : Word;
+    IPtr : MenuItemNodePtr;
+    LPtr : MenuItemListPtr;
+    WPtr : RawWindowPtr;
+    BarPos : LongInt;
+    FramePos : FramePosType;
+    HotCode : Byte;
+    MX : Byte;
+    MY : Byte;
+    SameItem : Boolean;
+    OK : Boolean;
+    Dragging : Boolean;
+    TakeClick : Boolean;
+  begin
+    {Assume mouse won't cause a selection}
+    mnMouseSelection := False;
+
+    {Search stack will indicate the reason for a Process exit}
+    mnSearch.Clear;
+
+    {Is mouse dragging activated?}
+    Dragging := cwCmdPtr^.cpOptionsAreOn(cpMouseDrag);
+    TakeClick := (not Dragging) or (cwCmd = ccMouseDown);
+
+    for SLevel := mnStack.SP downto 0 do begin
+      {Evaluate the mouse position relative to each stacked submenu}
+      if SLevel = 0 then begin
+        WPtr := @Self;
+        LPtr := @mnItems;
+      end else begin
+        WPtr := RawWindowPtr(mnStack.Peek(SLevel));
+        LPtr := @SubMenuPtr(WPtr)^.smItems;
+      end;
+
+      {Determine position of mouse relative to submenu}
+      WPtr^.EvaluatePos(MouseKeyWordX+MouseXLo, MouseKeyWordY+MouseYLo);
+      BarPos := WPtr^.PosResults(FramePos, HotCode);
+
+      {Should mouse event be ignored?}
+      if cwIgnoreMouseEvent(Dragging, cwCmd, FramePos, HotCode) then {!!.13}
+        Exit;
+
+      case HotCode of
+        hsNone :                {Not a hot spot}
+          case FramePos of
+            frInsideActive :    {Inside window}
+              begin
+                {Get window relative mouse position}
+                MX := MouseKeyWordX+MouseXLo-WPtr^.wXL+1;
+                MY := MouseKeyWordY+MouseYLo-WPtr^.wYL+1;
+
+                {See if position coincides with an item}
+                IPtr := LPtr^.FindItemByPos(MX, MY, WPtr);
+                if IPtr = nil then
+                  {No item, ignore mouse click}
+                  Exit
+                else if IPtr^.IsProtected then
+                  {Item is protected, ignore mouse click}
+                  Exit
+                else begin
+                  {On a selectable item, see if the item is already highlighted}
+                  SameItem := (IPtr = ActiveItemPtr);
+
+                  if not SameItem then begin
+                    {Clicking on a different item, make it current}
+
+                    {If pulling down already current submenu, just exit}
+                    if (IPtr^.SubPtr <> nil) and (IPtr^.SubPtr = ActiveSubPtr) then
+                      Exit;
+
+                    {Update current submenu and item}
+                    while ActiveListPtr <> LPtr do
+                      OK := mnPopSubMenu;
+                    LPtr^.ilUpdateCurrent(WPtr, IPtr);
+
+                    if FlagIsSet(mnFlags, mnSelectOnClick) or
+                      (IPtr^.SubPtr <> nil) then
+                      {Force item to be selected immediately}
+                      SameItem := True
+                    else if (cwCmd = ccMouseDown) or (cwCmd = ccMouseAuto) then  {!!.20}
+                      {Set flag that requires double click when dragging}
+                      SetFlag(mnFlags, mnChangedItems);
+                  end;
+
+                  if SameItem then
+                    if IPtr^.SubPtr <> nil then begin
+                      {Pull down submenu now}
+                      cwCmd := ccSelect;
+                      mnMouseSelection := mnSelectItem;
+                      ClearFlag(mnFlags, mnChangedItems);
+                      {$IFDEF UseDrag}        {!!.20}
+                      {WaitForButtonUp;}      {!!.20} {!!.21}
+                      {$ENDIF}                {!!.20}
+                    end else if cwCmd = ccMouseSel then
+                      if FlagIsSet(mnFlags, mnChangedItems) then
+                        {Clear double click flag}
+                        ClearFlag(mnFlags, mnChangedItems)
+                      else begin
+                        {Select item now}
+                        cwCmd := ccSelect;
+                        mnMouseSelection := mnSelectItem;
+                      end;
+
+                  Exit;
+                end;
+              end; {frInsideActive begin}
+
+            frTL..frRR,         {On the frame}
+            frInsideFrame :     {Inside window frame but not in active window}
+              {Won't match any menu item}
+              Exit;
+          end; {case FramePos of}
+
+      else
+        {Any hot spot}
+        if TakeClick then
+          {The right kind of press or release occurred}
+          if FlagIsSet(mnFlags, mnAllHotSpots) or (SLevel = mnStack.SP) then begin
+            {Act on hot spots in appropriate submenus}
+            mnMouseSelection := True;
+            {Top item on search stack is the window with the hot spot}
+            mnSearch.Push(WPtr);
+          end;
+        Exit;
+      end; {case HotCode of}
+    end; {for SLevel}
+
+    {Didn't match any item, exit menu system if flag is set}
+    if TakeClick then {!!}
+      mnMouseSelection := LongFlagIsSet(wFlags, wAllMouseEvents);
+  end;
+  {$ENDIF}
+
+  procedure Menu.mnMarkCurrentItem; {!!.01}
+    {-Call the user routine for the current item}
+  begin
+    mnCurrItem := ActiveItemPtr;
+    CurrentItem(mnCurrItem);
+  end;
+
+  function Menu.mnEvaluateCmd : Boolean;
+    {-Evaluate keyboard command by updating current item and screen}
+  var
+    HelpTopic : Word;
+    OK : Boolean;
+  begin
+    mnEvaluateCmd := False;
+    case cwCmd of
+      ccNone :                    {Invalid keystroke}
+        ;
+
+      ccUp :                      {Up}
+        mnArrowSelection(Vertical, False);
+
+      ccDown :                    {Down}
+        mnArrowSelection(Vertical, True);
+
+      ccLeft :                    {Left}
+        mnArrowSelection(Horizontal, False);
+
+      ccRight :                   {Right}
+        mnArrowSelection(Horizontal, True);
+
+      ccHome :                    {Home}
+        begin
+          ActiveListPtr^.ilHome(ActiveWinPtr);
+          mnCheckSubPending;
+        end;
+
+      ccEnd :                     {End}
+        begin
+          ActiveListPtr^.ilEnd(ActiveWinPtr);
+          mnCheckSubPending;
+        end;
+
+      ccQuit :                    {Esc}
+        begin
+          ClearFlag(mnFlags, mnSubPending);
+          if mnStack.SP = 0 then
+            {Exit menu system if no submenus are active}
+            mnEvaluateCmd := True
+          else
+            {Erase current submenu and return to previous one}
+            OK := mnPopSubMenu;
+        end;
+
+      ccSelect :                  {Enter}
+        mnEvaluateCmd := mnSelectItem;
+
+      ccChar :                    {Alphanumeric, possibly used for searching}
+        mnEvaluateCmd := mnCharSelection;
+
+      ccAltKey :   {!!.03}        {Alt-alphanumeric, to activate top level}
+        begin
+          cwCmd := ccChar;
+          mnEvaluateCmd := mnAltCharSelection;
+        end;
+
+      ccHelp :                    {F1}
+        begin
+          if FlagIsSet(mnFlags, mnUseItemForTopic) then begin
+            {Pass the current item key as the help topic}
+            if ActiveItemPtr = nil then
+              HelpTopic := $FFFF
+            else
+              HelpTopic := ActiveItemPtr^.ItemKey
+          end else
+            {Pass the standard window code as the topic}
+            HelpTopic := wHelpIndex;
+          RequestHelp(HelpTopic);
+        end;
+
+      {$IFDEF UseMouse}
+      ccMouseSel,                 {Mouse selection - left button up}
+      ccMouseDown,                {Mouse left button down} {!!.03}
+      ccMouseAuto :               {Mouse autorepeat}       {!!.03}
+        mnEvaluateCmd := mnMouseSelection;
+      {$ENDIF}
+
+      ccUser0..$FFFF :            {User exit commands}
+        mnEvaluateCmd := True;
+
+    else
+      if (cwCmd <= 255) and (GetExitCommandPtr <> nil) then
+        {Possibly a special exit command defined by a derived object}
+        if (cwCmd in GetExitCommandPtr^) then
+          mnEvaluateCmd := True;
+    end;
+  end;
+
+  procedure Menu.PreMove;
+    {-Called just before getting each keyboard command}
+  begin
+    {Call via procedure pointer}
+    mnMove(@Self);
+  end;
+
+  procedure Menu.CurrentItem(IPtr : MenuItemNodePtr);
+    {-Called just after the currently selected item is drawn}
+  begin
+    {Avoid calling user routine recursively}               {!!.01}
+    if not FlagIsSet(mnFlags, mnCurrItemActive) then begin {!!.01}
+      SetFlag(mnFlags, mnCurrItemActive);                  {!!.01}
+      {Call via procedure pointer}
+      mnCurrItemProc(IPtr, @Self);
+      ClearFlag(mnFlags, mnCurrItemActive);                {!!.01}
+    end;                                                   {!!.01}
+  end;
+
+  procedure Menu.ProcessSelf; {!!.01}
+    {-Process menu commands}
+  var
+    Finished : Boolean;
+    AltKeys : CharSet;        {!!.03}
+
+    procedure BuildAltKeySet; {!!.03}
+      {-Scan top level menu to build current alt-key set}
+    var
+      IPtr : MenuItemNodePtr;
+      Ch : Char;
+    begin
+      AltKeys := [];
+      IPtr := MenuItemNodePtr(mnItems.Head);
+      if IPtr <> nil then
+        repeat
+          if not IPtr^.IsProtected then begin
+            Ch := IPtr^.SelectChar;
+            if Ch <> #0 then
+              AltKeys := AltKeys+[Ch];
+          end;
+          IPtr := MenuItemNodePtr(mnItems.Next(IPtr));
+        until IPtr = MenuItemNodePtr(mnItems.Head);
+    end;
+
+  begin
+    {Initialize to bad values in case of error}
+    mnLastKey := mnNotAKey;
+
+    {Assure main menu will be properly drawn hereafter}
+    SetFlag(mnFlags, mnMainSelect+mnMainHighlight);
+
+    {$IFDEF UseMouse}
+    if cwCmdPtr^.MouseEnabled then
+      ShowMouse;
+    {$ENDIF}
+
+    {Draw initial screen if not already done}
+    Draw;
+    if RawError <> 0 then begin                                  {!!.01}
+      {The error has already been reported to the error handler} {!!.01}
+      {GotError(epNonFatal+ecWinNotCurrent, emNullError);}       {!!.01}
+      Exit;
+    end;
+
+    {Activate alt-key matching on top level menu}                {!!.03}
+    if FlagIsSet(mnFlags, mnAltMatch) then                       {!!.03}
+      cwCmdPtr^.SetAltKeySet(AltKeys)                            {!!.03}
+    else                                                         {!!.13}
+      cwCmdPtr^.cpAltKeys := nil;                                {!!.13}
+
+    repeat
+      {Call pre-move routine}
+      PreMove;
+
+      {Update alt-key set for top level menu}
+      if FlagIsSet(mnFlags, mnAltMatch) then                     {!!.03}
+        BuildAltKeySet;                                          {!!.03}
+
+      {Get next command from keyboard or mouse}
+      GetNextCommand;
+
+      {Evaluate command}
+      Finished := mnEvaluateCmd;
+
+      {Store current item and call user routine}
+      if ActiveItemPtr <> mnCurrItem then
+        mnMarkCurrentItem; {!!.01}
+    until Finished or (cwCmd = ccError);
+
+    {Store choice}
+    if mnCurrItem = nil then                         {!!.20}
+      mnLastKey := mnNotaKey                         {!!.20}
+    else                                             {!!.20}
+      mnLastKey := mnCurrItem^.ItemKey;
+
+    if FlagIsSet(mnFlags, mnPopOnSelect) then
+      if cwCmd = ccSelect then
+        {Erase submenu after item was selected}
+        Finished := mnPopSubMenu;
+  end;
+
+  function Menu.MenuChoice : LongInt;
+    {-Return last choice made}
+  begin
+    MenuChoice := mnLastKey;
+  end;
+
+  function Menu.mnParentHasMoreItems : Boolean;
+    {-Return True if parent of current submenu has other unprotected items}
+  var
+    LPtr : MenuItemListPtr;
+  begin
+    mnParentHasMoreItems := False;
+
+    {Get a pointer to the parent's item list}
+    case mnStack.SP of
+      0 : Exit;
+      1 : LPtr := @mnItems;
+    else
+      LPtr := @SubMenuPtr(mnStack.Peek(mnStack.SP-1))^.smItems;
+    end;
+
+    {See if there is a different unprotected item}
+    mnParentHasMoreItems := LPtr^.ilListHasMoreItems;
+  end;
+
+  function Menu.mnPopSubMenu : Boolean;
+    {-Erase current submenu and pop from stack}
+  var
+    SLevel : Word;
+    SMPtr : SubMenuPtr;
+    WasCurrent : Boolean; {!!.01}
+  begin
+    SLevel := mnStack.SP;
+    if SLevel > 0 then begin
+      SMPtr := SubMenuPtr(mnStack.Pop);
+      WasCurrent := (RawWindowPtr(SMPtr) = CurrentWindow); {!!.01}
+      SMPtr^.Erase;
+      if WasCurrent then  {!!.01}
+        {Mark previous submenu as the current window}
+        if SLevel = 1 then
+          MarkCurrent
+        else
+          SubMenuPtr(mnStack.PeekTop)^.MarkCurrent;
+      {Update the pending stack level}
+      if mnStackPos > 0 then
+        mnStackPos := SLevel-1;
+      mnPopSubMenu := True;
+    end else
+      mnPopSubMenu := False;
+  end;
+
+  procedure Menu.EraseCurrentSubMenu;
+    {-Erase current submenu}
+  begin
+    if mnPopSubMenu then
+      mnMarkCurrentItem; {!!.01}
+  end;
+
+  function Menu.mnEraseAllSubs : Boolean;
+    {-Erase all submenus, returning True if anything was actually popped}
+  var
+    Popped : Boolean;
+  begin
+    Popped := False;
+    while mnPopSubMenu do
+      Popped := True;
+    mnEraseAllSubs := Popped;
+  end;
+
+  procedure Menu.EraseAllSubMenus(ShowSelect, ShowHighlight : Boolean);
+    {-Erase all submenus, leave main menu showing in specified state}
+  var
+    Popped : Boolean;
+  begin
+    if not IsCurrent then
+      Exit;
+    Popped := mnEraseAllSubs;
+
+    {Flags keep track of setting for calls to UpdateContents}
+    if ShowSelect then
+      SetFlag(mnFlags, mnMainSelect)
+    else
+      ClearFlag(mnFlags, mnMainSelect);
+    if ShowHighlight then
+      SetFlag(mnFlags, mnMainHighlight)
+    else
+      ClearFlag(mnFlags, mnMainHighlight);
+
+    if not ShowSelect or not ShowHighlight then
+      mnItems.Draw(@Self, ShowSelect, ShowHighlight);
+    if Popped and ShowSelect then
+      mnMarkCurrentItem; {!!.01}
+  end;
+
+  function Menu.mnFindKeyAndStack(var List : MenuItemList; Key : LongInt;
+                                  ProtectedOK : Boolean) : Boolean;
+    {-Recursively search for item Key, building a search stack}
+  var
+    SPtr : SubMenuPtr;
+    CPtr : MenuItemNodePtr;
+    IPtr : MenuItemNodePtr;
+  begin
+    with List do begin
+      {Scan this list for item}
+      ilSearch := MenuItemNodePtr(Head);
+      if ilSearch <> nil then
+        repeat
+
+          {Does key match?}
+          if ilSearch^.ItemKey = Key then begin
+            if not ProtectedOK and ilSearch^.IsProtected then begin
+              {Item is protected, try to back up}
+              CPtr := ilCurrent; {Save current item}
+              ilCurrent := ilSearch;
+              IPtr := ilPrevUnprotected;
+              if IPtr <> ilCurrent then
+                {Found an unprotected item}
+                ilSearch := IPtr
+              else
+                {Didn't. Pop last menu and call it a match}
+                SPtr := SubMenuPtr(mnSearch.Pop);
+              ilCurrent := CPtr; {Restore current item}
+            end;
+            mnFindKeyAndStack := True;
+            Exit;
+          end;
+
+          if ProtectedOK or not ilSearch^.IsProtected then begin
+            {Don't search downward from protected items}
+            SPtr := ilSearch^.SubPtr;
+            if SPtr <> nil then begin
+              {Put submenu on search stack}
+              mnSearch.Push(SPtr);
+              {Recursive call}
+              if mnFindKeyAndStack(SPtr^.smItems, Key, ProtectedOK) then begin
+                mnFindKeyAndStack := True;
+                Exit;
+              end;
+              {Remove submenu from search stack}
+              SPtr := SubMenuPtr(mnSearch.Pop);
+            end;
+          end;
+          ilSearch := MenuItemNodePtr(Next(ilSearch));
+        until ilSearch = MenuItemNodePtr(Head);
+    end;
+    mnFindKeyAndStack := False;
+  end;
+
+  procedure Menu.SelectItem(Key : LongInt);
+    {-Select specified item and update screen}
+  var
+    VLevel : Word;
+    SPtr : SubmenuPtr;
+    OK : Boolean;
+  begin
+    {!!.01}
+    if IsActive and not IsCurrent then begin
+      GotError(epNonFatal+ecWinNotCurrent, emNullError);
+      Exit;
+    end;
+
+    {Clear the search stack of any previous results}
+    mnSearch.Clear;
+
+    {Find the key and build a stack}
+    if mnFindKeyAndStack(mnItems, Key, False) then
+      with mnStack do begin
+        {Assure main menu will be properly drawn hereafter}
+        SetFlag(mnFlags, mnMainSelect+mnMainHighlight);
+
+        {Erase visible submenus down to first submenu matching search stack}
+        while (SP > mnSearch.SP) or (Peek(SP) <> mnSearch.Peek(SP)) do
+          OK := mnPopSubMenu;
+
+        {Update and/or draw each new submenu}
+        for VLevel := SP to mnSearch.SP do
+          if VLevel = 0 then begin
+            mnItems.ilSetCurrent(mnItems.ilSearch);
+            if IsActive then
+              mnItems.Draw(@Self, True, True)
+            else
+              Draw;
+          end else begin
+            SPtr := SubmenuPtr(mnSearch.Peek(VLevel));
+            with SPtr^ do begin
+              smItems.ilSetCurrent(smItems.ilSearch);
+              if VLevel = SP then
+                {Just update the list}
+                smItems.Draw(SPtr, True, True)
+              else
+                mnPushDraw(SPtr);
+            end;
+          end;
+
+        {Mark the current item}
+        mnMarkCurrentItem; {!!.01}
+      end;
+  end;
+
+  procedure Menu.DefaultPath(Key : LongInt);
+    {-Select path to specified item.
+      No screen update unless menu already current} {!!.01}
+  var
+    VLevel : Word;
+    SPtr : SubmenuPtr;
+  begin
+    if IsActive then begin
+      SelectItem(Key);
+      Exit;
+    end;
+
+    {Clear the search stack of any previous results}
+    mnSearch.Clear;
+
+    {Find the key and build a stack}
+    if mnFindKeyAndStack(mnItems, Key, False) then
+      with mnStack do begin
+        {Update and stack each new submenu}
+        for VLevel := 0 to mnSearch.SP do
+          if VLevel = 0 then begin
+            mnItems.ilSetCurrent(mnItems.ilSearch);
+          end else begin
+            SPtr := SubmenuPtr(mnSearch.Peek(VLevel));
+            with SPtr^ do begin
+              smItems.ilSetCurrent(smItems.ilSearch);
+              mnStack.Push(SPtr);
+            end;
+          end;
+        {Mark stack as initialized}
+        mnStackPos := mnSearch.SP;
+      end;
+  end;
+
+  procedure Menu.DefaultItem(Key : LongInt);
+    {-Make item Key the default of its submenu. No screen update}
+  begin
+    {Clear the search stack of any previous results}
+    mnSearch.Clear;
+
+    {Find the key and build a stack}
+    if mnFindKeyAndStack(mnItems, Key, False) then
+      if mnSearch.PeekTop = nil then    {!!.02}
+        {Item found on top level menu}  {!!.02}
+        with mnItems do                 {!!.02}
+          ilSetCurrent(ilSearch)        {!!.02}
+      else                              {!!.02}
+        {Item found on a submenu}       {!!.02}
+        with SubmenuPtr(mnSearch.PeekTop)^.smItems do
+          ilSetCurrent(ilSearch);
+  end;
+
+  procedure Menu.SelectSubMenu(Key : LongInt);
+    {-Select current item of submenu containing Key and update screen}
+  var
+    VLevel : Word;
+    SPtr : SubMenuPtr;
+    LPtr : MenuItemListPtr;
+    OK : Boolean;
+  begin
+    {Clear the search stack of any previous results}
+    mnSearch.Clear;
+
+    if mnFindKeyAndStack(mnItems, Key, False) then
+      with mnStack do begin
+        {Assure main menu will be properly drawn hereafter}
+        SetFlag(mnFlags, mnMainSelect+mnMainHighlight);
+
+        {Erase visible submenus down to first submenu matching search stack}
+        while (SP > mnSearch.SP) or (Peek(SP) <> mnSearch.Peek(SP)) do
+          OK := mnPopSubMenu;
+
+        {Update the last matching submenu}
+        if mnSearch.SP > SP then begin
+          if SP = 0 then begin
+            SPtr := @Self;
+            LPtr := @mnItems;
+          end else begin
+            SPtr := SubmenuPtr(mnSearch.Peek(SP));
+            LPtr := @SPtr^.smItems;
+          end;
+          with LPtr^ do
+            if IsActive then begin                {!!.20}
+              ilUpdateCurrent(SPtr, ilSearch);    {!!.20}
+              Draw(SPtr, True, True)              {!!.20}
+            end else                              {!!.20}
+              ilSetCurrent(ilSearch);
+        end;
+        if not IsActive then
+          Draw;
+
+        {Update and/or draw each new submenu}
+        for VLevel := SP+1 to mnSearch.SP do begin
+          SPtr := SubmenuPtr(mnSearch.Peek(VLevel));
+          mnPushDraw(SPtr);
+        end;
+
+        {Mark the current item}
+        mnMarkCurrentItem; {!!.01}
+      end;
+  end;
+
+  procedure Menu.Redraw;
+    {-Erase and redraw menu system, presumably after changing an item}
+  var
+    Popped : Boolean;
+    SLevel : Word;
+  begin
+    ClearErrors;                                           {!!.01}
+    ActivateWrite;
+    if RawError <> 0 then begin                            {!!.01}
+      {The error has already been reported to the error handler}
+      {GotError(epNonFatal+ecWinNotCurrent, emNullError);} {!!.01}
+      Exit;
+    end;
+    {SLevel := mnStack.SP;}     {!!.03}
+    {Popped := mnEraseAllSubs;} {!!.03}
+    {mnStackPos := SLevel;}     {!!.03}
+    Erase;                      {!!.03}
+    Draw;
+    DeactivateWrite;
+  end;
+
+  function Menu.ActiveListPtr : MenuItemListPtr;
+    {-Return pointer to active item list}
+  begin
+    if mnStack.SP = 0 then
+      ActiveListPtr := @mnItems
+    else
+      ActiveListPtr := @SubMenuPtr(mnStack.PeekTop)^.smItems;
+  end;
+
+  procedure Menu.AddItemHelp(Name : String; DisplayPos, SelectPos : Byte;
+                             Key : LongInt; Help : String);
+    {-Add item to current item list, allocating string space on heap}
+  begin
+    if RawError = 0 then  {!!.01}
+      with ActiveListPtr^ do
+        if not ilAddItem(Name, DisplayPos, SelectPos, Key, Help) then
+          GotError(epFatal+ecOutOfMemory, emInsufficientMemory);
+  end;
+
+  procedure Menu.AddItemHelpPtr(var Name : String;
+                                DisplayPos, SelectPos : Byte; Key : LongInt;
+                                var Help : String);
+    {-Add item to current item list, not allocating string space on heap}
+  begin
+    if RawError = 0 then  {!!.01}
+      with ActiveListPtr^ do
+        if not ilAddItemP(@Name, DisplayPos, SelectPos, Key, @Help) then
+          GotError(epFatal+ecOutOfMemory, emInsufficientMemory);
+  end;
+
+  procedure Menu.AddItem(Name : String; DisplayPos, SelectPos : Byte;
+                         Key : LongInt);
+    {-Add item to current item list, allocating string space on heap}
+  begin
+    AddItemHelp(Name, DisplayPos, SelectPos, Key, '');
+  end;
+
+  procedure Menu.AddItemPtr(var Name : String;
+                            DisplayPos, SelectPos : Byte;
+                            Key : LongInt);
+    {-Add item to current item list, not allocating string space on heap}
+  begin
+    if RawError = 0 then  {!!.01}
+      with ActiveListPtr^ do
+        if not ilAddItemP(@Name, DisplayPos, SelectPos, Key, nil) then
+          GotError(epFatal+ecOutOfMemory, emInsufficientMemory);
+  end;
+
+  procedure Menu.AddSeparator(FirstChar, SpanChar, LastChar : Char;
+                              DisplayPos : Byte);
+    {-Add a separator bar at offset DisplayPos within the window}
+  begin
+    with ActiveWinPtr^.wFrame do
+      AddSeparatorColor(FirstChar, SpanChar, LastChar,
+                        DisplayPos, frFrameColor, frFrameMono);
+  end;
+
+  procedure Menu.AddSeparatorColor(FirstChar, SpanChar, LastChar : Char;
+                                   DisplayPos : Byte;
+                                   AttrColor, AttrMono : Byte);
+    {-Add a separator bar at offset DisplayPos within the window with
+      specified colors}
+  var
+    Edge : FrameEdgeType;
+  begin
+    if RawError = 0 then begin {!!.01}
+      with ActiveListPtr^ do
+        case Orientation of
+          Vertical : Edge := frTT;
+          Horizontal : Edge := frLL;
+        end;
+      with ActiveWinPtr^.wFrame do
+        AddSpanHeaderColor(FirstChar, SpanChar, LastChar, DisplayPos, Edge,
+                           AttrColor, AttrMono);
+    end;
+  end;
+
+  procedure Menu.mnAddSubPrim(X1, Y1, X2, Y2 : Byte;
+                              var Colors : ColorSet;
+                              Options : LongInt;
+                              Orient : mnOrientation;
+                              Framed : Boolean;
+                              FA : FrameArray);
+    {-Add a submenu, including frame type}
+  var
+    SmPtr : SubMenuPtr;
+  begin
+    if RawError <> 0 then {!!.01}
+      Exit;
+
+    {Assure there's an item to add to}
+    if ActiveItemPtr = nil then begin
+      GotError(epFatal+ecNilPointer, emNullError);
+      Exit;
+    end;
+
+    {Set frame flag}
+    if Framed then
+      Options := Options or wBordered
+    else
+      Options := Options and not wBordered;
+
+    {Allocate and initialize the submenu}
+    New(SmPtr, InitCustom(X1, Y1, X2, Y2, Colors, Options, Orient));
+    if SmPtr = nil then begin
+      GotError(epFatal+ecOutOfMemory, emInsufficientMemory);
+      Exit;
+    end;
+    {Attach it to active item}
+    ActiveItemPtr^.ChangeSubPtr(SmPtr);
+    {Push it on stack}
+    mnStack.Push(SmPtr);
+
+    with SmPtr^ do begin
+      {Set frame characters if needed}
+      if Framed then begin
+        wFrame.SetFrameType(FA);
+        aFrame.SetFrameType(FA);
+      end;
+      {Clone cursor shape from main menu}
+      SetCursor(Self.GetCursor);
+    end;
+  end;
+
+  procedure Menu.mnCloneColors(var DefColors, Colors : ColorSet);
+    {-Return a ColorSet initialized from the main menu}
+  begin
+    {Assure that all fields are initialized somehow}
+    Colors := DefColors;
+    {Fill in the important fields from the main menu}
+    with Colors, mnItems, wFrame do begin
+      TextColor := ilNormColor;
+      TextMono := ilNormMono;
+      SelItemColor := ilSelectColor;
+      SelItemMono := ilSelectMono;
+      HighItemColor := ilHighColor;
+      HighItemMono := ilHighMono;
+      ProItemColor := ilProtectColor;
+      ProItemMono := ilProtectMono;
+      FrameColor := frFrameColor;
+      FrameMono := frFrameMono;
+      HeaderColor := frHeaderColor;
+      HeaderMono := frHeaderMono;
+      {$IFDEF UseShadows}
+      ShadowColor := frShadowColor;
+      ShadowMono := frShadowMono;
+      {$ENDIF}
+    end;
+  end;
+
+  procedure Menu.AddSubMenu(X1, Y1, X2, Y2 : Byte;
+                            Orient : mnOrientation);
+    {-Add a submenu with default options and colors, no frame}
+  var
+    Colors : ColorSet;
+  begin
+    {Clone colors from main menu}
+    mnCloneColors(DefaultColorSet, Colors);
+    {Add the submenu, no frame}
+    mnAddSubPrim(X1, Y1, X2, Y2, Colors, wFlags, Orient, False, NoWindowFrame);
+  end;
+
+  procedure Menu.AddFramedSubMenu(X1, Y1, X2, Y2 : Byte;
+                                  Orient : mnOrientation;
+                                  FA : FrameArray);
+    {-Add a submenu with default options and colors, and a frame}
+  var
+    Colors : ColorSet;
+  begin
+    {Clone colors from main menu}
+    mnCloneColors(DefaultColorSet, Colors);
+    {Add the submenu with frame}
+    mnAddSubPrim(X1, Y1, X2, Y2, Colors, wFlags, Orient, True, FA);
+  end;
+
+  procedure Menu.AddSubMenuCustom(X1, Y1, X2, Y2 : Byte;
+                                  var Colors : ColorSet;
+                                  Options : LongInt;
+                                  Orient : mnOrientation;
+                                  FA : FrameArray);
+    {-Add a submenu with custom window options}
+  begin
+    mnAddSubPrim(X1, Y1, X2, Y2, Colors, Options, Orient,
+                 LongFlagIsSet(Options, wBordered), FA);
+  end;
+
+  function Menu.ActiveWinPtr : RawWindowPtr;
+    {-Return pointer to active raw window}
+  begin
+    if mnStack.SP = 0 then
+      ActiveWinPtr := @Self
+    else
+      ActiveWinPtr := RawWindowPtr(mnStack.PeekTop);
+  end;
+
+  procedure Menu.ItemsDoneCustom(OptimizeSize : Boolean; DefaultKey : LongInt);
+    {-Indicate no more items, and customize the submenu}
+  var
+    W : Byte;
+    H : Byte;
+    SPtr : SubMenuPtr;
+    Flags : LongInt;
+  begin
+    if RawError <> 0 then {!!.01}
+      Exit;
+
+    {$IFDEF UseAdjustableWindows}
+    if OptimizeSize then begin
+      {Compute minimum size for window}
+      ActiveListPtr^.OptimumSize(W, H);
+      with ActiveWinPtr^ do begin
+        Flags := wFlags;
+        SetLongFlag(wFlags, wResizeable);
+        ResizeWindow(Integer(wXL+W-1)-wXH, Integer(wYL+H-1)-wYH);
+        wFlags := Flags;
+      end;
+    end;
+    {$ENDIF}
+
+    with ActiveListPtr^ do begin
+      {Set default item}
+      ilCurrent := FindItemByKey(DefaultKey);
+      if ilCurrent = nil then
+        ilCurrent := ilFirstUnprotected
+      else if ilCurrent^.IsProtected then
+        ilCurrent := ilPrevUnprotected;
+    end;
+
+    {Remove associated submenu from stack}
+    SPtr := SubMenuPtr(mnStack.Pop);
+  end;
+
+  procedure Menu.ItemsDone;
+    {-Indicate that no more items will be added to the current item list}
+  begin
+    {Leave size unchanged, set default to first element}
+    ItemsDoneCustom(False, mnNotAKey);
+  end;
+
+  function Menu.ActiveItemPtr : MenuItemNodePtr;
+    {-Return pointer to currently active item}
+  begin
+    if mnStack.SP = 0 then
+      ActiveItemPtr := mnItems.CurrentItemPtr
+    else
+      ActiveItemPtr := SubMenuPtr(mnStack.PeekTop)^.smItems.CurrentItemPtr;
+  end;
+
+  function Menu.ActiveSubPtr : SubMenuPtr;
+    {-Return pointer to active submenu}
+  begin
+    ActiveSubPtr := SubMenuPtr(mnStack.PeekTop);
+    {Returns nil if nothing on stack}
+  end;
+
+  function Menu.mnFindItemAndList(Key : LongInt;
+                                  var LPtr : MenuItemListPtr) : MenuItemNodePtr;
+    {-Return pointer to item node and list}
+  begin
+    {Clear search stack}
+    mnSearch.Clear;
+    {Find item}
+    if mnFindKeyAndStack(mnItems, Key, True) then begin
+      if mnSearch.SP = 0 then
+        {Found on main menu item list}
+        LPtr := @mnItems
+      else
+        {Found on submenu item list}
+        LPtr := @SubmenuPtr(mnSearch.PeekTop)^.smItems;
+      mnFindItemAndList := LPtr^.ilSearch;
+    end else begin
+      LPtr := nil;
+      mnFindItemAndList := nil;
+    end;
+  end;
+
+  function Menu.FindItem(Key : LongInt) : MenuItemNodePtr;
+    {-Return pointer to item node}
+  var
+    LPtr : MenuItemListPtr;
+  begin
+    FindItem := mnFindItemAndList(Key, LPtr);
+  end;
+
+  procedure Menu.ProtectItem(Key : LongInt);
+    {-Protect specified item}
+  var
+    IPtr : MenuItemNodePtr;
+    LPtr : MenuItemListPtr;
+  begin
+    IPtr := mnFindItemAndList(Key, LPtr);
+    if IPtr <> nil then begin
+      IPtr^.Protect;
+      {Try to fix up if current item became protected}
+      with LPtr^ do
+        if CurrentItemPtr = IPtr then
+          ilSetCurrent(ilPrevUnprotected);
+    end;
+  end;
+
+  procedure Menu.SemiProtectItem(Key : LongInt);     {!!.03}
+    {-Semi-protect specified item. No screen update}
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    IPtr := FindItem(Key);
+    if IPtr <> nil then
+      IPtr^.SemiProtect;
+  end;
+
+  procedure Menu.UnprotectItem(Key : LongInt);
+    {-Unprotect specified item}
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    IPtr := FindItem(Key);
+    if IPtr <> nil then
+      IPtr^.Unprotect;
+  end;
+
+  procedure Menu.mnDisposeSubMenus(var List : MenuItemList);
+    {-Recursively dispose of submenus and items}
+  var
+    IPtr : MenuItemNodePtr;
+    SPtr : SubMenuPtr;
+  begin
+    {Scan list for submenus}
+    IPtr := MenuItemNodePtr(List.Head);
+    if IPtr <> nil then
+      repeat
+        SPtr := IPtr^.SubPtr;
+        if SPtr <> nil then begin
+          {Visit submenu's children}
+          mnDisposeSubMenus(SPtr^.smItems);
+          {Dispose of the window structure}
+          Dispose(SPtr, Done);
+        end;
+        IPtr := MenuItemNodePtr(List.Next(IPtr));
+      until IPtr = MenuItemNodePtr(List.Head);
+    {Dispose of the list itself}
+    List.Done;
+  end;
+
+  destructor Menu.Done;
+    {-Destroy a menu system}
+  begin
+    if IsCurrent then
+      {Erase menu before disposing it}
+      Erase;
+
+    {Dispose of all the heap space}
+    mnSearch.Done;
+    mnStack.Done;
+    mnDisposeSubMenus(mnItems);
+    CommandWindow.Done;
+  end;
+
+  procedure Menu.mnDrawActiveItems;
+    {-Draw any submenus previously displayed}
+  var
+    SLevel : Word;
+    SPtr : SubMenuPtr;
+  begin
+    {Draw the main menu's items}
+    mnItems.Draw(@Self,
+                 FlagIsSet(mnFlags, mnMainSelect),
+                 FlagIsSet(mnFlags, mnMainHighlight));
+    {Rebuild the active stack}
+    mnStack.Clear;
+    for SLevel := 1 to mnStackPos do begin
+      SPtr := SubMenuPtr(mnStack.Peek(SLevel));
+      if SPtr <> nil then
+        mnPushDraw(SPtr);
+    end;
+    {Mark the current item}
+    mnMarkCurrentItem; {!!.01}
+  end;
+
+  procedure Menu.UpdateContents;
+    {-Update the contents of the active submenu}
+  var
+    Selected : Boolean;
+    Highlighted : Boolean;
+    LPtr : MenuItemListPtr;
+  begin
+    if mnStackPos > 0 then begin
+      {Draw retained stack of submenus}
+      mnDrawActiveItems;
+      mnStackPos := 0;
+    end else begin
+      LPtr := ActiveListPtr;
+      if LPtr = @mnItems then begin
+        Selected := FlagIsSet(mnFlags, mnMainSelect);
+        Highlighted := FlagIsSet(mnFlags, mnMainHighlight);
+      end else begin
+        Selected := True;
+        Highlighted := True;
+      end;
+      LPtr^.Draw(ActiveWinPtr, Selected, Highlighted);
+      mnMarkCurrentItem; {!!.01}
+    end;
+    {Update child windows if any} {!!.01}
+    StackWindow.UpdateContents;   {!!.01}
+  end;
+
+  procedure Menu.Erase;
+    {-Erase menu, but remember active submenus}
+  var
+    SLevel : Word;
+  begin
+    SLevel := mnStack.SP;
+    EraseClear;
+    mnStackPos := SLevel;
+  end;
+
+  procedure Menu.EraseClear;
+    {-Erase menu system}
+  var
+    Popped : Boolean;
+  begin
+    Popped := mnEraseAllSubs;
+    StackWindow.Erase; {!!.01}
+  end;
+
+  {$IFDEF UseAdjustableWindows}
+type
+  MoveRec =
+    record
+      DX : Integer;
+      DY : Integer;
+      Status : Word;
+    end;
+
+  procedure MoveSubMenu(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+    {-Shift a submenu}
+  var
+    FX1 : Byte;
+    FY1 : Byte;
+    FX2 : Byte;
+    FY2 : Byte;
+    DXT : Integer;
+    DYT : Integer;
+  begin
+    with MoveRec(D), WPtr^ do
+      if Status = 0 then begin
+        {Adjust move delta to do the best job we can}
+        DXT := DX;
+        DYT := DY;
+        with wFrame do begin
+          if Integer(frXL)+DXT < wMinXL then
+            DXT := Integer(wMinXL)-frXL;
+          if Integer(frXH)+DXT > wMaxXH then
+            DXT := Integer(wMaxXH)-frXH;
+          if Integer(frYL)+DYT < wMinYL then
+            DYT := Integer(wMinYL)-frYL;
+          if Integer(frYH)+DYT > wMaxYH then
+            DYT := Integer(wMaxYH)-frYH;
+        end;
+        rwResizeInactive(wXL+DXT, wYL+DYT, wXH+DXT, wYH+DYT);
+        Status := RawError; {!!.01}
+      end;
+  end;
+
+  procedure Menu.MoveWindow(DX, DY : Integer);
+    {-Move a menu system}
+  var
+    Active : Boolean;
+    MRec : MoveRec;
+    V : VirtScreen;
+  begin
+    {Don't waste time if nothing to do}
+    if (DX = 0) and (DY = 0) then
+      Exit;
+
+    {Assure menu system contains the current window}
+    Active := IsActive;
+    if Active and not IsCurrent then begin
+      GotError(epNonFatal+ecWinNotCurrent, emNullError);
+      Exit;
+    end;
+
+    if Active then begin
+      {Allocate a virtual screen, initialize, and activate it}
+      if not V.Alloc(OpCrt.VirtualHeight, OpCrt.VirtualWidth) then begin
+        GotError(epNonFatal+ecOutOfMemory, emInsufficientMemory);
+        Exit;
+      end;
+      V.CopyFromScreen(1, 1);
+      V.Activate;
+
+      {Erase the menu system from the virtual screen}
+      Erase;
+    end;
+
+    {Adjust coordinates of main menu and all submenus}
+    MRec.DX := DX;
+    MRec.DY := DY;
+    MRec.Status := 0;
+    VisitAllWindows(MoveSubMenu, MRec);
+    if MRec.Status <> 0 then
+      GotError(MRec.Status, emNullError);
+
+    if Active then begin
+      {Redraw menu system}
+      if MRec.Status = 0 then
+        Draw;
+
+      {Deactivate virtual screen, display, and dispose of it}
+      V.Deactivate;
+      V.CopyToScreen(1, 1);
+      V.Done;
+    end;
+  end;
+
+  procedure UpdateSS(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+    {-Shift a submenu}
+  var
+    Status : Word absolute D;
+  begin
+    if Status = 0 then begin
+      WPtr^.UpdateScreenSize;
+      Status := WPtr^.RawError;
+    end;
+  end;
+
+  procedure Menu.UpdateScreenSize;
+    {-Update window size, position, and limits for current screen size}
+  var
+    Active : Boolean;
+    Status : Word;
+    V : VirtScreen;
+  begin
+    {Don't waste time if nothing to do}
+    if (ScreenWidth = wScrWidth) and (ScreenHeight = wScrHeight) then
+      Exit;
+
+    {Assure menu system contains the current window}
+    Active := IsActive;
+    if Active and not IsCurrent then begin
+      GotError(epNonFatal+ecWinNotCurrent, emNullError);
+      Exit;
+    end;
+
+    if Active then begin
+      {Allocate a virtual screen, initialize, and activate it}
+      if not V.Alloc(OpCrt.VirtualHeight, OpCrt.VirtualWidth) then begin
+        GotError(epFatal+ecOutOfMemory, emInsufficientMemory);
+        Exit;
+      end;
+      V.CopyFromScreen(1, 1);
+      V.Activate;
+
+      {Erase the menu system from the virtual screen}
+      Erase;
+    end;
+
+    {Adjust coordinates of main menu and all submenus}
+    Status := 0;
+    VisitAllWindows(UpdateSS, Status);
+    if Status <> 0 then
+      GotError(Status, emNullError);
+
+    if Active then begin
+      {Redraw menu system}
+      if Status = 0 then
+        Draw;
+
+      {Deactivate virtual screen, display, and dispose of it}
+      V.Deactivate;
+      V.CopyToScreen(1, 1);
+      V.Done;
+    end;
+  end;
+  {$ENDIF}
+
+  function Menu.Intersects(W : AbstractWindowPtr) : Boolean; {!!.03}
+    {-Return true if Self intersects another window W}
+  var
+    SLevel : Word;
+  begin
+    for SLevel := mnStack.SP downto 1 do
+      if RawWindowPtr(mnStack.Peek(SLevel))^.Intersects(W) then begin
+        Intersects := True;
+        Exit;
+      end;
+    Intersects := CommandWindow.Intersects(W);
+  end;

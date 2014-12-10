@@ -1,0 +1,1132 @@
+  {*********************************************************}
+  {*                   OPMENU.IN1 1.30                     *}
+  {*     Copyright (c) TurboPower Software 1987, 1992.     *}
+  {*                 All rights reserved.                  *}
+  {*********************************************************}
+
+  procedure NoCustomization(var Name : String; Key : LongInt;
+                            Selected, Highlighted : Boolean;
+                            WPtr : RawWindowPtr);
+    {-Do-nothing string customization routine}
+  begin
+  end;
+
+  procedure NoMoveAction(MPtr : MenuPtr);
+    {-Default pre-move routine that does nothing}
+  begin
+  end;
+
+  procedure NoCurrItemAction(CurrentItem : MenuItemNodePtr; MPtr : MenuPtr);
+    {-Default active item move routine that does nothing}
+  begin
+  end;
+
+  function AllocString(St : String; var Pt : StringPtr) : Boolean;
+    {-Allocate space for string St and assign it to Pt}
+  begin
+    if GetMemCheck(Pt, Length(St)+1) then begin
+      Pt^ := St;
+      AllocString := True;
+    end else
+      AllocString := False;
+  end;
+
+  constructor MenuItemNode.Init(Name : String;
+                                DisplayPos, SelectPos : Byte;
+                                Key : LongInt;
+                                Help : String);
+    {-Initialize item, allocating string space on heap}
+  begin
+    inFlags := DefItemOptions or inOnHeap;
+    inNamePtr := nil;
+    inHelpPtr := nil;
+    inConsPtr := nil;
+    if not DoubleListNode.Init then
+      Fail;
+
+    if not AllocString(Name, inNamePtr) then begin
+      Done;
+      InitStatus := epNonFatal+ecOutOfMemory;
+      Fail;
+    end;
+    if not AllocString(Help, inHelpPtr) then begin
+      Done;
+      InitStatus := epNonFatal+ecOutOfMemory;
+      Fail;
+    end;
+
+    inDisplayPos := DisplayPos;
+    inSelectPos := SelectPos;
+    inMenuKey := Key;
+    inSubPtr := nil;
+  end;
+
+  constructor MenuItemNode.InitP(NamePtr : StringPtr;
+                                 DisplayPos, SelectPos : Byte;
+                                 Key : LongInt;
+                                 HelpPtr : StringPtr);
+    {-Initialize item, not allocating string space on heap}
+  begin
+    inFlags := DefItemOptions and not inOnHeap;
+    inNamePtr := nil;
+    inHelpPtr := nil;
+    inConsPtr := nil;
+    if not DoubleListNode.Init then
+      Fail;
+
+    inNamePtr := NamePtr;
+    inHelpPtr := HelpPtr;
+    inDisplayPos := DisplayPos;
+    inSelectPos := SelectPos;
+    inMenuKey := Key;
+    inSubPtr := nil;
+  end;
+
+  destructor MenuItemNode.Done;
+    {-Dispose of item node}
+  begin
+    if ByteFlagIsSet(inFlags, inOnHeap) then begin
+      if inNamePtr <> nil then                                          {!!.20}
+        FreeMemCheck(inNamePtr, Length(inNamePtr^)+1);
+      if inHelpPtr <> nil then                                          {!!.20}
+        FreeMemCheck(inHelpPtr, Length(inHelpPtr^)+1);
+    end;
+    if inConsPtr <> nil then                                            {!!.20}
+      FreeMemCheck(inConsPtr, Length(inConsPtr^)+1);
+    DoubleListNode.Done;
+  end;
+
+  procedure MenuItemNode.Protect;
+    {-Protect item}
+  begin
+    SetByteFlag(inFlags, inProtected);
+  end;
+
+  procedure MenuItemNode.SemiProtect; {!!.03}
+    {-Semi-protect item}
+  begin
+    SetByteFlag(inFlags, inSemiProtected);
+  end;
+
+  procedure MenuItemNode.Unprotect;
+    {-Unprotect item}
+  begin
+    ClearByteFlag(inFlags, inProtected+inSemiProtected); {!!.03}
+  end;
+
+  function MenuItemNode.ChangeName(Name : String) : Boolean;
+    {-Change the name of item}
+  begin
+    ChangeName := False;                                               {!!.20}
+    if ByteFlagIsSet(inFlags, inOnHeap) then begin                     {!!.20}
+      if inNamePtr <> nil then begin                                   {!!.20}
+        if Length(Name) <> Length(inNamePtr^) then begin               {!!.20}
+          FreeMemCheck(inNamePtr, Length(inNamePtr^)+1);               {!!.20}
+          if not GetMemCheck(inNamePtr, Length(Name)+1) then           {!!.20}
+            Exit;                                                      {!!.20}
+        end;                                                           {!!.20}
+      end                                                              {!!.20}
+      else if not GetMemCheck(inNamePtr, Length(Name)+1) then          {!!.20}
+        Exit;                                                          {!!.20}
+      inNamePtr^ := Name;
+      ChangeName := True;
+    end;
+  end;
+
+  function MenuItemNode.ChangeHelp(Help : String) : Boolean;
+    {-Change the help string}
+  begin
+    ChangeHelp := False;
+    if ByteFlagIsSet(inFlags, inOnHeap) then begin
+      if inHelpPtr <> nil then begin                                   {!!.20}
+        if Length(Help) <> Length(inHelpPtr^) then begin               {!!.20}
+          FreeMemCheck(inHelpPtr, Length(inHelpPtr^)+1);               {!!.20}
+          if not GetMemCheck(inHelpPtr, Length(Help)+1) then           {!!.20}
+            Exit;                                                      {!!.20}
+        end;                                                           {!!.20}
+      end                                                              {!!.20}
+      else if not GetMemCheck(inHelpPtr, Length(Help)+1) then          {!!.20}
+        Exit;                                                          {!!.20}
+      inHelpPtr^ := Help;
+      ChangeHelp := True;
+    end;
+  end;
+
+  procedure MenuItemNode.ChangeSelectPos(SelectPos : Byte);
+    {-Change the select pos}
+  begin
+    inSelectPos := SelectPos;
+  end;
+
+  procedure MenuItemNode.ChangeDisplayPos(DisplayPos : Byte);
+    {-Change the display pos}
+  begin
+    inDisplayPos := DisplayPos;
+  end;
+
+  procedure MenuItemNode.ChangeKey(Key : LongInt);
+    {-Change the item key}
+  begin
+    inMenuKey := Key;
+  end;
+
+  procedure MenuItemNode.ChangeSubPtr(SPtr : SubMenuPtr);
+    {-Change submenu pointer of item}
+  begin
+    inSubPtr := SPtr;
+  end;
+
+  procedure MenuItemNode.DisplayInfo(var DisplayPos, SelectPos : Byte; var S : String);
+    {-Return string and display offsets for item}
+  begin
+    DisplayPos := inDisplayPos;
+    SelectPos := inSelectPos;
+    if inNamePtr = nil then
+      S := ''
+    else
+      S := inNamePtr^;
+  end;
+
+  function MenuItemNode.HelpString : String;
+    {-Return help string for item}
+  begin
+    if inHelpPtr = nil then
+      HelpString := ''
+    else
+      HelpString := inHelpPtr^;
+  end;
+
+  function MenuItemNode.ItemKey : LongInt;
+    {-Return menu key for item}
+  begin
+    ItemKey := inMenuKey;
+  end;
+
+  function MenuItemNode.SubPtr : SubMenuPtr;
+    {-Return submenu pointer for item}
+  begin
+    SubPtr := inSubPtr;
+  end;
+
+  function MenuItemNode.IsProtected : Boolean;
+    {-Return True if item is protected}
+  begin
+    IsProtected := ByteFlagIsSet(inFlags, inProtected);
+  end;
+
+  function MenuItemNode.IsSemiProtected : Boolean; {!!.03}
+    {-Return True if item is protected}
+  begin
+    IsSemiProtected := ByteFlagIsSet(inFlags, inSemiProtected);
+  end;
+
+  function MenuItemNode.SelectChar : Char;
+    {-Return alpha selection char (uppercase)}
+  begin
+    if (inSelectPos = 0) or (inNamePtr = nil) or
+       (inSelectPos > Length(inNamePtr^)) then
+      SelectChar := #0
+    else
+      SelectChar := UpCase(inNamePtr^[inSelectPos]);
+  end;
+
+  function MenuItemNode.GetDisplayPos : Byte;
+    {-Return just the display offset}
+  begin
+    GetDisplayPos := inDisplayPos;
+  end;
+
+  function MenuItemNode.inSetConsName(Name : String) : Boolean;
+    {-Set or remove the name associated with inConsPtr}
+  begin
+    inSetConsName := True;
+    {Deallocate existing name space, if any}
+    if inConsPtr <> nil then                                            {!!.20}
+      FreememCheck(inConsPtr, Length(inConsPtr^)+1);
+    {Allocate new name if needed}
+    if Length(Name) <> 0 then
+      if not AllocString(Name, inConsPtr) then
+        inSetConsName := False;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor MenuItemNode.Load(var S : IdStream);
+    {-Load an item node from a stream}
+  var
+    HasSubPtr : Boolean;
+    Name : String;
+  begin
+    inFlags := DefItemOptions or inOnHeap;
+    inNamePtr := nil;
+    inHelpPtr := nil;
+    inConsPtr := nil;
+    if not DoubleListNode.Init then
+      Fail;
+
+    {Read the data of this item}
+    S.ReadRange(inDisplayPos, inSubPtr);
+
+    {All strings are stored on the heap when read from a stream}
+    SetByteFlag(inFlags, inOnHeap);
+    if not AllocString(S.ReadString, inNamePtr) then begin
+      Done;
+      InitStatus := epNonFatal+ecOutOfMemory;
+      Fail;
+    end;
+    if not AllocString(S.ReadString, inHelpPtr) then begin
+      Done;
+      InitStatus := epNonFatal+ecOutOfMemory;
+      Fail;
+    end;
+    Name := S.ReadString;
+    if inAllocConsPtr then
+      if Length(Name) <> 0 then
+        if not AllocString(Name, inConsPtr) then begin
+          Done;
+          InitStatus := epNonFatal+ecOutOfMemory;
+          Fail;
+        end;
+
+    {Does this item have a submenu?}
+    S.Read(HasSubPtr, SizeOf(Boolean));
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {Recursively read its submenu}
+    if HasSubPtr then begin
+      inSubPtr := SubMenuPtr(S.GetPtr);
+      if inSubPtr = nil then
+        Fail;
+    end else
+      inSubPtr := nil;
+  end;
+
+  procedure MenuItemNode.Store(var S : IdStream);
+    {-Store an item node in a stream}
+  const
+    Zero : Byte = 0;
+  var
+    HasSubPtr : Boolean;
+  begin
+    {Write the data of this item}
+    S.WriteRange(inDisplayPos, inSubPtr);
+    if inNamePtr = nil then
+      S.Write(Zero, SizeOf(Byte))
+    else
+      S.WriteString(inNamePtr^);
+    if inHelpPtr = nil then
+      S.Write(Zero, SizeOf(Byte))
+    else
+      S.WriteString(inHelpPtr^);
+    if inConsPtr = nil then
+      S.Write(Zero, SizeOf(Byte))
+    else
+      S.WriteString(inConsPtr^);
+    HasSubPtr := (inSubPtr <> nil);
+    S.Write(HasSubPtr, SizeOf(Boolean));
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Recursively write its submenu}
+    if HasSubPtr then
+      S.PutPtr(inSubPtr);
+  end;
+
+{$ENDIF}
+
+  constructor MenuItemList.Init(Orient : mnOrientation; var Colors : ColorSet);
+    {-Initialize an empty item list}
+  begin
+    ilCurrent := nil;
+    ilSearch := nil;
+    ilCustom := NoCustomization;
+    ilOrient := Orient;
+    if Orient = Vertical then
+      ilPad := 1
+    else
+      ilPad := 0;
+    ilLeftSel := '';
+    ilRightSel := '';
+    ilFlags := DefItemListOptions; {!!.01}
+    if not CircularList.Init then
+      Fail;
+
+    with Colors do begin
+      ilNormColor := TextColor;
+      ilNormMono := TextMono;
+      ilSelectColor := SelItemColor;
+      ilSelectMono := SelItemMono;
+      ilHighColor := HighItemColor;
+      ilHighMono := HighItemMono;
+      ilProtectColor := ProItemColor;
+      ilProtectMono := ProItemMono;
+    end;
+  end;
+
+  destructor MenuItemList.Done;
+    {-Destroy an item list}
+  begin
+    CircularList.Done;
+  end;
+
+  procedure MenuItemList.SetCustomStringProc(CustomProc : mnCustomProc);
+    {-Set a different string customizer}
+  begin
+    ilCustom := CustomProc;
+  end;
+
+  procedure MenuItemList.SetLeftPad(LeftPad : Byte);
+    {-Set the number of characters to left pad each item when displayed}
+  begin
+    ilPad := LeftPad;
+  end;
+
+  procedure MenuItemList.SetNormAttr(Color, Mono : Byte);
+    {-Set attributes for normal item text}
+  begin
+    ilNormColor := Color;
+    ilNormMono := MapMono(Color, Mono);
+  end;
+
+  procedure MenuItemList.SetSelectAttr(Color, Mono : Byte);
+    {-Set attributes for selected item text}
+  begin
+    ilSelectColor := Color;
+    ilSelectMono := MapMono(Color, Mono);
+  end;
+
+  procedure MenuItemList.SetHighAttr(Color, Mono : Byte);
+    {-Set attributes for pick highlight text}
+  begin
+    ilHighColor := Color;
+    ilHighMono := MapMono(Color, Mono);
+  end;
+
+  procedure MenuItemList.SetProtectAttr(Color, Mono : Byte);
+    {-Set attributes for protected item text}
+  begin
+    ilProtectColor := Color;
+    ilProtectMono := MapMono(Color, Mono);
+  end;
+
+  procedure MenuItemList.SetSelectMarker(Left, Right : String);
+    {-Define strings to mark selected items}
+  begin
+    ilLeftSel := Left;
+    ilRightSel := Right;
+  end;
+
+  procedure MenuItemList.CustomizeItem(var Name : String; Key : LongInt;
+                                       Selected, Highlighted : Boolean;
+                                       WPtr : RawWindowPtr);
+    {-Customize the string for the given item}
+  begin
+    {Avoid calling user routine recursively}                   {!!.01}
+    if not ByteFlagIsSet(ilFlags, ilCustomActive) then begin   {!!.01}
+      SetByteFlag(ilFlags, ilCustomActive);                    {!!.01}
+      {Call via procedure pointer}
+      ilCustom(Name, Key, Selected, Highlighted, WPtr);
+      ClearByteFlag(ilFlags, ilCustomActive);                  {!!.01}
+    end;                                                       {!!.01}
+  end;
+
+  procedure MenuItemList.DrawItem(IPtr : MenuItemNodePtr;
+                                  Selected, Highlighted : Boolean;
+                                  WPtr : RawWindowPtr);
+    {-Draw one item}
+  var
+    SPos : Byte;
+    DPos : Byte;
+    R : Byte;
+    C : Byte;
+    B : Byte;  {!!.21}
+    HPos : Byte;
+    ANorm : Byte;
+    S : String;
+  begin
+    with WPtr^, IPtr^ do begin
+      {Get string to display}
+      DisplayInfo(DPos, SPos, S);
+
+      {Add selection string}
+      if Length(ilLeftSel) <> 0 then
+        if Selected then
+          S := ilLeftSel+S
+        else
+          S := CharStr(wBackChar, Length(ilLeftSel))+S;
+      if Length(ilRightSel) <> 0 then
+        if Selected then
+          S := S+ilRightSel
+        else
+          S := S+CharStr(wBackChar, Length(ilRightSel));
+
+      {Pad it to size}
+      if ilPad <> 0 then
+        S := CharStr(wBackChar, ilPad)+S;
+      if ilOrient = Vertical then
+        S := PadCh(S, wBackChar, Width-ilPad);
+
+      {Customize it}
+      CustomizeItem(S, ItemKey, Selected, Highlighted, WPtr);
+
+      {Finish padding it and compute actual coordinates}
+      if ilOrient = Vertical then begin
+        S := PadCh(S, wBackChar, Width);
+        R := DPos;
+        C := 1;
+      end else begin
+        R := 1;
+        C := DPos;
+      end;
+
+      {Write it}
+      if Selected then begin
+        {wFastWrite(S, R, C, ColorMono(ilSelectColor, ilSelectMono));} {!!.21}
+        B := ColorMono(ilSelectColor, ilSelectMono);                   {!!.21}
+        if (SPos <> 0) and (Highlighted) and (ByteFlagIsSet(ilFlags, ilKeepHighlight)) then begin  {!!.21}
+          {draw the item}                                              {!!.21}
+          HPos := ilPad+Length(ilLeftSel)+SPos;                        {!!.21}
+          wFastWrite(Copy(S, 1, HPos-1), R, C, B);                     {!!.21}
+          wFastWrite(Copy(S, HPos+1, 255), R, C+HPos, B);              {!!.21}
+          {draw the select char}                                       {!!.21}
+          B := (B and $F0) or (ColorMono(ilHighColor, ilHighMono) and $0F); {!!.21}
+          wFastWrite(S[HPos], R, C+HPos-1, B);                         {!!.21}
+        end                                                            {!!.21}
+        else                                                           {!!.21}
+          {draw the whole item}                                        {!!.21}
+          wFastWrite(S, R, C, B);                                      {!!.21}
+        {Position cursor for selected item}
+        wGotoXY(C, R);
+      end else if IsProtected or IsSemiProtected then {!!.03}
+        wFastWrite(S, R, C, ColorMono(ilProtectColor, ilProtectMono))
+      else if Highlighted and (SPos > 0) then begin
+        HPos := ilPad+Length(ilLeftSel)+SPos;
+        ANorm := ColorMono(ilNormColor, ilNormMono);
+        wFastWrite(Copy(S, 1, HPos-1), R, C, ANorm);
+        wFastWrite(S[HPos], R, C+HPos-1, ColorMono(ilHighColor, ilHighMono));
+        wFastWrite(Copy(S, HPos+1, 255), R, C+HPos, ANorm);
+      end else
+        wFastWrite(S, R, C, ColorMono(ilNormColor, ilNormMono));
+    end;
+  end;
+
+  procedure MenuItemList.Draw(WPtr : RawWindowPtr;
+                              ShowSelected, ShowHighlight : Boolean);
+    {-Draw entire list of items within window WPtr^}
+  var
+    IPtr : MenuItemNodePtr;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    with WPtr^ do
+      if Size <> 0 then begin
+        {$IFDEF UseMouse}
+        {Mouse off}
+        HideMousePrim(MOn);
+        {$ENDIF}
+
+        IPtr := MenuItemNodePtr(Head);
+        repeat
+          DrawItem(IPtr, ShowSelected and (IPtr = ilCurrent),
+                   ShowHighlight, WPtr);
+          IPtr := MenuItemNodePtr(Next(IPtr));
+        until IPtr = MenuItemNodePtr(Head);
+
+        {$IFDEF UseMouse}
+        {Mouse on}
+        ShowMousePrim(MOn);
+        {$ENDIF}
+      end;
+  end;
+
+  procedure MenuItemList.ilUpdateCurrent(WPtr : RawWindowPtr;
+                                         NewCurrent : MenuItemNodePtr);
+    {-Change the current item and update the screen}
+    {$IFDEF UseMouse}
+  var
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    if NewCurrent <> ilCurrent then begin
+      {$IFDEF UseMouse}
+      HideMousePrim(MOn);
+      {$ENDIF}
+      DrawItem(NewCurrent, True, True, WPtr);
+      DrawItem(ilCurrent, False, True, WPtr);
+      ilCurrent := NewCurrent;
+      {$IFDEF UseMouse}
+      ShowMousePrim(MOn);
+      {$ENDIF}
+    end;
+  end;
+
+  function MenuItemList.ilFirstUnprotected : MenuItemNodePtr;
+    {-Return pointer to first unprotected item}
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    IPtr := MenuItemNodePtr(Head);
+    if (IPtr <> nil) and IPtr^.IsProtected then
+      repeat
+        IPtr := MenuItemNodePtr(Next(IPtr));
+      until not IPtr^.IsProtected or (IPTr = MenuItemNodePtr(Head));
+    ilFirstUnprotected := IPtr;
+  end;
+
+  function MenuItemList.ilHasUnprotected : Boolean;
+    {-Return True if MenuItemList has any unprotected items}
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    IPtr := MenuItemNodePtr(Head);
+    if IPtr <> nil then
+      repeat
+        IPtr := MenuItemNodePtr(Next(IPtr));
+        if not IPtr^.IsProtected then begin
+          ilHasUnprotected := True;
+          Exit;
+        end;
+      until IPtr = MenuItemNodePtr(Head);
+    ilHasUnprotected := False;
+  end;
+
+  function MenuItemList.ilPrevUnprotected : MenuItemNodePtr;
+    {-Return pointer to nearest previous unprotected item}
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    IPtr := ilCurrent;
+    if (IPtr <> nil) and IPtr^.IsProtected then
+      repeat
+        IPtr := MenuItemNodePtr(Prev(IPtr));
+      until not IPtr^.IsProtected or (IPTr = ilCurrent);
+    ilPrevUnprotected := IPtr;
+  end;
+
+  function MenuItemList.ilListHasMoreItems : Boolean;
+    {-Return True if list has more unprotected items than the current one}
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    IPtr := ilCurrent;
+    if IPtr <> nil then
+      repeat
+        IPtr := MenuItemNodePtr(Prev(IPtr));
+        if (IPtr <> ilCurrent) and not IPtr^.IsProtected then begin
+          ilListHasMoreItems := True;
+          Exit;
+        end;
+      until IPTr = ilCurrent;
+    ilListHasMoreItems := False;
+  end;
+
+  procedure MenuItemList.ilHome(WPtr : RawWindowPtr);
+    {-Move to first unprotected item}
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    IPtr := ilFirstUnprotected;
+    if IPtr = nil then
+      Exit;
+    ilUpdateCurrent(WPtr, IPtr);
+  end;
+
+  procedure MenuItemList.ilEnd(WPtr : RawWindowPtr);
+    {-Move to last unprotected item}
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    IPtr := MenuItemNodePtr(Tail);
+    if IPtr = nil then
+      Exit;
+    if IPtr^.IsProtected then
+      repeat
+        IPtr := MenuItemNodePtr(Prev(IPtr));
+      until not IPtr^.IsProtected or (IPTr = MenuItemNodePtr(Tail));
+    ilUpdateCurrent(WPtr, IPtr);
+  end;
+
+  procedure MenuItemList.ilPrev(WPtr : RawWindowPtr);
+    {-Move to previous unprotected item}
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    IPtr := ilCurrent;
+    if IPtr = nil then
+      Exit;
+    repeat
+      IPtr := MenuItemNodePtr(Prev(IPtr));
+    until not IPtr^.IsProtected or (IPTr = ilCurrent);
+    ilUpdateCurrent(WPtr, IPtr);
+  end;
+
+  procedure MenuItemList.ilNext(WPtr : RawWindowPtr);
+    {-Move to next unprotected item}
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    IPtr := ilCurrent;
+    if IPtr = nil then
+      Exit;
+    repeat
+      IPtr := MenuItemNodePtr(Next(IPtr));
+    until not IPtr^.IsProtected or (IPTr = ilCurrent);
+    ilUpdateCurrent(WPtr, IPtr);
+  end;
+
+  function MenuItemList.Orientation : mnOrientation;
+    {-Return orientation of MenuItemList}
+  begin
+    Orientation := ilOrient;
+  end;
+
+  function MenuItemList.CurrentItemPtr : MenuItemNodePtr;
+    {-Return pointer to current item}
+  begin
+    CurrentItemPtr := ilCurrent;
+  end;
+
+  function MenuItemList.CurrentSubPtr : SubMenuPtr;
+    {-Return submenu pointer of current item}
+  begin
+    if ilCurrent = nil then
+      CurrentSubPtr := nil
+    else
+      CurrentSubPtr := ilCurrent^.SubPtr;
+  end;
+
+  function MenuItemList.CurrentKey : LongInt;
+    {-Return key of current item}
+  begin
+    if ilCurrent = nil then
+      CurrentKey := mnNotAKey
+    else
+      CurrentKey := ilCurrent^.ItemKey;
+  end;
+
+  function MenuItemList.FirstKey : LongInt;
+    {-Return key of the first item on the list}
+  begin
+    if Head = nil then
+      FirstKey := mnNotAKey
+    else
+      FirstKey := MenuItemNodePtr(Head)^.ItemKey;
+  end;
+
+  function MenuItemList.FindItemByKey(Key : LongInt) : MenuItemNodePtr;
+    {-Return pointer to matching item, or nil for none}
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    IPtr := ilCurrent;
+    if IPtr <> nil then
+      repeat
+        IPtr := MenuItemNodePtr(Next(IPtr));
+        if IPtr^.ItemKey = Key then begin
+          FindItemByKey := IPtr;
+          Exit;
+        end;
+      until IPTr = ilCurrent;
+    FindItemByKey := nil;
+  end;
+
+  function MenuItemList.FindItemByChar(Ch : Char) : MenuItemNodePtr;
+    {-Return pointer to matching item, or nil for none}
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    IPtr := ilCurrent;
+    if IPtr <> nil then begin
+      Ch := UpCase(Ch);
+      repeat
+        IPtr := MenuItemNodePtr(Next(IPtr));
+        if IPtr^.SelectChar = Ch then begin
+          FindItemByChar := IPtr;
+          Exit;
+        end;
+      until IPTr = ilCurrent;
+    end;
+    FindItemByChar := nil;
+  end;
+
+  function MenuItemList.FindItemByPos(X, Y : Byte; WPtr : RawWindowPtr) : MenuItemNodePtr;
+    {-Return pointer to item at list relative position, or nil for none}
+  var
+    IPtr : MenuItemNodePtr;
+    XMin : Byte;
+    XMax : Byte;
+    YItem : Byte;
+    DPos : Byte;
+    SPos : Byte;
+    Wid : Byte;
+    Vert : Boolean;
+    S : String;
+  begin
+    Vert := (ilOrient = Vertical);
+    if Vert then
+      Wid := WPtr^.Width;
+
+    IPtr := ilCurrent;
+    if IPtr <> nil then
+      repeat
+        IPtr := MenuItemNodePtr(Next(IPtr));
+        IPtr^.DisplayInfo(DPos, SPos, S);
+        if Vert then begin
+          XMin := 1;
+          XMax := Wid;
+          YItem := DPos;
+        end else begin
+          XMin := DPos;
+          XMax := DPos+Length(S)+Length(ilLeftSel)+Length(ilRightSel)-1; {!!.01}
+          YItem := 1;
+        end;
+        if (Y = YItem) and (X >= XMin) and (X <= XMax) then begin
+          FindItemByPos := IPtr;
+          Exit;
+        end;
+      until IPTr = ilCurrent;
+
+    FindItemByPos := nil;
+  end;
+
+  function MenuItemList.ilItemNumber(IPtr : MenuItemNodePtr) : Word;
+    {-Return the ordinal position of item IPtr, 0 if not found}
+  var
+    JPtr : MenuItemNodePtr;
+    Count : Word;
+  begin
+    Count := 1;
+    JPtr := MenuItemNodePtr(Head);
+    if JPtr <> nil then
+      repeat
+        if JPtr = IPtr then begin
+          ilItemNumber := Count;
+          Exit;
+        end;
+        JPtr := MenuItemNodePtr(Next(JPtr));
+      until JPtr = MenuItemNodePtr(Head);
+    ilItemNumber := 0;
+  end;
+
+  procedure MenuItemList.ilSetCurrent(Current : MenuItemNodePtr);
+    {-Set current item. No display update}
+  begin
+    ilCurrent := Current;
+  end;
+
+  procedure MenuItemList.OptimumSize(var W, H : Byte);
+    {-Return optimum window size for the list of items}
+  var
+    IPtr : MenuItemNodePtr;
+    HPtr : MenuItemNodePtr;
+    SLen : Byte;
+    DPos : Byte;
+    SPos : Byte;
+    R : Byte;
+    C : Byte;
+    HPos : Byte;
+    S : String;
+  begin
+    W := 0;
+    H := 0;
+
+    IPtr := MenuItemNodePtr(Head);
+    if IPtr <> nil then begin
+      HPtr := IPtr;
+      repeat
+        with IPtr^ do begin
+          {Get string to display}
+          DisplayInfo(DPos, SPos, S);
+
+          {Account for padding}
+          SLen := Length(S)+Length(ilLeftSel)+Length(ilRightSel)+2*ilPad;
+
+          {Compute actual coordinates}
+          if ilOrient = Vertical then begin
+            R := DPos;
+            C := 1;
+          end else begin
+            R := 1;
+            C := DPos;
+            {Extend window beyond rightmost item to match leftmost item}
+            if IPtr = HPtr then
+              HPos := DPos-1;
+            inc(SLen, HPos);
+          end;
+
+          {Update width and height}
+          if W < C+SLen-1 then
+            W := C+Slen-1;
+          if H < R then
+            H := R;
+
+        end;
+        IPtr := MenuItemNodePtr(Next(IPtr));
+      until IPtr = MenuItemNodePtr(Head);
+    end;
+  end;
+
+  function MenuItemList.ilAddItem(Name : String;
+                                  DisplayPos, SelectPos : Byte;
+                                  Key : LongInt;
+                                  Help : String) : Boolean;
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    New(IPtr, Init(Name, DisplayPos, SelectPos, Key, Help));
+    if IPtr = nil then begin
+      ilAddItem := False;
+      Exit;
+    end;
+    Place(IPtr, ilCurrent);
+    ilCurrent := IPtr;
+    ilAddItem := True;
+  end;
+
+  function MenuItemList.ilAddItemP(NamePtr : StringPtr;
+                                   DisplayPos, SelectPos : Byte;
+                                   Key : LongInt;
+                                   HelpPtr : StringPtr) : Boolean;
+  var
+    IPtr : MenuItemNodePtr;
+  begin
+    New(IPtr, InitP(NamePtr, DisplayPos, SelectPos, Key, HelpPtr));
+    if IPtr = nil then begin
+      ilAddItemP := False;
+      Exit;
+    end;
+    Place(IPtr, ilCurrent);
+    ilCurrent := IPtr;
+    ilAddItemP := True;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor MenuItemList.Load(var S : IdStream);
+    {-Load an item list from a stream}
+  var
+    CurItemNum : Word;
+    Count : Word;
+  begin
+    ilFlags := DefItemListOptions;    {!!.01}
+
+    if not CircularList.Init then
+      Fail;
+
+    {Initialize the data specific to the MenuItemList}
+    ilSearch := nil;
+    S.ReadRange(ilOrient, ilCustom);
+    @ilCustom := S.ReadUserPointer(@NoCustomization);
+    if S.PeekStatus <> 0 then
+      Fail;
+
+    {Read the MenuItemList itself}
+    if not CircularList.Load(S) then
+      Fail;
+
+    {Set the current item}
+    S.Read(CurItemNum, SizeOf(Word));
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    if CurItemNum = 0 then
+      ilCurrent := ilFirstUnprotected
+    else begin
+      ilCurrent := MenuItemNodePtr(Head);
+      Count := 1;
+      while (Count < CurItemNum) and (Next(ilCurrent) <> nil) do begin
+        inc(Count);
+        ilCurrent := MenuItemNodePtr(Next(ilCurrent));
+      end;
+      if ilCurrent^.IsProtected then
+        ilCurrent := ilFirstUnprotected;
+    end;
+  end;
+
+  procedure MenuItemList.Store(var S : IdStream);
+    {-Store an item list to a stream}
+  var
+    CurItemNum : Word;
+  begin
+    {Write the data specific to the MenuItemList}
+    S.WriteRange(ilOrient, ilCustom);
+    S.WriteUserPointer(@ilCustom, ptMenuNoCustomization);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Write the MenuItemList itself}
+    CircularList.Store(S);
+
+    {Write an indicator of the current item number}
+    CurItemNum := ilItemNumber(ilCurrent);
+    S.Write(CurItemNum, SizeOf(Word));
+  end;
+
+{$ENDIF}
+
+  constructor SubMenu.Init(X1, Y1, X2, Y2 : Byte;
+                           Orient : mnOrientation);
+    {-Create a submenu with default options and colors}
+  begin
+    if not SubMenu.InitCustom(X1, Y1, X2, Y2, DefaultColorSet,
+                              DefWindowOptions, Orient)
+    then
+      Fail;
+  end;
+
+  constructor SubMenu.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                 var Colors : ColorSet;
+                                 Options : LongInt;
+                                 Orient : mnOrientation);
+    {-Create a submenu with custom options}
+  begin
+    {Force certain flags}
+    ClearLongFlag(Options, wResizeable);
+    SetLongFlag(Options, wUserContents+wClear);
+    if not RawWindow.InitCustom(X1, Y1, X2, Y2, Colors, Options) then
+      Fail;
+    if not smItems.Init(Orient, Colors) then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  destructor SubMenu.Done;
+    {-Destroy a submenu. Doesn't dispose of descendants. Not good for much}
+  begin
+    smItems.Done;
+    RawWindow.Done;
+  end;
+
+  procedure SubMenu.UpdateContents;
+    {-Update the contents of one submenu}
+  begin
+    smItems.Draw(@Self, True, True);
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor SubMenu.Load(var S : IdStream);
+    {-Load a submenu from a stream}
+  begin
+    {Load the underlying raw window}
+    if not RawWindow.Load(S) then
+      Fail;
+
+    {Read the item list}
+    S.Get(smItems);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure SubMenu.Store(var S : IdStream);
+    {-Store a submenu to a stream}
+  begin
+    {Write the underlying raw window}
+    RawWindow.Store(S);
+
+    {Write the item list}
+    S.Put(smItems);
+  end;
+
+  constructor Menu.Load(var S : IdStream);
+    {-Load a menu system from a stream}
+  var
+    TmpColors : ColorSet;
+  begin
+    {Initialize certain fields so that it's safe to call Done}
+    mnItems.Init(NoOrient, TmpColors);
+    mnStack.Init(0);
+    mnSearch.Init(0);
+
+    {Load the underlying command window}
+    if not CommandWindow.Load(S) then
+      Fail;
+
+    {Set the command processor if necessary}
+    if cwCmdPtr = nil then
+      SetCommandProcessor(MenuCommands);
+
+    {Read fixed data}
+    S.ReadRange(mnFlags, mnLastKey);
+
+    {Read procedure pointers}
+    @mnMove := S.ReadUserPointer(@NoMoveAction);
+    @mnCurrItemProc := S.ReadUserPointer(@NoCurrItemAction);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {Load the main item list}
+    S.Get(mnItems);
+
+    {Allocate the stacks}
+    if not mnStack.Init(MenuDepth) then begin
+      Done;
+      Fail;
+    end;
+    if not mnSearch.Init(MenuDepth) then begin
+      Done;
+      Fail;
+    end;
+
+    {Initialize for first use}
+    mnStackPos := 0;
+    mnCurrItem := nil;
+    ClearFlag(mnFlags, mnCurrItemActive+mnSubPending); {!!.01}
+  end;
+
+  procedure Menu.Store(var S : IdStream);
+    {-Store a menu system to a stream}
+  begin
+    {Store the underlying command window}
+    CommandWindow.Store(S);
+
+    {Store fixed data}
+    S.WriteRange(mnFlags, mnLastKey);
+
+    {Store procedure pointers}
+    S.WriteUserPointer(@mnMove, ptMenuNoMoveAction);
+    S.WriteUserPointer(@mnCurrItemProc, ptMenuNoCurrItemAction);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Store the main item list}
+    S.Put(mnItems);
+  end;
+
+  procedure MenuStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing menus}
+  begin
+    {Register types of parent object}
+    CommandWindowStream(SPtr);
+
+    {Register types unique to the menu}
+    CircularListStream(SPtr);
+    with SPtr^ do begin
+      RegisterType(otItemNode, veItemNode, TypeOf(MenuItemNode),
+                   @MenuItemNode.Store, @MenuItemNode.Load);
+      RegisterType(otItemList, veItemList, TypeOf(MenuItemList),
+                   @MenuItemList.Store, @MenuItemList.Load);
+      RegisterType(otSubMenu, veSubMenu, TypeOf(SubMenu),
+                   @SubMenu.Store, @SubMenu.Load);
+      RegisterType(otMenu, veMenu, TypeOf(Menu),
+                   @Menu.Store, @Menu.Load);
+
+      RegisterPointer(ptMenuNoCustomization, @NoCustomization);
+      RegisterPointer(ptMenuNoMoveAction, @NoMoveAction);
+      RegisterPointer(ptMenuNoCurrItemAction, @NoCurrItemAction);
+      RegisterPointer(ptMenuCommands, @MenuCommands);
+    end;
+  end;
+
+{$ENDIF}

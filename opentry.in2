@@ -1,0 +1,1585 @@
+  {*********************************************************}
+  {*                   OPENTRY.IN2 1.30                    *}
+  {*      Copyright (c) TurboPower Software 1988,1992.     *}
+  {*                 All rights reserved.                  *}
+  {*********************************************************}
+
+
+{!!.01} {numerous additions in this file}
+
+const
+  SpecialExitCommands : ByteSet = [
+    ccTab, ccBackTab, ccNextField, ccWordLeft, ccWordRight, ccPrevField,
+    ccNextRec, ccPrevRec, ccFirstFld, ccLastFld, ccNested, ccDone];
+
+  constructor WindowField.Init(ID : Word;              var Prompt : string;
+                               pRow, pCol : Word;      fRow, fCol : Word;
+                               fWidth, fHeight : Byte; HelpIndex : Word;
+                               Options : LongInt;      IFlags : LongInt;
+                               var Colors : ColorSet;  var CW : CommandWindow);
+    {-Initialize a command window field}
+  var
+    Picture : string[1]; {!!.03}
+  begin
+    {set pointers to the window and its parent}
+    wfWin := @CW;
+
+    {make dummy picture mask}
+    Picture := '' {CharStr(AnyChar, fWidth)} ; {!!.03}
+
+    if not EntryField.InitNPP(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, fHeight,
+      HelpIndex, BlankRange, BlankRange, 0, 0, NullMsgLen, ' ', Options,
+             {!!.02}
+      IFlags or ifMultiLine, Colors) then
+        Fail;
+
+    efValidate := NullValidation;
+  end;
+
+  procedure WindowField.Convert(PostEdit : Boolean);
+  begin
+    {do nothing}
+  end;
+
+  procedure WindowField.Draw(var St : string;        Row, Col : Word;
+                             FA, CA, POffset : Byte; PasswordChar : Char;
+                             var Flags : PictureFlags);
+  begin
+    {do nothing}
+  end;
+
+  procedure WindowField.Edit(Row, Col : Word;     FA, CA : Byte;
+                             PasswordChar : Char; PosCode : Byte;
+                             ReadOnly : Boolean;  var CC : Word;
+                             var ChWord : Word;   var InsertMode : Boolean;
+                             EP : ErrorProc;      UnitCode : Byte;
+                             var CP : CommandProcessor);
+  var
+    Cmd : Word;         {!!.03}
+    Dummy : Boolean;    {!!.03}
+    SaveWinOptions : LongInt;
+    SaveErrorProc : ErrorProc;
+    SaveUnitCode : Word;
+    SaveHelpIndex : Word;
+    SaveExitSetPtr : ByteSetPtr;
+    SaveCPP : CommandProcessorPtr;
+    SaveActiveChild : WindowPtr;
+  begin
+    with wfWin^ do begin
+      {$IFDEF UseMouse}
+        {activate AllMouseEvents option}
+        SaveWinOptions := wFlags;
+        wFlags := wFlags or wAllMouseEvents;
+      {$ENDIF}
+
+      if LongFlagIsSet(sfFlags, sefSwitchCommands) then begin
+        {switch command processors}
+        SaveCPP := cwCmdPtr;
+        cwCmdPtr := @CP;
+      end;
+
+      {switch error handlers, etc.}
+      SaveErrorProc := cwErrorProc;
+      cwErrorProc := EP;
+
+      SaveUnitCode := cwUnitCode;
+      cwUnitCode := UnitCode;
+
+      SaveHelpIndex := wHelpIndex;
+      wHelpIndex := sfHelpIndex;
+
+      SaveExitSetPtr := GetExitCommandPtr;
+      SetExitCommands(@SpecialExitCommands);
+
+      SaveActiveChild := wParentPtr^.ActiveChild;
+      wParentPtr^.SetActiveChild(wfWin);
+
+      {! Note: <Enter> will not work if this is the last field
+         in an entry screen and the wrap mode is stop at edges !}
+
+      {make a selection}
+      repeat
+        wParentPtr^.Process;
+
+        CC := cwCmd;
+        case CC of
+          ccExitAtTop : CC := ccUp;
+          ccExitAtBot : CC := ccDown;
+          ccExitLeft  : CC := ccLeft;
+          ccExitRight : CC := ccRight;
+          {$IFDEF UseMouse}                                             {!!.03}
+          ccMouseDown, ccMouseSel :                                     {!!.03}
+            with EntryScreenPtr(wParentPtr)^ do begin                   {!!.03}
+              Cmd := CC;                                                {!!.03}
+              if not (esEvaluateMouseCommand(Cmd, Dummy, False) or      {!!.12}
+                      ((asNext <> asCurrent) and (asNext <> nil))) then {!!.03}
+                CC := ccNone;                                           {!!.03}
+            end;                                                        {!!.03}
+          {$ENDIF}                                                      {!!.03}
+          ccQuit      : if not LongFlagIsSet(sfOptions, efAllowEscape) then
+                          CC := ccNextField;
+        end;
+      until efOkToAdvance(CC);
+
+      {$IFDEF UseMouse}
+        {restore previous window options}
+        wFlags := SaveWinOptions;
+      {$ENDIF}
+
+      if LongFlagIsSet(sfFlags, sefSwitchCommands) then
+        {restore previous command processor}
+        cwCmdPtr := SaveCPP;
+
+      {restore error handler, etc.}
+      cwErrorProc := SaveErrorProc;
+      cwUnitCode := SaveUnitCode;
+      wHelpIndex := SaveHelpIndex;
+      SetExitCommands(SaveExitSetPtr);
+
+      {reset active window}
+      wParentPtr^.SetActiveChild(SaveActiveChild);
+    end;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor WindowField.Load(var S : IdStream); {!!.03} {rewritten}
+    {-Load a window field from a stream}
+  var
+    WP : WindowPtr;
+    I : Word;
+  begin
+    if WindowFieldParent = nil then begin
+      S.Error(epNonFatal+ecIdNotRegistered);
+      Fail;
+    end;
+
+    if not EntryField.Load(S) then
+      Fail;
+
+    S.Read(I, SizeOf(I));
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {ask the parent for the address of the I'th child window}
+    WP := WindowFieldParent^.ChildPtr(I);
+    if WP = nil then begin
+      S.Error(epNonFatal+ecIdNotRegistered);
+      Done;
+      Fail;
+    end
+    else
+      wfWin := Pointer(WP);
+  end;
+
+  procedure WindowField.Store(var S : IdStream);
+    {-Store a window field from a stream}
+  var
+    I : Word;
+  begin
+    EntryField.Store(S);
+
+    {store only the index for the child window}
+    I := wfWin^.wParentPtr^.ChildIndex(wfWin);
+
+    {not found if I = $FFFF}
+    if (I = $FFFF) then
+      S.Error(epNonFatal+ecIdNotRegistered)
+    else
+      S.Write(I, SizeOf(I));
+  end;
+
+{$ENDIF}
+
+{$IFDEF PickListFields}
+
+  procedure PickEditor(var Field;
+                       Row, Col : Word;
+                       FA, CA : Byte;
+                       PasswordChar : Char;
+                       PosCode : Byte;
+                       ReadOnly : Boolean;
+                       var CC : Word;
+                       var ChWord : Word;
+                       var InsertMode : Boolean;
+                       ErrorRoutine : ErrorProc;
+                       UnitCode : Byte;
+                       var CP : CommandProcessor);
+    {-Editor for pick list fields}
+(*       {!!}
+  const
+    SpecialExitCommands : ByteSet = [
+      ccTab, ccBackTab, ccNextField, ccWordLeft, ccWordRight, ccPrevField,
+      ccNextRec, ccPrevRec, ccFirstFld, ccLastFld, ccNested, ccDone];
+*)
+  var
+    Cmd : Word;           {!!.20}
+    Dummy : Boolean;      {!!.20}
+    ESP : EntryScreenPtr; {!!.20}
+    PEF : PickField absolute Field;
+    SaveCPP : CommandProcessorPtr;
+    SavePickOptions : LongInt;
+    SaveWinOptions : LongInt;
+    SaveUnitCode : Word;
+    SaveHelpIndex : Word;
+    SaveErrorProc : ErrorProc;
+    SaveExitSetPtr : ByteSetPtr;
+    I, J, SaveI : Word;
+    Found : Boolean;
+
+    function IsMatch(I : Word) : Boolean;
+      {-Return True if the field's string is a match for item I}
+    var
+      IType : pkItemType;
+      S : string;
+    begin
+      with PEF, pfPick^ do begin
+        ItemString(I, pkSearch, IType, S); {!!.01}
+        IsMatch := (efEditSt^ = S);
+      end;
+    end;
+
+  begin
+    with PEF, pfPick^ do begin
+      {we're editing}                   {!!.03}
+      SetLongFlag(sfFlags, ifEditing);  {!!.03}
+
+      {clear modified flag}
+      ClearLongFlag(sfFlags, ifModified);
+
+      {find the item corresponding to the current field's value}
+      SaveI := pkChoice;
+      if IsMatch(SaveI) then begin
+        pkInitChoice := SaveI;
+        Found := True;
+      end
+      else begin
+        pkInitChoice := 0;
+        SaveI := 1;
+        I := 1;
+        J := pkItems;
+        Found := False;
+        while (I <= J) and not Found do
+          if IsMatch(I) then begin
+            SaveI := I;
+            pkInitChoice := I;
+            Found := True;
+          end
+          else
+            Inc(I);
+        pkChoice := SaveI;
+      end;
+
+      {activate AllMouseEvents option}
+      SaveWinOptions := wFlags;
+      wFlags := wFlags or wAllMouseEvents;
+
+      {activate pkExitAtEdges if desired}
+      SavePickOptions := pkFlags and pkExitAtEdges;   {!!.13}
+      if LongFlagIsSet(sfOptions, efExitAtEdges) then
+        pkFlags := pkFlags or pkExitAtEdges;
+
+      {deactivate pkSetDefault option}
+      pkFlags := pkFlags and not pkSetDefault;
+
+      {switch command processors}
+      SaveCPP := cwCmdPtr;
+      cwCmdPtr := @CP;
+
+      {switch error handlers, etc.}
+      SaveErrorProc := cwErrorProc;
+      cwErrorProc := ErrorRoutine;
+
+      SaveUnitCode := cwUnitCode;
+      cwUnitCode := UnitCode {ucEntry} ; {!!.01}
+
+      SaveHelpIndex := wHelpIndex;
+      wHelpIndex := sfHelpIndex;
+
+      SaveExitSetPtr := GetExitCommandPtr;
+      SetExitCommands(@SpecialExitCommands);
+
+      {! Note: <Enter> will not work if this is the last field
+         in an entry screen and the wrap mode is stop at edges !}
+
+      {make a selection}
+      ESP := EntryScreenPtr(wStack.TopWindow); {!!.20}
+      repeat
+        {$IFDEF UseMouse}                                     {!!.22}
+        {$IFDEF UseDrag}                                      {!!.20}
+        if cwCmdPtr^.cpOptionsAreOn(cpMouseDrag) then begin   {!!.20}
+          if MouseStatus = LeftButton then                    {!!.20}
+            WaitForButtonUp;                                  {!!.20}
+          ClearMouseEvents;                                   {!!.20}
+        end;                                                  {!!.20}
+        {$ENDIF}                                              {!!.20}
+        {$ENDIF}                                              {!!.22}
+
+        Process;
+
+        CC := cwCmd;
+        case CC of
+          ccExitAtTop : CC := ccUp;
+          ccExitAtBot : CC := ccDown;
+          ccExitLeft  : CC := ccLeft;
+          ccExitRight : CC := ccRight;
+          {$IFDEF UseMouse}                                             {!!.20}
+          ccMouseDown, ccMouseSel :                                     {!!.20}
+            with ESP^ do begin                                          {!!.20}
+              Cmd := CC;                                                {!!.20}
+              if not (esEvaluateMouseCommand(Cmd, Dummy, False) or      {!!.20}
+                      ((asNext <> asCurrent) and (asNext <> nil))) then {!!.20}
+                CC := ccNone;                                           {!!.20}
+            end;                                                        {!!.20}
+          {$ENDIF}                                                      {!!.20}
+          ccQuit :
+            if not LongFlagIsSet(sfOptions, efAllowEscape) then begin
+              CC := ccSelect;
+              pkChoice := SaveI;
+            end;
+        end;
+      until efOkToAdvance(CC);
+
+      {erase the pick window}
+      Erase;
+
+      {evaluate the exit command}
+      I := GetLastChoice;
+      if (cwCmd = ccSelect) and (I <> pkInitChoice) and not ReadOnly then begin
+        {update the field}
+        efEditSt^ := Copy(GetLastChoiceString, 1, efMaxLen); {!!.12}
+
+        {set modified flag}
+        SetLongFlag(sfFlags, ifModified);
+      end;
+
+      {restore previous options}
+      pkFlags := pkFlags or SavePickOptions;  {!!.13}
+      wFlags := SaveWinOptions;
+
+      {restore previous command processor}
+      cwCmdPtr := SaveCPP;
+
+      {restore error handler, etc.}
+      cwErrorProc := SaveErrorProc;
+      cwUnitCode := SaveUnitCode;
+      wHelpIndex := SaveHelpIndex;
+      SetExitCommands(SaveExitSetPtr);
+
+      {we're not editing}                 {!!.03}
+      ClearLongFlag(sfFlags, ifEditing);  {!!.03}
+    end;
+  end;
+
+  constructor PickField.Init(ID : Word;             var Prompt : string;
+                             pRow, pCol : Word;     fRow, fCol : Word;
+                             fWidth : Byte;         HelpIndex : Word;
+                             var EditSt : String;   PadChar : Char;
+                             Options : LongInt;     IFlags : LongInt; {!!.01}
+                             var Colors : ColorSet; var PL : PickList);
+    {-Initialize a pick list field}
+  var
+    Picture : string;
+  begin
+    pfPick := @PL;
+
+    Picture := CharStr(AnyChar, fWidth);
+
+    {force blank trimming on}
+    SetLongFlag(Options, efTrimBlanks);
+    ClearLongFlag(Options, efHouseCursorAtEnd);
+
+    if not EntryField.Init(
+      ID, Prompt, pRow, pCol, Picture, fRow, fCol, fWidth, 1, HelpIndex,
+      BlankRange, BlankRange, fWidth+1, 0, NullValidation,
+      SimpleStringConversion, SimpleDrawString, PickEditor, EditSt, PadChar,
+      Options, IFlags, Colors) then
+        Fail;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor PickField.Load(var S : IdStream);
+    {-Load a pick list field from a stream}
+  begin
+    if not EntryField.Load(S) then
+      Fail;
+
+    pfPick := S.ReadPointer;
+    if (S.PeekStatus <> 0) or (pfPick = nil) then begin
+      InitStatus := epFatal+ecIdUnknown;
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure PickField.Store(var S : IdStream);
+    {-Store a pick list field in a stream}
+  begin
+    EntryField.Store(S);
+    S.WritePointer(pfPick);   {!!.01}
+  end;
+
+{$ENDIF}
+
+  procedure EntryScreen.AddPickStringField(Prompt : string;     pRow, pCol : Word;
+                                           fRow, fCol : Word;   fWidth : Byte;
+                                           HelpIndex : Word;    var EditSt : string;
+                                           var PL : PickList);
+    {-Add a field of type string to be edited with a pick list}
+  begin
+    {check parameters before adding the field}
+    if esParamsOK(Prompt, pRow, pCol, emNullError, fRow, fCol, fWidth) then
+      {allocate field and append it to the linked list}
+      esAppendField(
+        New(PickFieldPtr,
+            Init(asCount, Prompt, pRow, pCol, fRow, fCol, fWidth, HelpIndex,
+                 EditSt, esPadChar, asFieldOptions, esFieldFlags, asColors, PL) ) );
+  end;
+
+{$ENDIF}
+
+  {----- miscellaneous EntryScreen methods------}
+
+  procedure EntryScreen.ChangeValidation(ID : Word; VF : ValidationFunc);
+    {-Change the validation routine for the specified field}
+  var
+    EFP : EntryFieldPtr;
+  begin
+    {find the field}
+    EFP := Pointer(FindField(ID));
+    if EFP <> nil then
+      EFP^.efValidate := VF;
+  end;
+
+  procedure EntryScreen.ChangeConversion(ID : Word; CP : ConversionProc);
+    {-Change the conversion routine for the specified field}
+  var
+    EFP : EntryFieldPtr;
+  begin
+    {find the field}
+    EFP := Pointer(FindField(ID));
+    if EFP <> nil then
+      EFP^.efConvert := CP;
+  end;
+
+  procedure EntryScreen.ChangeRange(ID : Word; var RangeLo, RangeHi);
+    {-Change the valid range for the specified field}
+  var
+    EFP : EntryFieldPtr;
+  begin
+    {find the field}
+    EFP := Pointer(FindField(ID));
+    if EFP <> nil then
+      with EFP^ do
+        if efDataSize <= SizeOf(RangeType) then begin
+          Move(RangeLo, efRangeLo, SizeOf(RangeType)); {!!.02}
+          Move(RangeHi, efRangeHi, SizeOf(RangeType)); {!!.02}
+        end;
+  end;
+
+  function EntryScreen.CurrentFieldModified : Boolean;
+    {-Return True if current field was modified}
+  begin
+    CurrentFieldModified := LongFlagIsSet(asCurrent^.sfFlags, ifModified);
+  end;
+
+  procedure EntryScreen.ChangeRequired(ID : Word; IsOn : Boolean);
+    {-Modify the required status of a field after it has been added}
+  var
+    EFP : EntryFieldPtr;
+  begin
+    EFP := Pointer(FindField(ID));
+    if EFP <> nil then
+      with EFP^ do
+        if IsOn then
+          SetLongFlag(sfOptions, efRequired)
+        else
+          ClearLongFlag(sfOptions, efRequired);
+  end;
+
+  function EntryScreen.RevalidateAll(var EFP : EntryFieldPtr;
+                                     var ErrCode : Word;
+                                     var ErrMsg : StringPtr) : Boolean;
+    {-Re-validate all unprotected fields in entry screen. If an error is
+      found, EFP will point to the field with the error, an error code and
+      error message will be returned, and RevalidateAll will be False.}
+  var
+    SFP : SelectFieldPtr absolute EFP;
+  begin
+    RevalidateAll := False; {!!.03}
+    SFP := Pointer(asFields.Head);
+    while (SFP <> nil) do begin
+      {check only unprotected fields}
+      if not asFieldIsProtected(SFP) then
+        with EntryFieldPtr(SFP)^ do begin
+          {make sure efEditSt^ is initialized}
+          Convert(False);
+
+          {call the validation routine}
+          if not Validate(ErrCode, ErrMsg) then
+            Exit;
+        end;
+
+      {next field}
+      SFP := Pointer(SFP^.dlNext);
+    end;
+
+    RevalidateAll := True;
+  end;
+
+  procedure EntryScreen.GetFieldCoordinates(var Row, Col, Wid : Byte);
+    {-Returns the absolute screen coordinates for the current field. This
+      routine is intended to be called only from within a pre-edit
+      routine!}
+  var
+    esCurrent : EntryFieldPtr absolute asCurrent;
+    fRow, fCol : Integer;
+  begin
+    {get screen coordinates for the current field}
+    with esCurrent^ do begin
+      if asFixCoordinates(sfFRow, sfFCol, afWidth, sfFHeight, fRow, fCol) then {}; {!!.22}
+      Row := fRow;
+      Col := fCol;
+      Wid := afWidth; {!!.22}
+    end;
+  end;
+
+  function EntryScreen.GetLastField : EntryFieldPtr;
+    {-Return pointer to last field in entry screen}
+  begin
+    GetLastField := Pointer(asFields.Tail);
+  end;
+
+  procedure EntryScreen.VisitAllEntryFields(FProc : esFieldProc; var D);
+    {-Call the specified procedure for all fields in the entry screen}
+  var
+    EFP : EntryFieldPtr;
+  begin
+    EFP := Pointer(asFields.Head);
+    while EFP <> nil do begin
+      FProc(EFP, D, @Self);
+      EFP := Pointer(EFP^.dlNext);
+    end;
+  end;
+
+  {----- methods for ScrollingEntryScreens ------------}
+
+  constructor ScrollingEntryScreen.Init(X1, Y1, X2, Y2 : Byte);
+    {-Initialize the entry screen}
+  begin
+    {initialize using default window options}
+    if not ScrollingEntryScreen.InitCustom(X1, Y1, X2, Y2, DefaultColorSet,
+                                           DefWindowOptions) then
+      Fail;
+  end;
+
+  constructor ScrollingEntryScreen.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                              var Colors : ColorSet;
+                                              Options : LongInt);
+    {-Initialize the entry screen}
+  begin
+    {initialize our special fields}
+    sesScrollable := False;
+    sesRowOfs     := 0;
+    sesColOfs     := 0;
+
+    {initialize the virtual screen}
+    sesVS.Alloc(0, 0);
+
+    {perform normal entry screen initialization}
+    if not EntryScreen.InitCustom(X1, Y1, X2, Y2, Colors, Options) then
+      Fail;
+
+    {make sure window is resizeable}
+    wOptionsOn(wResizeable);
+  end;
+
+  constructor ScrollingEntryScreen.sesBind;
+    {-Force the VMT link to that of a ScrollingEntryScreen}
+  begin
+    {calling another constructor without an 'ObjectName.' prefix will change
+     the VMT link}
+    sesBindPrim;
+  end;
+
+  constructor ScrollingEntryScreen.sesBindPrim;
+    {-Dummy constructor called by sesBind to change the VMT link}
+  begin
+  end;
+
+  destructor ScrollingEntryScreen.Done;
+    {-Deallocate field list, screen buffers}
+  begin
+    if sesScrollable then
+      sesVS.Done;
+
+    EntryScreen.Done;
+  end;
+
+  procedure ScrollingEntryScreen.AllocateScreen;
+    {-Call after last field added. Returns False if unable to allocate
+      virtual screen.}
+  var
+    HighRow : Word;
+    HighCol : Word;
+    {$IFDEF UseAdjustableWindows}
+    MinWidth : Word;
+    MinHeight : Word;
+    {$ENDIF}
+    EFP : EntryFieldPtr;
+    TFP : TextFieldPtr;
+    HD  : Byte;
+  begin
+    {do this only once}
+    if sesScrollable then
+      Exit
+    else
+      sesScrollable := True;
+
+    {check for pending error}
+    if cwGetLastError <> 0 then
+      Exit;
+
+    {scan the list looking for the extreme bounds of the selection window}
+    HighRow := 1;
+    HighCol := 1;
+    {$IFDEF UseAdjustableWindows}
+    MinWidth := wMinW;
+    MinHeight := wMinH;
+    {$ENDIF}
+
+    HD := Ord((esLeftD <> #0) and (esRightD <> #0));
+    EFP := Pointer(asFields.Head);
+    while EFP <> nil do
+      with EFP^ do begin
+        {check prompt}
+        if sfPWidth <> 0 then begin
+          HighRow := MaxWord(HighRow, sfPRow);
+          HighCol := MaxWord(HighCol, sfPCol+Pred(sfPWidth));
+        end;
+
+        {check field}
+        HighRow := MaxWord(HighRow, sfFRow+Pred(sfFHeight));
+        HighCol := MaxWord(HighCol, sfFCol+Pred(afWidth)+HD); {!!.22}
+        {$IFDEF UseAdjustableWindows}
+        MinHeight := MaxWord(MinHeight, sfFHeight);
+        MinWidth := MaxWord(MinWidth, afWidth+HD+HD); {!!.22}
+        {$ENDIF}
+
+        {follow link}
+        EFP := Pointer(EFP^.dlNext);
+      end;
+
+    {scan the text field list too}
+    TFP := Pointer(asTextFields.Head);
+    while TFP <> nil do
+      with TFP^ do begin
+        HighRow := MaxWord(HighRow, tfRow+Pred(tfHeight)); {!!.03}
+        HighCol := MaxWord(HighCol, tfCol+Pred(tfWidth));  {!!.03}
+
+        {follow link}
+        TFP := Pointer(TFP^.slNext);
+      end;
+
+    {try to allocate the virtual screen}
+    if not sesVS.Alloc(HighRow, HighCol) then
+      GotError(epFatal+ecOutOfMemory, emInsufficientMemory)
+    {$IFDEF UseAdjustableWindows}
+    else
+      {set the limits to use when resizing the window}
+      SetSizeLimits(MinWidth, MinHeight, wMaxW, wMaxH);
+    {$ELSE}
+    ;
+    {$ENDIF}
+  end;
+
+  procedure ScrollingEntryScreen.UpdateContents;
+    {-Redraw the window}
+  var
+    SFP : SelectFieldPtr;
+    ID : Word;
+    SaveEditFlag : Boolean; {!!.01}
+  begin
+    {do nothing if there are no fields}           {!!.11}
+    if asCount = 0 then begin                     {!!.11}
+      GotError(epFatal+ecNoFields, emNullError);  {!!.11}
+      Exit;                                       {!!.11}
+    end;                                          {!!.11}
+
+    if not sesScrollable then begin
+      AllocateScreen;
+      if cwGetLastError <> 0 then
+        Exit;
+    end;
+
+    {reset flags if necessary}
+    asResetFlags;
+    if RawError <> 0 then                         {!!.12}
+      Exit;                                       {!!.12}
+
+    if not ByteFlagIsSet(asOptions, slFastUpdates) then begin
+      {switch to virtual screen}
+      sesVS.Activate;
+
+      {clear the virtual screen}
+      sesVS.Clear(ColorMono(wTextColor, wTextMono), wBackChar); {!!.12}
+
+      {draw background, if any}  {!!.03}
+      DrawBackground;            {!!.03}
+
+      {draw text fields}
+      asDrawAllTextFields(False);
+
+      {temporarily change asCurID}
+      ID := asCurID;
+      asCurID := BadFieldID;
+
+      {start with first field}
+      SFP := Pointer(asFields.Head);
+      while SFP <> nil do
+        with SFP^ do begin                                   {!!.01}
+          {draw this field}
+          SaveEditFlag := LongFlagIsSet(sfFlags, ifEditing); {!!.01}
+          ClearLongFlag(sfFlags, ifEditing);                 {!!.01}
+          asDrawKnownField(SFP);
+          if SaveEditFlag then                               {!!.01}
+            SetLongFlag(sfFlags, ifEditing);                 {!!.01}
+
+          {point to next field in list}
+          SFP := Pointer(dlNext);                            {!!.01}
+        end;
+
+      {restore current ID}
+      asCurID := ID;
+
+      {call user screen update proc}
+      asUpdate;
+
+      {indicate that we've done this once}
+      SetByteFlag(asOptions, slFastUpdates);
+
+      {switch to physical screen}
+      sesVS.Deactivate;
+    end;
+
+    {make sure the current field is on the screen}
+    asFixWindow(False, ByteFlagIsSet(asOptions, esScrollByPage));
+
+    {copy virtual screen to physical screen}
+    VScreenToScreen;
+
+    {are we being redrawn while editing?}                    {!!.01}
+    if LongFlagIsSet(asCurrent^.sfFlags, ifEditing) then     {!!.01}
+      asDrawKnownField(asCurrent);                           {!!.01}
+
+    {$IFDEF UseScrollBars}
+    {update scroll bars}
+    asUpdateScrollBars;
+    {$ENDIF}
+
+    StackWindow.UpdateContents; {!!.13}
+  end;
+
+  function ScrollingEntryScreen.asFixCoordinates(InRow, InCol : Word; Wid, Ht : Byte;
+                                                 var OutRow, OutCol : Integer) : Boolean;
+    {-Adjust screen coordinates based on window/scrolling factors}
+  begin
+    asFixCoordinates := True;
+    OutRow := InRow;
+    OutCol := InCol;
+    if VirtualSegment <> sesVS.vsVideoSeg then begin
+      Inc(OutRow, Pred(Integer(wYL))-sesRowOfs);
+      Inc(OutCol, Pred(Integer(wXL))-sesColOfs);
+      if (OutRow < wYL) or (OutRow+Pred(Ht) > wYH) or
+         (OutCol < wXL) or (OutCol+Pred(Wid) > wXH) then
+           asFixCoordinates := False;
+    end;
+  end;
+
+  function ScrollingEntryScreen.asMaximumRow : Word;
+    {-Return maximum row coordinate relative to window}
+  begin
+    asMaximumRow := $FF00;
+  end;
+
+  function ScrollingEntryScreen.asMaximumCol : Word;
+    {-Return maximum column coordinate relative to window}
+  begin
+    asMaximumCol := $FF00;
+  end;
+
+  procedure ScrollingEntryScreen.asDrawKnownField(SFP : SelectFieldPtr);
+    {-Draw the specified field}
+  begin
+    if not sesScrollable then begin
+      GotError(epFatal+ecNotScrollable, emNullError);
+      Exit;
+    end;
+
+    {make sure the virtual screen isn't already active}
+    if VirtualSegment <> sesVS.vsVideoSeg then begin
+      {activate virtual screen}
+      sesVS.Activate;
+
+      {draw it on the virtual screen}
+      EntryScreen.asDrawKnownField(SFP);
+
+      {switch to physical screen}
+      sesVS.Deactivate;
+    end;
+
+    {draw it again on the physical screen}
+    EntryScreen.asDrawKnownField(SFP);
+  end;
+
+  procedure ScrollingEntryScreen.asPageUpOrDown(Delta : Integer);
+    {-Process PgUp/PgDn commands}
+    {-Note: Page calculations treat 0 as first page #}
+  label
+    Restart;
+  var
+    SFP     : SelectFieldPtr absolute asNext;
+    SaveP   : SelectFieldPtr;
+    WHeight : Integer;
+    MaxPage : Integer;
+    CurPage : Integer;
+    NewPage : Integer;
+    NewRow  : Integer;
+    CurCol  : Integer;
+  begin
+    with asCurrent^ do begin
+      {make sure we know the first/last rows}
+      asResetFlags;
+
+      WHeight := Succ(wYH-wYL);
+      MaxPage := Pred(sesVS.vRows) div WHeight;
+      CurPage := Pred(sfFRow+sfFRPos-1) div WHeight;
+
+Restart:
+      {don't switch pages on PgUp if start of CurPage not on screen}
+      if (Delta < 0) and (sesRowOfs > (CurPage * WHeight)) and (CurPage = MaxPage-1) then
+      begin                  {!!.01}
+        NewPage := CurPage;  {!!.01}
+        Delta := 0;          {!!.01}
+      end                    {!!.01}
+      else
+        NewPage := CurPage + Delta;
+
+      {don't go too far}
+      if (NewPage < 0) then
+        NewPage := 0
+      else if (NewPage > MaxPage) then
+        NewPage := MaxPage;
+
+      if (NewPage = MaxPage) and (CurPage = MaxPage) and (Delta > 0) then
+        {special case--PgDn while already on last page}
+        NewRow := asMaxRow
+      else begin
+        NewRow := Succ(NewPage * WHeight);
+        if NewRow < asMinRow then
+          NewRow := asMinRow;
+      end;
+      CurCol := sfFCol+Pred(sfFCPos);
+
+      if NewRow < sfFRow then begin
+        SFP := Pointer(asFields.Head);
+        SaveP := SFP;
+      end
+      else begin
+        SaveP := asCurrent;
+        if (NewRow = sfFRow) or (SaveP^.dlNext = nil) then
+          SFP := SaveP
+        else
+          SFP := Pointer(SaveP^.dlNext);
+      end;
+
+      repeat
+        {find first field on row}
+        while (SFP <> nil) and (SFP^.sfFRow+Pred(SFP^.sfFHeight) < NewRow) do begin
+          if not asFieldIsProtected(SFP) then
+            SaveP := SFP;
+          SFP := Pointer(SFP^.dlNext);
+        end;
+
+        if SFP = nil then
+          SFP := SaveP;
+
+        if SFP <> nil then begin
+          NewRow := SFP^.sfFRow;
+          {if Delta < 0 and we're still on same page try going back another
+           page}
+          if (Delta < 0) and (Pred(NewRow) div WHeight = CurPage) then
+            if (NewPage > 0) then begin
+              Dec(Delta);
+              goto Restart;
+            end;
+          if (SFP^.sfFHeight > 1) and not asFieldIsProtected(SFP) then
+            Exit
+          else if asFindBestField(CurCol) then
+            Exit
+          else begin
+            Inc(NewRow);
+            if (NewRow > asMaxRow) and (SaveP <> nil) then begin
+              SFP := SaveP;
+              if asFindBestField(CurCol) then
+                Exit;
+            end;
+          end;
+        end;
+      until (SFP = nil) or (NewRow > asMaxRow);
+      SFP := nil
+    end;
+  end;
+
+  procedure ScrollingEntryScreen.VScreenToScreen;
+    {-Copy the virtual screen to the physical screen}
+  type
+    XY = record
+           X, Y : Byte;
+         end;
+  var
+    {$IFDEF UseMouse}
+    SaveMouse : Boolean;
+    {$ENDIF}
+    SaveWindMin : Word;
+    SaveWindMax : Word;
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(SaveMouse);
+    {$ENDIF}
+
+    {save/reset current window coordinates}
+    SaveWindMin := WindMin;
+    SaveWindMax := WindMax;
+    XY(WindMin).X := Pred(wXL);
+    XY(WindMin).Y := Pred(wYL);
+    XY(WindMax).X := Pred(wXH);
+    XY(WindMax).Y := Pred(wYH);
+
+    {copy the virtual screen to the physical screen}
+    sesVS.CopyToWindow(sesRowOfs+1, sesColOfs+1);
+
+    {restore current window coordinates}
+    WindMin := SaveWindMin;
+    WindMax := SaveWindMax;
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SaveMouse);
+    {$ENDIF}
+  end;
+
+  procedure ScrollingEntryScreen.asFixWindow(Redraw, ScrollByPage : Boolean);
+    {-Fix the edit window if necessary}  {!!.10} {numerous changes}
+  var
+    Scrolled : Boolean;
+    RowAtTop : Integer;
+    RowAtBottom : Integer;
+    ColAtLeft : Integer;
+    ColAtRight : Integer;
+    FirstCol : Word;
+    LRow : Integer;
+    HRow : Integer;
+    LCol : Integer;
+    HCol : Integer;
+    PLCol : Integer;
+    FHeight : Word;
+    WHeight : Word;
+    Width1 : Word;
+    HavePrompt : Boolean;
+    HD : Byte;
+    SaveRowOffset : Integer;
+    sesCurrent : EntryFieldPtr absolute asCurrent;
+
+    procedure ScrollRight(Cols : Integer);
+    var
+      MaxColOfs : Integer;
+    begin
+      if Cols <> 0 then begin
+        {make sure we don't scroll too far}
+        if Cols < -sesColOfs then
+          sesColOfs := 0
+        else
+          Inc(sesColOfs, Cols);
+        Scrolled := True;
+      end;
+
+      MaxColOfs := sesVS.vCols-Width1-1;
+      if (MaxColOfs > 0) and (sesColOfs > MaxColOfs) then begin
+        sesColOfs := MaxColOfs;
+        Scrolled := True;
+      end;
+    end;
+
+    procedure ScrollDown(Rows : Integer);
+    var
+      StartOfLastPage, NewRowAtBottom : Integer;
+    begin
+      StartOfLastPage := sesVS.vRows-Pred(WHeight);
+
+      if Rows <> 0 then begin
+        if ScrollByPage then
+          {round to nearest page boundary}
+          sesRowOfs := (Pred(LRow) div WHeight) * WHeight
+        else
+          Inc(sesRowOfs, Rows);
+
+        {make sure we don't scroll too far}
+        if sesRowOfs < 0 then
+          sesRowOfs := 0
+        else if sesRowOfs > Pred(LRow) then
+          if (LRow >= RowAtTop) and (HRow <= RowAtBottom) then
+            sesRowOfs := SaveRowOffset
+          else
+            sesRowOfs := Pred(LRow);
+
+        {make sure we scroll far enough}
+        if (FHeight <= WHeight) then begin
+          NewRowAtBottom := Succ(sesRowOfs)+(wYH-wYL);
+          if HRow > NewRowAtBottom then
+            Inc(sesRowOfs, HRow - NewRowAtBottom);
+        end;
+      end;
+
+      if (StartOfLastPage > 0) and (sesRowOfs >= StartOfLastPage) then
+        {make sure end of last page is displayed at bottom of window}
+        sesRowOfs := Pred(StartOfLastPage);
+  end;
+
+  begin
+    if not sesScrollable then begin
+      GotError(epFatal+ecNotScrollable, emNullError);
+      Exit;
+    end;
+
+    {make sure we know the first and last rows}
+    asResetFlags;
+
+    FirstCol := SelectFieldPtr(asFields.Head)^.sfFCol;
+    with sesCurrent^ do begin
+      SaveRowOffset := sesRowOfs;
+      RowAtTop := Succ(sesRowOfs);
+      RowAtBottom := RowAtTop+(wYH-wYL);
+      Width1 := (wXH-wXL);
+      FHeight := sfFHeight;
+      WHeight := Succ(wYH-wYL);
+      ColAtLeft := Succ(sesColOfs);
+      ColAtRight := ColAtLeft+Width1;
+      HavePrompt := sfPWidth <> 0;
+
+      {figure out which rows we need displayed}
+      LRow := sfFRow;
+      HRow := sfFRow+Pred(FHeight);
+      if HavePrompt and not ScrollByPage then
+        if (sfPRow < LRow) and (HRow-sfPRow < WHeight) then
+          LRow := sfPRow
+        else if (sfPRow > HRow) and (sfPRow-LRow < WHeight) then
+          HRow := sfPRow;
+
+      {figure out which columns we need displayed}
+      HD := Ord( (esLeftD <> #0) and (esRightD <> #0)
+                 and not LongFlagIsSet(sfFlags, ifMultiLine) );
+      LCol := sfFCol-HD;
+      HCol := sfFCol+Pred(afWidth)+HD; {!!.22}
+
+      {ignore delimiters if they won't fit}
+      if (HD = 1) and ((HCol-LCol) > Width1) then begin
+        Inc(LCol);
+        Dec(HCol);
+      end
+      else if HavePrompt then begin
+        {try to get both the prompt and the edit field on screen at once}
+        PLCol := sfPCol+sfPWidth-1;
+        if (sfPCol < LCol) and (HCol-sfPCol <= Width1) then
+          LCol := sfPCol;
+        if (PLCol > HCol) and (PLCol-LCol <= Width1) then
+          HCol := PLCol;
+      end;
+
+      {scroll the window vertically if necessary}
+      if sesVS.vRows {asMaxRow} <= WHeight then        {!!.11}
+        {force original alignment if everything fits}
+        ScrollDown(-sesRowOfs)
+      else if (LRow <= asMinRow) and (sesRowOfs > 0) and (HRow < WHeight) then
+        {force original alignment if this is the first row}
+        ScrollDown(-sesRowOfs)
+      else if (HRow >= asMaxRow) and (sesVS.vRows > RowAtBottom) then
+        {force last row to be displayed if this is on the last row}
+        ScrollDown(sesVS.vRows-RowAtBottom)
+      else if HRow > RowAtBottom then
+        {scroll window to allow hidden field to be displayed}
+        ScrollDown(HRow-RowAtBottom)
+      else if LRow < RowAtTop then
+        {scroll window to allow hidden field to be displayed}
+        ScrollDown(LRow-RowAtTop)
+      else
+        {make sure end of last page is displayed at bottom if appropriate}
+        ScrollDown(0);
+      Scrolled := (sesRowOfs <> SaveRowOffset);
+
+      {scroll the window horizontally if necessary}
+      if sesVS.vCols <= Succ(Width1) then
+        {force original alignment if everything fits}
+        ScrollRight(-sesColOfs)
+      else if (LCol <= FirstCol) and (Width1 >= HCol-1) then
+        {force original alignment}
+        ScrollRight(-sesColOfs)
+      else if (LCol < ColAtLeft) and (Width1 >= HCol-LCol) then
+        {force leftmost column to be displayed at left edge of window}
+        ScrollRight(LCol-ColAtLeft)
+      else if HCol > ColAtRight then
+        {make sure rightmost column is in view}
+        ScrollRight(HCol-ColAtRight)
+      else
+        {make sure we aren't scrolled too far}
+        ScrollRight(0);
+
+      if Redraw and Scrolled then
+        {update physical screen}
+        VScreenToScreen;
+    end;
+  end;
+
+{$IFDEF UseStreams}
+
+  {----------- streams ----------}
+
+  function EntryScreen.esFixOneUserVar(var IdS : IdStream;
+                                       EFP : EntryFieldPtr) : Boolean;
+    {-Fix up one user variable pointer}
+  var
+    IP : IdNodePtr;
+    MinO, MaxO : Word;
+  begin
+    esFixOneUserVar := False;
+    if EFP = nil then
+      Exit;
+
+    with EFP^, OS(efVarPtr) do begin
+      {is the variable within the user record?}
+      MinO := OS(esUserRecPtr).O;
+      MaxO := MinO+esUserRecSize-1;
+      if (esUserRecPtr <> nil) and (esUserRecSize > 0) and
+{$IFNDEF VIRTUALPASCAL}
+              (S = OS(esUserRecPtr).S) and
+{$ENDIF}
+              (O >= MinO) and (O <= MaxO) then begin
+        {store ptEntryUserRec as the segment, and adjust the offset}
+        Dec(O, MinO);
+{$IFDEF VIRTUALPASCAL}
+        O := O or ( ptEntryUserRec shl 16 );
+{$ELSE}
+        S := ptEntryUserRec;
+{$ENDIF}
+      end
+      else begin
+        {is the variable's address registered?}
+        IP := IdS.idRegistered.FindPointer(efVarPtr);
+        if IP = nil then
+          Exit
+        else with IP^ do begin
+{$IFDEF VIRTUALPASCAL}
+          O := idCode shl 16 or idVer;
+{$ELSE}
+          {store the id code in the segment, the version in the offset}
+          S := idCode;
+          O := idVer;
+{$ENDIF}
+        end;
+      end;
+    end;
+
+    esFixOneUserVar := True;
+  end;
+
+  function EntryScreen.esFixUserVars(var IdS : IdStream;
+                                     var EFP : EntryFieldPtr) : Boolean;
+    {-Fix up all user variable pointers}
+  begin
+    esFixUserVars := True;
+    EFP := EntryFieldPtr(asFields.Head);
+    while EFP <> nil do
+      if esFixOneUserVar(IdS, EFP) then
+        EFP := EntryFieldPtr(EFP^.dlNext)
+      else begin
+        esFixUserVars := False;
+        Exit;
+      end;
+  end;
+
+  function EntryScreen.esRestoreOneUserVar(var IdS : IdStream;
+                                           EFP : EntryFieldPtr) : Boolean;
+    {-Restore one user variable pointer}
+  var
+    IP : IdNodePtr;
+  begin
+    esRestoreOneUserVar := False;
+    if EFP = nil then
+      Exit;
+
+    with EFP^, OS(efVarPtr) do
+      {segment has the type code}
+{$IFDEF VIRTUALPASCAL}
+      if ( O shr 16 ) and ptEntryUserRec = ptEntryUserRec then
+{$ELSE}
+      if S = ptEntryUserRec then
+{$ENDIF}
+        {a code of ptEntryUserRec means it's part of the user record}
+        if esUserRecPtr = nil then
+          {no user record set up}
+          Exit
+        else begin
+          {offset is relative to start of user record}
+{$IFDEF VIRTUALPASCAL}
+          O := O and not ( ptEntryUserRec shl 16 );
+{$ELSE}
+          S := OS(esUserRecPtr).S;
+{$ENDIF}
+          Inc(O, OS(esUserRecPtr).O);
+        end
+      else begin
+        {segment has the code, offset has the version}
+{$IFDEF VIRTUALPASCAL}
+        IP := IdS.idRegistered.FindByCodeVer(O shr 16, O and $FFFF);
+{$ELSE}
+        IP := IdS.idRegistered.FindByCodeVer(S, O);
+{$ENDIF}
+        if IP = nil then
+          Exit
+        else
+          efVarPtr := IP^.StorePtr;
+      end;
+
+    esRestoreOneUserVar := True;
+  end;
+
+  function EntryScreen.esRestoreUserVars(var IdS : IdStream;
+                                         Last : EntryFieldPtr) : Boolean;
+    {-Restore all user variable pointers}
+  var
+    EFP : EntryFieldPtr;
+  begin
+    esRestoreUserVars := False;
+    EFP := EntryFieldPtr(asFields.Head);
+
+    while EFP <> Last do
+      if esRestoreOneUserVar(IdS, EFP) then
+        EFP := EntryFieldPtr(EFP^.dlNext)
+      else
+        Exit;
+
+    esRestoreUserVars := True;
+  end;
+
+  constructor EntryScreen.Load(var S : IdStream);
+    {-Load an entry screen from a stream}
+  var                                        {!!.01}
+    WFP : WindowPtr;                         {!!.01}
+    F : Boolean;                             {!!.01}
+  begin
+    esUserRecPtr := nil;
+    esCFF := DefClearFirstFunc;
+
+    {Load the underlying raw selector}
+    WFP := WindowFieldParent;                {!!.01}
+    WindowFieldParent := @Self;              {!!.01}
+    F := not AbstractSelector.Load(S);       {!!.01}
+    WindowFieldParent := WFP;                {!!.01}
+    if F then                                {!!.01}
+      Fail;                                  {!!.01}
+
+    {set the command processor if necessary}
+    if cwCmdPtr = nil then
+      SetCommandProcessor(EntryCommands);
+
+    {read data specific to the entry screen}
+    @esPreEditProc := S.ReadPointer;
+    @esPostEditProc := S.ReadPointer;
+    @esValidateFunc := S.ReadPointer;
+    S.ReadRange(esLeftD, esUserRecPtr);
+    esUserRecPtr := S.ReadPointer;
+
+    {check the error status}
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {allocate the user's record if necessary}
+    if (esUserRecSize <> 0) and (esUserRecPtr = nil) then begin  {!!.03}
+      if not GetMemCheck(esUserRecPtr, esUserRecSize) then begin
+        InitStatus := epFatal+ecOutOfMemory;
+        Done;
+        Fail;
+      end
+      else
+        SetByteFlag(asOptions, esDeallocUserRec);
+    end                                             {!!.03}
+    else                                            {!!.03}
+      ClearByteFlag(asOptions, esDeallocUserRec);   {!!.03}
+
+    {fix up the addresses in the entry fields}
+    if not esRestoreUserVars(S, nil) then begin
+      InitStatus := epFatal+ecIdUnknown;
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure EntryScreen.Store(var S : IdStream);
+    {-Store an entry screen in a stream}
+  var
+    EFP : EntryFieldPtr;
+  begin
+    {try to fix up the addresses in the entry fields}
+    if not esFixUserVars(S, EFP) then begin
+      {we failed--undo what we did}
+      if not esRestoreUserVars(S, EFP) then {internal error} ;
+
+      {report the error}
+      S.Error(epNonFatal+ecIdNotRegistered);
+      Exit;
+    end;
+
+    {Store the raw selector}
+    AbstractSelector.Store(S);
+
+    {restore the addresses in the entry fields}
+    if not esRestoreUserVars(S, EFP) then {internal error} ;
+
+    {Write data specific to the entry screen}
+    S.WriteUserPointer(@esPreEditProc, ptNil);
+    S.WriteUserPointer(@esPostEditProc, ptNil);
+    S.WriteUserPointer(@esValidateFunc, ptNil);
+    S.WriteRange(esLeftD, esUserRecPtr);
+    S.WriteUserPointer(esUserRecPtr, ptNil);
+  end;
+
+  procedure EntryScreen.SetUserRecord(var UserRec; UserRecSize : Word);
+    {-Set the address and size of the user record}
+  begin
+    esUserRecPtr := @UserRec;
+    esUserRecSize := UserRecSize;
+  end;
+
+  function EntryScreen.GetUserRecord : Pointer;
+    {-Return a pointer to the user record}
+  begin
+    GetUserRecord := esUserRecPtr;
+  end;
+
+  function EntryScreen.GetUserRecordSize : Word;
+    {-Return the size of the user record}
+  begin
+    GetUserRecordSize := esUserRecSize;
+  end;
+
+  constructor ScrollingEntryScreen.Load(var S : IdStream);
+    {-Load a scrolling entry screen from a stream}
+  begin
+    {initialize virtual screen in case Done is called}
+    sesScrollable := False;
+    sesVS.Alloc(0, 0);
+
+    {Load the underlying entry screen}
+    if not EntryScreen.Load(S) then
+      Fail;
+
+    {read data specific to the scrolling entry screen}
+    S.ReadRange(sesRowOfs, sesVS);
+
+    {check the error status}
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {allocate the virtual screen}
+    AllocateScreen;
+    if cwGetLastError <> 0 then begin
+      InitStatus := cwGetLastError;
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure ScrollingEntryScreen.Store(var S : IdStream);
+    {-Store a scrolling entry screen in a stream}
+  begin
+    {Store the entry screen}
+    EntryScreen.Store(S);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Write data specific to the scrolling entry screen}
+    S.WriteRange(sesRowOfs, sesVS);
+  end;
+
+  procedure EntryScreenStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing entry screens}
+  begin
+    {register the raw selector}
+    AbstractSelectorStream(SPtr);
+
+    {register the basic entry field type}
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otEntryScreen, veEntryScreen,
+                   TypeOf(EntryScreen),
+                   @EntryScreen.Store, @EntryScreen.Load);
+      RegisterPointer(ptEntryCommands, @EntryCommands);
+      RegisterPointer(ptNestedFieldVar, @NullMsgLen);
+    end;
+  end;
+
+  procedure ScrollingEntryScreenStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing scrolling entry screens}
+  begin
+    {register the entry screen}
+    EntryScreenStream(SPtr);
+
+    SPtr^.RegisterType(otScrollingEntryScreen, veScrollingEntryScreen,
+                       TypeOf(ScrollingEntryScreen),
+                       @ScrollingEntryScreen.Store, @ScrollingEntryScreen.Load);
+  end;
+
+{$IFDEF PickListFields}
+
+  procedure PickFieldStream(SPtr : IdStreamPtr);
+    {-Register all types needed for a PickField}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otPickEField, vePickEField,
+                   TypeOf(PickField),
+                   @PickField.Store, @PickField.Load);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptSimpleStringConversion, @SimpleStringConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptPickEditor, @PickEditor);
+    end;
+  end;
+
+{$ENDIF}
+
+  procedure WindowFieldStream(SPtr : IdStreamPtr); {!!.01}
+    {-Register all types needed for a WindowField}
+  begin
+    EntryFieldStream(SPtr);
+    with SPtr^ do
+      RegisterType(otWindowEField, veWindowEField,
+                   TypeOf(WindowField),
+                   @WindowField.Store, @WindowField.Load);
+  end;
+
+  procedure AllPictureFieldsStream(SPtr : IdStreamPtr);
+    {-Register all entry fields that use one of the regular (picture) editors}
+  begin
+    StringFieldStream(SPtr);
+    ArrayFieldStream(SPtr);
+    CharFieldStream(SPtr);
+    BooleanFieldStream(SPtr);
+    YesNoFieldStream(SPtr);
+    LongIntFieldStream(SPtr);
+    WordFieldStream(SPtr);
+    SmallWordFieldStream(SPtr);
+    IntegerFieldStream(SPtr);
+    SmallIntFieldStream(SPtr);
+    ByteFieldStream(SPtr);
+    ShortIntFieldStream(SPtr);
+    RealFieldStream(SPtr);
+
+    {$IFDEF UseBcd}
+    BcdFieldStream(SPtr);
+    {$ENDIF}
+
+    {$IFOPT N+}
+    ExtendedFieldStream(SPtr);
+    DoubleFieldStream(SPtr);
+    SingleFieldStream(SPtr);
+    CompFieldStream(SPtr);
+    {$ENDIF}
+
+    {$IFDEF UseDates}
+    DateFieldStream(SPtr);
+    DateStFieldStream(SPtr);
+    TimeFieldStream(SPtr);
+    {$ENDIF}
+  end;
+
+  procedure AllSimpleFieldsStream(SPtr : IdStreamPtr);
+    {-Register all entry fields that use one of the simple editors}
+  begin
+    StringFieldSimStream(SPtr);
+    CharFieldSimStream(SPtr);
+    BooleanFieldSimStream(SPtr);
+    YesNoFieldSimStream(SPtr);
+    LongIntFieldSimStream(SPtr);
+    WordFieldSimStream(SPtr);
+    SmallWordFieldSimStream(SPtr);
+    IntegerFieldSimStream(SPtr);
+    SmallIntFieldSimStream(SPtr);
+    ByteFieldSimStream(SPtr);
+    ShortIntFieldSimStream(SPtr);
+    RealFieldSimStream(SPtr);
+
+    {$IFDEF UseBcd}
+    BcdFieldSimStream(SPtr);
+    {$ENDIF}
+
+    {$IFOPT N+}
+    ExtendedFieldSimStream(SPtr);
+    DoubleFieldSimStream(SPtr);
+    SingleFieldSimStream(SPtr);
+    CompFieldSimStream(SPtr);
+    {$ENDIF}
+  end;
+
+  procedure AllNumericFieldsStream(SPtr : IdStreamPtr);
+    {-Register all entry fields that use the numeric editor}
+  begin
+    LongIntFieldNumStream(SPtr);
+    WordFieldNumStream(SPtr);
+    SmallWordFieldNumStream(SPtr);
+    IntegerFieldNumStream(SPtr);
+    SmallIntFieldNumStream(SPtr);
+    ByteFieldNumStream(SPtr);
+    ShortIntFieldNumStream(SPtr);
+    RealFieldNumStream(SPtr);
+
+    {$IFDEF UseBcd}
+    BcdFieldNumStream(SPtr);
+    {$ENDIF}
+
+    {$IFOPT N+}
+    ExtendedFieldNumStream(SPtr);
+    DoubleFieldNumStream(SPtr);
+    SingleFieldNumStream(SPtr);
+    CompFieldNumStream(SPtr);
+    {$ENDIF}
+  end;
+
+  procedure AllEntryFieldsStream(SPtr : IdStreamPtr);
+    {-Register all possible types of entry fields}
+  begin
+    AllPictureFieldsStream(SPtr);
+    AllSimpleFieldsStream(SPtr);
+    AllNumericFieldsStream(SPtr);
+
+    NestedFieldStream(SPtr);
+    ChoiceFieldStream(SPtr);
+    MultiLineFieldStream(SPtr);
+
+    {$IFDEF PickListFields}
+    PickFieldStream(SPtr);
+    {$ENDIF}
+
+    WindowFieldStream(SPtr); {!!.01}
+  end;
+
+{$ENDIF}

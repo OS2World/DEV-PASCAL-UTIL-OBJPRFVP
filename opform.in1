@@ -1,0 +1,2115 @@
+{*********************************************************}
+{*                   OPFORM.IN1 1.30                     *}
+{*     Copyright (c) TurboPower Software 1989, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  procedure DuplicateBlock(NewRow, NewCol : Dimension;
+                           OldBlock : PrintBlockPtr;
+                           var TheNewBlock : PrintBlockPtr);
+    {-Duplicates the specified block at the new block coordinates}
+  begin
+    TheNewBlock := New(PrintBlockPtr,pbCopy(OldBlock^,NewRow,NewCol));
+  end;
+
+  procedure DuplicatePage(OldPage : PrintPagePtr;
+                          var TheNewPage : PrintPagePtr);
+    {-Duplicates the specified page}
+  begin
+    TheNewPage := New(PrintPagePtr,ppCopy(OldPage^));
+  end;
+
+  constructor PrintField.Init(ID : Word;
+                              Picture : string;
+                              Row, Col : Dimension; Attr : Byte;
+                              FieldWidth, FieldHeight : Dimension;
+                              MaxLen : Word;
+                              DataSize : Word;
+                              DecimalPlaces : Byte;
+                              CP : PrintConversionFunc;
+                              var PrintVar;
+                              PadChar : Char;
+                              OptionFlags : LongInt);
+
+  begin
+    pfZeroOut;
+    if not DoubleListNode.Init then
+      Fail;
+    pfID        := ID;
+    pfVarPtr    := @PrintVar;
+    pfConvert   := CP;
+    pfDPlaces   := DecimalPlaces;
+    pfMaxLen    := MaxWord(Length(Picture), MaxLen);        {!!.12}
+    pfDataSize  := DataSize;
+    pfPadChar   := PadChar;
+    pfOptions   := OptionFlags;
+    pfRow       := Row;
+    pfCol       := Col;
+    pfWidth     := FieldWidth;
+    pfHeight    := FieldHeight;
+    pfAttr      := Attr;
+    pfLastError := 0;
+    if not GetMemCheck(pfString,pfMaxLen+1) then begin      {!!.12}
+      InitStatus := ecOutOfMemory;
+      Done;
+      Fail;
+    end;
+    pfString^ := '';
+    if Length(Picture) > 0 then begin
+      if not GetMemCheck(pfPicture,Word(Length(Picture))+1) then begin {!!.22}
+        InitStatus := ecOutOfMemory;
+        Done;
+        Fail;
+      end;
+      SetLongFlag(pfOptions,pfDeallocPicture);
+      pfPicture^ := Picture;
+    end
+    else
+      pfPicture := Nil;
+
+    {set hexadecimal flag if appropriate}                         {!!.01}
+    if Pos(HexOnly, Picture) <> 0 then                            {!!.01}
+      SetLongFlag(pfOptions, pfHexadecimal);                      {!!.01}
+                                                                  {!!.01}
+    {if there's a fixed decimal pt, a comma, or a floating dollar, it's
+     automatically right justified}                               {!!.01}
+    if (Pos(DecimalPt, Picture) <> 0) or                          {!!.01}
+       (Pos(FloatDollar, Picture) <> 0) or                        {!!.01}
+       (Pos(Comma, Picture) <> 0) then                            {!!.01}
+         SetLongFlag(pfOptions, pfRightJustify);                  {!!.01}
+  end;
+
+  procedure PrintField.pfZeroOut;
+  begin
+    pfPicture   := Nil;
+    pfString    := Nil;
+    pfVarPtr    := Nil;
+    @pfConvert  := Nil;
+  end;
+
+  constructor PrintField.InitZero;
+  begin
+    pfZeroOut;
+    if not DoubleListNode.Init then
+      Fail;
+    FillChar(pfID,Ofs(pfPicture)-Ofs(pfID),0);
+  end;
+
+{$IFDEF UseStreams}
+
+  procedure PrintField.Store(var S : IdStream);
+  var
+    St : String;
+  begin
+    S.WriteRange(pfID,pfPicture);
+    if pfPicture = Nil then
+      St := ''
+    else
+      St := pfPicture^;
+    S.WriteString(St);
+    if not pfVarPtrIsStatic then                     {!!.11}
+      S.Write(pfVarPtr^,pfDataSize)
+    else
+      S.Write(pfVarPtr,SizeOf(pfVarPtr));
+    if pfString = Nil then
+      St := ''
+    else
+      St := pfString^;
+    if Length(St) > afMaxLen then
+      St[0] := Char(afMaxLen);
+    S.WriteString(St);
+    S.WriteUserPointer(@pfConvert,ptDummyPConv);
+  end;
+
+  constructor PrintField.Load(var S : IdStream);
+  var
+    St : String;
+    L  : Byte absolute St;
+  begin
+    pfZeroOut;
+    if not DoubleListNode.Init then
+      Fail;
+    S.ReadRange(pfID,pfPicture);
+    St := S.ReadString;
+    if L = 0 then
+      pfPicture := Nil
+    else begin
+      if not GetMemCheck(pfPicture,Word(L)+1) then begin {!!.22}
+        InitStatus := ecOutOfMemory;
+        Done;
+        Fail;
+      end;
+      pfPicture^ := St;
+    end;
+    if not pfVarPtrIsStatic then begin                     {!!.11}
+      if not GetMemCheck(pfVarPtr,pfDataSize) then begin
+        InitStatus := ecOutOfMemory;
+        Done;
+        Fail;
+      end;
+      SetLongFlag(pfOptions, pfDeallocVarPtr);             {!!.20}
+      S.Read(pfVarPtr^,pfDataSize);
+    end
+    else
+      S.Read(pfVarPtr,SizeOf(pfVarPtr));
+    St := S.ReadString;
+    if not GetMemCheck(pfString,Word(pfMaxLen)+1) then begin {!!.22}
+      InitStatus := ecOutOfMemory;
+      Done;
+      Fail;
+    end;
+    if L > pfMaxLen then
+      L := pfMaxLen;
+    pfString^ := St;
+    @pfConvert := S.ReadPointer;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+{$ENDIF}
+
+  function PrintField.pfVarPtrIsStatic : Boolean;
+  begin
+    if LongFlagIsSet(pfOptions,pfClonedField) then                      {!!.11}
+      pfVarPtrIsStatic := not LongFlagIsSet(pfOptions, pfTextField)     {!!.11}
+    else                                                                {!!.11}
+      pfVarPtrIsStatic := not LongFlagIsSet(pfOptions,pfDeallocVarPtr); {!!.03}
+  end;
+
+  procedure PrintField.pfAdjustBase(OldBaseRow,OldBaseCol,
+                                    NewBaseRow,
+                                    NewBaseCol : Dimension);
+  begin
+    pfRow := (pfRow - OldBaseRow) + NewBaseRow;
+    pfCol := (pfCol - OldBaseCol) + NewBaseCol;
+  end;
+
+  function PrintField.pfGetID : Word;
+  begin
+    pfGetID := pfID;
+  end;
+
+  function PrintField.pfGetPicture : String;
+  begin
+    if pfPicture = Nil then
+      pfGetPicture := ''
+    else
+      pfGetPicture := pfPicture^;
+  end;
+
+  procedure PrintField.pfSetPicture(NewPicture : String);
+  var
+    Len : Byte absolute NewPicture;
+  begin
+    if LongFlagIsSet(pfOptions,pfDeallocPicture) then begin
+      FreeMemCheck(pfPicture,Len);
+      ClearLongFlag(pfOptions,pfDeallocPicture);
+    end;
+    if Len > 0 then begin
+      if not GetMemCheck(pfPicture,Word(Length(NewPicture))+1) then begin {!!.22}
+        pfLastError := epFatal + ecOutOfMemory;
+        Exit;
+      end;
+      SetLongFlag(pfOptions,pfDeallocPicture);
+      pfPicture^ := NewPicture;
+    end
+    else
+      pfPicture := Nil;
+  end;
+
+  procedure PrintField.SetConversion(ConvertFunc : PrintConversionFunc);
+  begin
+    pfConvert := ConvertFunc;
+  end;
+
+  procedure PrintField.SetFieldPos(Row, Col : Dimension);
+    {-Sets the row and col for this field}
+  begin
+    pfRow := Row;
+    pfCol := Col;
+  end;
+
+  destructor PrintField.Done;
+  begin
+    DoubleListNode.Done;
+    if LongFlagIsSet(pfOptions,pfDeallocVarPtr) then
+      FreeMemCheck(pfVarPtr,pfDataSize);
+
+    if LongFlagIsSet(pfOptions,pfDeallocPicture) then
+      FreeMemCheck(pfPicture,Word(Length(pfPicture^))+1); {!!.22}
+
+    FreeMemCheck(pfString,Word(pfMaxLen)+1);              {!!.22}
+  end;
+
+  function PrintField.pfGetLastError : Word;
+    {-Return the last error code and clear error code}
+  begin
+    pfGetLastError := pfLastError;
+    pfLastError := 0;
+  end;
+
+  procedure PrintField.pfOptionsOn(OptionFlags : LongInt);
+    {-Turn specified options on}
+  begin
+    SetLongFlag(pfOptions,OptionFlags);
+  end;
+
+  procedure PrintField.pfOptionsOff(OptionFlags : LongInt);
+    {-Turn specified options off}
+  begin
+    ClearLongFlag(pfOptions,OptionFlags);
+  end;
+
+  function PrintField.pfOptionsAreOn(OptionFlags : LongInt) : Boolean;
+    {-Return true if specified options are on}
+  begin
+    pfOptionsAreOn := LongFlagIsSet(pfOptions,OptionFlags);
+  end;
+
+  function PrintField.pfFieldIsHidden : Boolean;
+    {-Return True if field is currently hidden}
+  begin
+    pfFieldIsHidden := LongFlagIsSet(pfOptions,pfHidden);
+  end;
+
+  function PrintField.Convert : Boolean;
+    {-Call a PrintField's conversion routine}
+  begin
+    if @pfConvert <> Nil then
+      Convert := pfConvert(@Self)
+    else
+      Convert := True;
+  end;
+
+  function PrintField.GetFieldAttr : Byte;
+    {-Return the print attribute for this Field}
+  begin
+    GetFieldAttr := pfAttr;
+  end;
+
+  procedure PrintField.GetFieldPos(var Row, Col : Dimension);
+    {-Return the row and col for this field}
+  begin
+    Row := pfRow;
+    Col := pfCol;
+  end;
+
+  function PrintField.GetFieldString : String;
+    {-Return the string associated with this field}
+  begin
+    GetFieldString := pfString^;
+  end;
+
+  procedure PrintField.Print(PrinterP : PrinterPtr);
+    {-Print this field.  Assumes Conversion routine already called}
+  begin
+    with PrinterP^ do begin
+      {see if this is the special case of an LJ+ Rule}
+      if FlagIsSet(pOptions,pSupportsHPRules) and
+         LongFlagIsSet(pfOptions,pfLineDraw) then begin
+        LJRule(PrinterP,@Self);
+        Exit;
+      end;
+
+      if not LongFlagIsSet(pfOptions,pfInhibitPos) then begin       {!!.02}
+        Position(pfRow,pfCol,rtAbsolute);                           {!!.02}
+        if pLastError <> 0 then                                     {!!.02}
+          Exit;                                                     {!!.02}
+      end;                                                          {!!.02}
+
+      if not LongFlagIsSet(pfOptions,pfInhibitAttrOn) then begin    {!!.02}
+        TurnOnByID(pfAttr);                                         {!!.02}
+        if pLastError <> 0 then                                     {!!.02}
+          Exit;                                                     {!!.02}
+      end;                                                          {!!.02}
+
+      if (not LongFlagIsSet(pfOptions,pfInhibitString)) and
+         (Length(pfString^) > 0) then begin
+        PrintStr(pfString^);
+        if pLastError <> 0 then
+          Exit;
+      end;
+
+      if not LongFlagIsSet(pfOptions,pfInhibitAttrOff) then
+        TurnOffByID(pfAttr);
+    end;
+  end;
+
+  function PrintField.afMaxLen : Byte;
+  begin
+    afMaxLen := pfMaxLen;
+  end;
+
+  function PrintField.afPicture : String;
+  begin
+    if (pfPicture = Nil) or (Length(pfPicture^) = 0) then
+      afPicture := CharStr(AnyChar,afMaxLen)
+    else
+      afPicture := pfPicture^;
+  end;
+
+  function PrintField.afDPlaces : Byte;
+  begin
+    afDPlaces := pfDPlaces;
+  end;
+
+  function PrintField.afNoLiterals : Boolean;
+  begin
+    afNoLiterals := False;
+  end;
+
+  function PrintField.afNumeric : Boolean;
+  begin
+    afNumeric := False;
+  end;
+
+  function PrintField.afHexadecimal : Boolean;
+  begin
+    afHexadecimal := LongFlagIsSet(pfOptions, pfHexadecimal); {!!.01}
+  end;
+
+  function PrintField.afRightJustified : Boolean;
+  begin
+    afRightJustified := LongFlagIsSet(pfOptions,pfRightJustify);
+  end;
+
+  function PrintField.afIsReal : Boolean;
+  begin
+    afIsReal := LongFlagIsSet(pfOptions,pfRealVar);
+  end;
+
+  function PrintField.pfLong2Str(L : LongInt; W : Byte) : string;
+    {-Convert a longint to a string}
+  var
+    S : string;
+  begin
+    if (L = 0) and LongFlagIsSet(pfOptions, pfSuppressZero) then
+      pfLong2Str := ''
+    else if afHexadecimal then begin
+      S := HexL(L);
+      W := MinWord(W, afMaxLen);
+      if W < 8 then
+        Delete(S, 1, 8-W);
+      pfLong2Str := S;
+    end
+    else
+      pfLong2Str := Long2Str(L);
+  end;
+
+  procedure PrintField.pfPadField;
+  begin
+    if LongFlagIsSet(pfOptions,pfRightJustify) then
+      pfString^ := LeftPadCh(pfString^,pfPadChar,afMaxLen)
+    else
+      pfString^ := PadCh(pfString^,pfPadChar,afMaxLen);
+  end;
+
+  procedure PrintField.pfClone(CloneFrom : PrintFieldPtr;
+                               var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do
+      CloneTo := New(PrintFieldPtr, Init(pfID,afPicture,pfRow,pfCol,pfAttr,
+                                        pfWidth,pfHeight,pfMaxLen,pfDataSize,
+                                        pfDPlaces,pfConvert,Byte(pfVarPtr^),
+                                        pfPadChar,                     {!!.03}
+                                        pfOptions and pfClonedField)); {!!.03}
+  end;
+
+  constructor StringPrintField.Init(FieldID : Word;
+                                    Picture : String;
+                                    Row, Col : Dimension;
+                                    Attr : Byte;
+                                    Width : Byte;
+                                    var PrintSt : String;
+                                    PadCh : Char;
+                                    OptionFlags : LongInt);
+    {-Create a string print field}
+  begin
+    if not PrintField.Init(FieldID,Picture,
+                           Row,Col,Attr,Width,1,Width,Width+1,
+                           0,PrintStringConvert,PrintSt,PadCh,OptionFlags) then
+      Fail;
+  end;
+
+  procedure StringPrintField.pfClone(CloneFrom : PrintFieldPtr;
+                                     var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(StringPrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,
+                                              pfAttr,pfMaxLen,
+                                              String(pfVarPtr^),
+                                              pfPadChar,
+                                              (pfOptions and            {!!.01}
+                                              (not pfDeallocVarPtr)) or {!!.03}
+                                              pfClonedField)); {!!.01}  {!!.03}
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  constructor CharPrintField.Init(FieldID : Word;
+                                  Picture : String;
+                                  Row,Col : Dimension;
+                                  Attr    : Byte;
+                                  Width   : Byte;
+                                  var PrintCh : Char;
+                                  PadCh : Char;
+                                  OptionFlags : LongInt);
+    {-Create a Print Field for a Character}
+  begin
+    if not PrintField.Init(FieldID,Picture,
+                           Row,Col,Attr,1,1,SizeOf(Char),Width,
+                           0,PrintCharConvert,PrintCh,PadCh,OptionFlags) then
+      Fail;
+  end;
+
+  procedure CharPrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                   var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(CharPrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,
+                                            pfAttr,pfMaxLen,
+                                            Char(pfVarPtr^),
+                                            pfPadChar, pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  constructor WordPrintField.Init(FieldID : Word;
+                                  Picture : String;
+                                  Row,Col : Dimension;
+                                  Attr : Byte;
+                                  Width : Byte;
+                                  var PrintWord : Word;
+                                  PadCh : Char;
+                                  OptionFlags : LongInt);
+    {-Create a Print Field for Word variable}
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width,SizeOf(Word),
+                           0,PrintWordConvert,PrintWord,PadCh,OptionFlags) then
+      Fail;
+  end;
+
+  procedure WordPrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                   var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(WordPrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,pfAttr,
+                                            pfMaxLen,Word(pfVarPtr^),
+                                            pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  constructor BooleanPrintField.Init(FieldID : Word;
+                                     Picture : String;
+                                     Row, Col : Dimension;
+                                     Attr : Byte;
+                                     Width : Byte;
+                                     var PrintBool : Boolean;
+                                     PadCh : Char;
+                                     OptionFlags : LongInt);
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width, SizeOf(Boolean),
+                           0,PrintBoolConvert,PrintBool,PadCh,OptionFlags) then
+      Fail;
+  end;
+
+  procedure BooleanPrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                      var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(BooleanPrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,
+                                               pfAttr,
+                                               pfMaxLen,
+                                               Boolean(pfVarPtr^),
+                                               pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  constructor YesNoPrintField.Init(FieldID : Word;
+                                   Picture : String;
+                                   Row, Col : Dimension;
+                                   Attr : Byte;
+                                   Width : Byte;
+                                   var PrintYesNo : Boolean;
+                                   PadCh : Char;
+                                   OptionFlags : LongInt);
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width, SizeOf(Boolean),
+                           0,PrintYesNoConvert,PrintYesNo,
+                           PadCh,OptionFlags) then
+      Fail;
+  end;
+
+  procedure YesNoPrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                    var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(YesNoPrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,
+                                             pfAttr,pfMaxLen,
+                                             Boolean(pfVarPtr^),
+                                             pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  constructor LongPrintField.Init(FieldID : Word;
+                                  Picture : String;
+                                  Row, Col : Dimension;
+                                  Attr : Byte;
+                                  Width : Byte;
+                                  var PrintLong : LongInt;
+                                  PadCh : Char;
+                                  OptionFlags : LongInt);
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width,SizeOf(LongInt),
+                           0,PrintLongConvert,PrintLong,PadCh,OptionFlags) then
+      Fail;
+  end;
+
+  procedure LongPrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                   var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(LongPrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,pfAttr,
+                                         pfMaxLen,LongInt(pfVarPtr^),
+                                         pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  constructor IntPrintField.Init(FieldID : Word;
+                                 Picture : String;
+                                 Row, Col : Dimension;
+                                 Attr : Byte;
+                                 Width : Byte;
+                                 var PrintInt : Integer;
+                                 PadCh : Char;
+                                 OptionFlags : LongInt);
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width,SizeOf(Integer),
+                           0,PrintIntConvert,PrintInt,PadCh,OptionFlags) then
+      Fail;
+  end;
+
+  procedure IntPrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                  var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(IntPrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,pfAttr,
+                                        pfMaxLen,Integer(pfVarPtr^),
+                                        pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  constructor BytePrintField.Init(FieldID : Word;
+                                  Picture : String;
+                                  Row, Col : Dimension;
+                                  Attr : Byte;
+                                  Width : Byte;
+                                  var PrintByte : Byte;
+                                  PadCh : Char;
+                                  OptionFlags : LongInt);
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width,SizeOf(Byte),
+                           0,PrintByteConvert,PrintByte,PadCh,OptionFlags) then
+      Fail;
+  end;
+
+  procedure BytePrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                   var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(BytePrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,pfAttr,
+                                         pfMaxLen,Byte(pfVarPtr^),
+                                         pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  constructor ShortPrintField.Init(FieldID : Word;
+                                   Picture : String;
+                                   Row, Col : Dimension;
+                                   Attr : Byte;
+                                   Width : Byte;
+                                   var PrintShort : ShortInt;
+                                   PadCh : Char;
+                                   OptionFlags : LongInt);
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width,SizeOf(ShortInt),
+                           0,PrintShortConvert,PrintShort,
+                           PadCh,OptionFlags) then
+      Fail;
+  end;
+
+  procedure ShortPrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                    var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(ShortPrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,pfAttr,
+                                             pfMaxLen,ShortInt(pfVarPtr^),
+                                             pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  constructor RealPrintField.Init(FieldID : Word;
+                                  Picture : String;
+                                  Row, Col : Dimension;
+                                  Attr : Byte;
+                                  Width : Byte;
+                                  DecimalPlaces : Byte;
+                                  var PrintReal : Real;
+                                  PadCh : Char;
+                                  OptionFlags : LongInt);
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width,SizeOf(Real),
+                           DecimalPlaces,PrintRealConvert,PrintReal,
+                           PadCh,OptionFlags or pfRealVar) then
+      Fail;
+  end;
+
+  procedure RealPrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                   var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(RealPrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,pfAttr,
+                                         pfMaxLen,pfDPlaces,Real(pfVarPtr^),
+                                         pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  {$IFDEF UseBCD}
+
+  constructor BCDPrintField.Init(FieldID : Word;
+                                 Picture : String;
+                                 Row, Col : Dimension;
+                                 Attr : Byte;
+                                 Width : Byte;
+                                 DecimalPlaces : Byte;
+                                 var PrintBCD : BCD;
+                                 PadCh : Char;
+                                 OptionFlags : LongInt);
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width,SizeOf(BCD),
+                           DecimalPlaces,PrintBcdConvert,PrintBCD,
+                           PadCh,OptionFlags or pfRealVar) then
+      Fail;
+  end;
+
+  procedure BcdPrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                  var CloneTo : PrintFieldPtr);
+
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(BcdPrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,pfAttr,
+                                        pfMaxLen,pfDPlaces,BCD(pfVarPtr^),
+                                        pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  {$ENDIF}
+
+  {$IFOPT N+}
+
+  constructor ExtPrintField.Init(FieldID : Word;
+                                 Picture : String;
+                                 Row, Col : Dimension;
+                                 Attr : Byte;
+                                 Width : Byte;
+                                 DecimalPlaces : Byte;
+                                 var PrintExt : Extended;
+                                 PadCh : Char;
+                                 OptionFlags : LongInt);
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width,SizeOf(Extended),
+                           DecimalPlaces,PrintExtConvert,PrintExt,
+                           PadCh,OptionFlags or pfRealVar) then
+      Fail;
+  end;
+
+  procedure ExtPrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                  var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(ExtPrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,pfAttr,
+                                        pfMaxLen,pfDPlaces,
+                                        Extended(pfVarPtr^),
+                                        pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  constructor DblPrintField.Init(FieldID : Word;
+                                 Picture : String;
+                                 Row, Col : Dimension;
+                                 Attr : Byte;
+                                 Width : Byte;
+                                 DecimalPlaces : Byte;
+                                 var PrintDbl : Double;
+                                 PadCh : Char;
+                                 OptionFlags : LongInt);
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width,SizeOf(Double),
+                           DecimalPlaces,PrintDblConvert,PrintDbl,
+                           PadCh,OptionFlags or pfRealVar) then
+      Fail;
+  end;
+
+  procedure DblPrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                  var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(DblPrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,pfAttr,
+                                           pfMaxLen,pfDPlaces,
+                                           Double(pfVarPtr^),
+                                           pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  constructor SglPrintField.Init(FieldID : Word;
+                                 Picture : String;
+                                 Row, Col : Dimension;
+                                 Attr : Byte;
+                                 Width : Byte;
+                                 DecimalPlaces : Byte;
+                                 var PrintSgl : Single;
+                                 PadCh : Char;
+                                 OptionFlags : LongInt);
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width,SizeOf(Single),
+                           DecimalPlaces,PrintSglConvert,PrintSgl,
+                           PadCh,OptionFlags or pfRealVar) then
+      Fail;
+  end;
+
+  procedure SglPrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                  var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(SglPrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,pfAttr,
+                                        pfMaxLen,pfDPlaces,
+                                        Single(pfVarPtr^),
+                                        pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  constructor CompPrintField.Init(FieldID : Word;
+                                  Picture : String;
+                                  Row, Col : Dimension;
+                                  Attr : Byte;
+                                  Width : Byte;
+                                  DecimalPlaces : Byte;
+                                  var PrintComp : Comp;
+                                  PadCh : Char;
+                                  OptionFlags : LongInt);
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width,SizeOf(Comp),
+                           DecimalPlaces,PrintCompConvert,PrintComp,
+                           PadCh,OptionFlags or pfRealVar) then
+      Fail;
+  end;
+
+  procedure CompPrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                   var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(CompPrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,pfAttr,
+                                        pfMaxLen,pfDPlaces,
+                                        Comp(pfVarPtr^),
+                                        pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  {$ENDIF}
+
+  {$IFDEF UseDates}
+
+  constructor DatePrintField.Init(FieldID : Word;
+                                  Picture : String;
+                                  Row, Col : Dimension;
+                                  Attr : Byte;
+                                  Width : Byte;
+                                  var PrintDate : Date;
+                                  PadCh : Char;
+                                  OptionFlags : LongInt);
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width,SizeOf(Date),
+                           0,PrintDateConvert,PrintDate,
+                           PadCh,OptionFlags) then
+      Fail;
+  end;
+
+  procedure DatePrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                   var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(DatePrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,pfAttr,
+                                            pfMaxLen,
+                                            Date(pfVarPtr^),
+                                            pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+
+  constructor TimePrintField.Init(FieldID : Word;
+                                  Picture : String;
+                                  Row, Col : Dimension;
+                                  Attr : Byte;
+                                  Width : Byte;
+                                  var PrintTime : Time;
+                                  PadCh : Char;
+                                  OptionFlags : LongInt);
+  begin
+    if not PrintField.Init(FieldID,Picture,Row,Col,Attr,1,1,
+                           Width,SizeOf(Time),
+                           0,PrintTimeConvert,PrintTime,
+                           PadCh,OptionFlags) then
+      Fail;
+  end;
+
+  procedure TimePrintField.pfClone(CloneFrom   : PrintFieldPtr;
+                                   var CloneTo : PrintFieldPtr);
+  begin
+    with CloneFrom^ do begin                                           {!!.02}
+      CloneTo := New(TimePrintFieldPtr,Init(pfID,afPicture,pfRow,pfCol,pfAttr,
+                                            pfMaxLen,
+                                            Time(pfVarPtr^),
+                                            pfPadChar,pfOptions));
+      if CloneTo <> Nil then                                           {!!.02}
+        CloneTo^.pfConvert := pfConvert;                               {!!.02}
+    end;                                                               {!!.02}
+  end;
+  {$ENDIF}
+
+  constructor LineField.Init(FieldID : Word;
+                             Row1, Col1,
+                             Row2, Col2,
+                             LineThickness : Dimension;
+                             Attr : Byte;
+                             PrintPrim : LinePrintProc);
+
+  var
+    Width, Height : Dimension;
+    Horizontal    : Boolean;
+  begin
+    lfRow1    := Row1;
+    lfCol1    := Col1;
+    lfRow2    := Row2;
+    lfCol2    := Col2;
+
+    lfPrint   := PrintPrim;
+    if (lfRow1 = lfRow2) then begin
+      Horizontal := True;
+      Width := lfCol2 - lfCol1;
+      Height := LineThickness;
+    end
+    else if (lfCol1 = lfCol2) then begin
+      Horizontal := False;
+      Width := LineThickness;
+      Height := lfRow2 - lfRow1;
+    end
+    else begin
+      {set error code}
+      InitStatus := epFatal + ecDiagNotAllowed;
+      Fail;
+    end;
+    if not PrintField.Init(FieldID,NullPicture,Row1,Col1,Attr,Width,Height,
+                           0,0,0,DummyConversion,NullPicture,' ',
+                           pfLineDraw) then
+      Fail;
+    pfVarPtr := Nil;
+    FreeMemCheck(pfString, pfMaxLen + 1);   {!!.10}
+  end;
+
+  procedure LineField.lfZeroOut;
+  begin
+    FillChar(lfRow1,Ofs(@lfPrint)-Ofs(lfRow1)+SizeOf(Pointer),0); {!!.12}
+  end;
+
+  constructor LineField.InitZero;
+  begin
+    if not PrintField.InitZero then
+      Fail;
+    lfZeroOut;
+  end;
+
+  destructor LineField.Done;
+  begin
+    PrintField.Done;
+  end;
+
+  function LineField.lfExpand(Block : PrintBlockPtr;
+                              P : PrinterPtr) : Boolean;          {!!.20}
+    {-Return TRUE if field should be deleted.}
+  var
+    I, Col, Row, Width, Height : Word;
+
+  begin
+    if FlagIsSet(P^.pOptions, pSupportsHPRules) then begin
+      lfRow1 := LJRow2Deci(lfRow1, P);
+      lfRow2 := LJRow2Deci(lfRow2, P);
+      lfCol1 := LJCol2Deci(lfCol1, P);
+      lfCol2 := LJCol2Deci(lfCol2, P);
+      pfRow  := lfRow1;
+      pfCol  := lfCol1;
+      if LongFlagIsSet(pfOptions, pfHorizontal) then
+        pfWidth := LJCol2Deci(pfWidth, P)
+      else
+        pfHeight := LJRow2Deci(pfHeight, P);
+      lfExpand := False;
+    end
+    else begin
+      lfExpand := True;
+      Width  := Round(lfCol2);
+      Height := Round(lfRow2);
+      if LongFlagIsSet(pfOptions, pfHorizontal) then begin
+        {horizontal line}
+        Block^.pbAddTextField(fidExpandedLine,
+                              CharStr(pfPadChar, Width),
+                              lfRow1, lfCol1, pfAttr, Width);
+      end
+      else begin
+        for I := 0 to Height-1 do
+          Block^.pbAddTextField(fidExpandedLine, pfPadChar,
+                                lfRow1+I, lfCol1, pfAttr, 1);
+
+      end;
+    end;
+  end;
+
+{$IFDEF UseStreams}
+
+  procedure LineField.Store(var S : IdStream);
+  begin
+    S.WriteRange(pfID,pfPicture);                                  {!!.21}
+    { PrintField.Store(S);                                          !!.21}
+
+    S.WriteRange(lfRow1,lfPrint);
+    S.WritePointer(@lfPrint);
+  end;
+
+  constructor LineField.Load(var S : IdStream);
+  begin
+    pfZeroOut;                                                     {!!.21}
+    if not DoubleListNode.Init then                                {!!.21}
+      Fail;                                                        {!!.21}
+    S.ReadRange(pfID,pfPicture);                                   {!!.21}
+
+    { if not PrintField.Load(S) then                                !!.21}
+    {   Fail;                                                       !!.21}
+
+    S.ReadRange(lfRow1,lfPrint);
+    @lfPrint  := S.ReadPointer;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+{$ENDIF}
+
+  function LineField.pfVarPtrIsStatic : Boolean;
+  begin
+    pfVarPtrIsStatic := False;
+  end;
+
+  procedure LineField.Print(PrinterP : PrinterPtr);
+  begin
+    if @lfPrint =  Nil then
+      PrintField.Print(PrinterP)
+    else
+      lfPrint(PrinterP,@Self);
+  end;
+
+  procedure LineField.pfClone(CloneFrom   : PrintFieldPtr;
+                              var CloneTo : PrintFieldPtr);
+  var
+    Clone : LineFieldPtr absolute CloneTo;
+  begin
+    CloneTo := New(LineFieldPtr,InitZero);
+    if CloneTo = Nil then
+      Exit;
+    with LineFieldPtr(CloneFrom)^ do begin
+      Move(pfID,Clone^.pfID,Ofs(@pfConvert)-Ofs(pfID)+SizeOf(Pointer));    {!!.12}
+      Move(lfRow1,Clone^.lfRow1,Ofs(@lfPrint)-Ofs(lfRow1)+SizeOf(Pointer));{!!.12}
+      {WriteLn('CloneFrom.pfConvert = ', HexPtr(@pfConvert),            !!.11
+              '   CloneTo.pfConvert = ', HexPtr(@CloneTo^.pfConvert));}{!!.11}
+    end;
+  end;
+
+  procedure LineField.GetLineDim(var Row1,Col1,Row2,Col2 : Dimension);
+    {-Return the dimensions for this line}
+  begin
+    Row1 := lfRow1;
+    Col1 := lfCol1;
+    Row2 := lfRow2;
+    Col2 := lfCol2;
+  end;
+
+  procedure LineField.SetLineDim(Row1,Col1,Row2,Col2 : Dimension);
+    {-Sets the dimensions for this line}
+  begin
+    lfRow1 := Row1;
+    lfCol1 := Col1;
+    lfRow2 := Row2;
+    lfCol2 := Col2;
+  end;
+
+  procedure LineField.pfAdjustBase(OldBaseRow,OldBaseCol,
+                                   NewBaseRow,NewBaseCol : Dimension);
+  var
+    R,C,R1,C1 : Dimension;
+  begin
+    GetFieldPos(R,C);
+    PrintField.pfAdjustBase(OldBaseRow,OldBaseCol,NewBaseRow,NewBaseCol);
+    GetFieldPos(R1,C1);
+    lfRow1 := lfRow1 + (R1 - R);
+    lfRow2 := lfRow2 + (R1 - R);                   {!!.10}
+    lfCol1 := lfCol1 + (C1 - C);                   {!!.10}
+    lfCol2 := lfCol2 + (C1 - C);                   {!!.10}
+  end;
+
+  constructor ShadedField.Init(FieldID : Word;
+                               Row, Col,
+                               Width,Height : Dimension;
+                               Intensity : Byte;
+                               PrintPrim : LinePrintProc);
+  begin
+    if not PrintField.Init(FieldID,NullPicture,Row,Col,Intensity,Width,Height,
+                           0,0,0,DummyConversion,NullPicture,' ',
+                           pfPattern) then
+      Fail;
+
+    lfRow1    := Row;
+    lfCol1    := Col;
+    lfRow2    := Height;
+    lfCol2    := Width;
+    lfPrint   := PrintPrim;
+    FreeMemCheck(pfString, pfMaxLen + 1);   {!!.10}
+  end;
+
+  destructor ShadedField.Done;
+  begin
+    PrintField.Done;
+  end;
+
+  procedure ShadedField.Print(PrinterP : PrinterPtr);
+  begin
+    lfPrint(PrinterP,@Self);
+  end;
+
+  procedure ShadedField.pfClone(CloneFrom   : PrintFieldPtr;
+                                var CloneTo : PrintFieldPtr);
+  var
+    Clone : ShadedFieldPtr absolute CloneTo;
+  begin
+    CloneTo := New(ShadedFieldPtr,InitZero);
+    if CloneTo = Nil then
+      Exit;
+    with ShadedFieldPtr(CloneFrom)^ do begin
+      Move(pfID,Clone^.pfID,Ofs(@pfConvert)-Ofs(pfID)+SizeOf(Pointer));    {!!.12}
+      Move(lfRow1,Clone^.lfRow1,Ofs(@lfPrint)-Ofs(lfRow1)+SizeOf(Pointer));{!!.12}
+    end;
+  end;
+
+  function ShadedField.lfExpand(Block : PrintBlockPtr;
+                                P : PrinterPtr) : Boolean;          {!!.20}
+  begin
+    lfExpand := False;
+  end;
+
+  {...BoxField methods...} {!!.20 begin}
+  constructor BoxField.Init(FieldID : Word;
+                            Row, Col,
+                            Width,Height : Dimension;
+                            HLineThickness, VLineThickness : Dimension;
+                            BoxChars : BoxCharSet;
+                            Attr : Byte);
+  begin
+    if not PrintField.Init(FieldID,NullPicture,Row,Col,0,Width,Height,
+                           0,0,0,DummyConversion,NullPicture,' ',
+                           pfExpandableLine) then
+      Fail;
+
+    lfRow1    := Row;
+    lfCol1    := Col;
+    lfRow2    := Height;
+    lfCol2    := Width;
+    lfPrint   := LJRule;
+    bfVThickness := VLineThickness;
+    bfHThickness := HLineThickness;
+    bfBoxChars := BoxChars;
+
+    FreeMemCheck(pfString, pfMaxLen + 1);
+  end;
+
+  procedure BoxField.bfZeroOut;
+  begin
+    FillChar(bfVThickness,(SizeOf(Dimension) * 2) + SizeOf(BoxCharSet),0);
+  end;
+
+  constructor BoxField.InitZero;
+  begin
+    if not LineField.InitZero then
+      Fail;
+    bfZeroOut;
+  end;
+
+  procedure BoxField.Print(PrinterP : PrinterPtr);
+  begin
+  end;
+
+  procedure BoxField.pfClone(CloneFrom   : PrintFieldPtr;
+                                var CloneTo : PrintFieldPtr);
+  var
+    Clone : BoxFieldPtr absolute CloneTo;
+  begin
+    CloneTo := New(BoxFieldPtr,InitZero);
+    if CloneTo = Nil then
+      Exit;
+    with BoxFieldPtr(CloneFrom)^ do begin
+      Move(pfID,Clone^.pfID,Ofs(@pfConvert)-Ofs(pfID)+SizeOf(Pointer));
+      Move(lfRow1,Clone^.lfRow1,Ofs(@lfPrint)-Ofs(lfRow1)+SizeOf(Pointer));
+      Move(bfVThickness,Clone^.bfVThickness, (SizeOf(Dimension) * 2) + SizeOf(BoxCharSet));
+    end;
+  end;
+
+  function BoxField.lfExpand(Block : PrintBlockPtr;
+                                P : PrinterPtr) : Boolean;
+  var
+    S : String;
+    R,C : Dimension;
+    W : Word;
+  begin
+    lfExpand := True;
+    if not FlagIsSet(P^.pOptions, pSupportsHPRules) then begin
+      {make box with simple lines}
+      if (pfWidth <= 2) or (pfHeight <= 2) then
+        Exit;
+      W := Round(pfWidth);
+      S := bfBoxChars[frTL] +
+           CharStr(bfBoxChars[frTT],W - 2) +
+           bfBoxChars[frTR];
+
+      Block^.pbAddTextField(pfID,S,pfRow,pfCol,pfAttr,W);
+
+      S := bfBoxChars[frBL] +
+           CharStr(bfBoxChars[frBB],W - 2) +
+           bfBoxChars[frBR];
+      Block^.pbAddTextField(pfID,S,pfRow+pfHeight-1,pfCol,pfAttr,W);
+      R := pfRow+1;
+      Block^.pbAddLine(P^.pOptions, pfID,R,pfCol,pfHeight - 2,1,False,
+                       bfBoxChars[frLL],pfAttr);
+      C := pfCol + pfWidth - 1;
+      Block^.pbAddLine(P^.pOptions, pfID,R,C,pfHeight - 2,1,False,
+                       bfBoxChars[frRR],pfAttr);
+    end
+    else begin
+      lfRow1 := LJRow2Deci(lfRow1, P);
+      lfRow2 := LJRow2Deci(lfRow2, P);
+      lfCol1 := LJCol2Deci(lfCol1, P);
+      lfCol2 := LJCol2Deci(lfCol2, P);
+      pfRow  := lfRow1;
+      pfCol  := lfCol1;
+      pfWidth := LJCol2Deci(pfWidth, P);
+      pfHeight := LJRow2Deci(pfHeight, P);
+      Block^.pbAddLine(P^.pOptions, pfID,pfRow,pfCol,pfWidth,bfHThickness,True,
+                       '-',pfAttr);
+      if Block^.pbLastError <> 0 then
+        Exit;
+      Block^.pbAddLine(P^.pOptions, pfID,pfRow,pfCol,pfHeight,bfVThickness,False,
+                       '-',pfAttr);
+      if Block^.pbLastError <> 0 then
+        Exit;
+      Block^.pbAddLine(P^.pOptions, pfID,pfRow,pfCol+pfWidth,pfHeight+bfHThickness,
+              bfVThickness,
+              False,'-',pfAttr);
+      if Block^.pbLastError <> 0 then
+        Exit;
+      Block^.pbAddLine(P^.pOptions, pfID,pfRow+pfHeight,pfCol,pfWidth+bfVThickness,
+              bfHThickness,
+              True,'-',pfAttr);
+    end;
+  end;
+
+{$IFDEF UseStreams}
+
+  procedure BoxField.Store(var S : IdStream);
+  begin
+    PrintField.Store(S);
+    S.WriteRange(lfRow1,lfPrint);
+    S.WritePointer(@lfPrint);
+  end;
+
+  constructor BoxField.Load(var S : IdStream);
+  begin
+    if not PrintField.Load(S) then
+      Fail;
+    S.ReadRange(lfRow1,lfPrint);
+    @lfPrint  := S.ReadPointer;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+{$ENDIF}
+
+                           {!!.20 end}
+
+  {...PrintBlock methods...}
+  constructor PrintBlock.Init(BaseRow, BaseCol : Dimension);
+    {-Create a new Print Block with specified Base dimensions}
+  begin
+    if not SingleListNode.Init then
+      Fail;
+    if not pbFields.Init then
+      Fail;
+
+    pbBaseRow        := BaseRow;
+    pbBaseCol        := BaseCol;
+    pbZeroOut;
+  end;
+
+  procedure PrintBlock.pbClone(CloneFrom : PrintBlockPtr;
+                               var CloneTo : PrintBlockPtr);
+  begin
+    with CloneFrom^ do
+      CloneTo := New(PrintBlockPtr, Init(pbBaseRow, pbBaseCol));
+  end;
+
+  procedure PrintBlock.pbZeroOut;
+  begin
+    pbFlags          := 0;
+    pbLastError      := 0;
+    pbUserRecSize    := 0;
+    pbUserRecPtr     := Nil;
+    pbCurrentField   := Nil;
+    @pbUserBlockFunc := Nil;
+  end;
+
+{$IFDEF UseStreams}
+
+  function PrintBlock.pbFixOneUserVar(var IdS : IdStream;
+                                      PFP : PrintFieldPtr) : Boolean;
+    {-Fix up one user variable pointer}
+  var
+    IP : IdNodePtr;
+    MinO, MaxO : Word;
+  begin
+    pbFixOneUserVar := False;
+    if PFP = nil then
+      Exit;
+
+    with PFP^, OS(pfVarPtr) do begin
+      {is the variable within the user record?}
+      MinO := OS(pbUserRecPtr).O;
+      MaxO := MinO+pbUserRecSize-1;
+      if (pbUserRecPtr <> nil) and (pbUserRecSize > 0) and
+              (S = OS(pbUserRecPtr).S) and (O >= MinO)
+              and (O <= MaxO) then begin
+        {store ptFormUserRec as the segment, and adjust the offset}
+        S := ptFormUserRec;
+        Dec(O, MinO);
+      end
+      else begin
+        {is the variable's address registered?}
+        IP := IdS.idRegistered.FindPointer(pfVarPtr);
+        if IP = nil then
+          Exit
+        else with IP^ do begin
+          {store the id code in the segment, the version in the offset}
+          S := idCode;
+          O := idVer;
+        end;
+      end;
+    end;
+
+    pbFixOneUserVar := True;
+  end;
+
+  function PrintBlock.pbFixUserVars(var IdS : IdStream;
+                                     var PFP : PrintFieldPtr) : Boolean;
+    {-Fix up all user variable pointers}
+  begin
+    pbFixUserVars := True;
+    PFP := PrintFieldPtr(pbFields.Head);
+    while PFP <> nil do begin
+      if PFP^.pfVarPtrIsStatic then
+        if not pbFixOneUserVar(IdS, PFP) then begin
+          pbFixUserVars := False;
+          Exit;
+        end;
+      PFP := PrintFieldPtr(PFP^.dlNext);
+    end;
+  end;
+
+  function PrintBlock.pbRestoreOneUserVar(var IdS : IdStream;
+                                          PFP : PrintFieldPtr) : Boolean;
+    {-Restore one user variable pointer}
+  var
+    IP : IdNodePtr;
+  begin
+    pbRestoreOneUserVar := False;
+    if PFP = nil then
+      Exit;
+
+    with PFP^, OS(pfVarPtr) do
+      {segment has the type code}
+      if S = ptFormUserRec then
+        {a code of ptFormUserRec means it's part of the user record}
+        if pbUserRecPtr = nil then
+          {no user record set up}
+          Exit
+        else begin
+          {offset is relative to start of user record}
+          S := OS(pbUserRecPtr).S;
+          Inc(O, OS(pbUserRecPtr).O);
+        end
+      else begin
+        {segment has the code, offset has the version}
+        IP := IdS.idRegistered.FindByCodeVer(S, O);
+        if IP = nil then
+          Exit
+        else
+          pfVarPtr := IP^.StorePtr;
+      end;
+
+    pbRestoreOneUserVar := True;
+  end;
+
+  function PrintBlock.pbRestoreUserVars(var IdS : IdStream;
+                                        Last : PrintFieldPtr) : Boolean;
+    {-Restore all user variable pointers}
+  var
+    PFP : PrintFieldPtr;
+  begin
+    pbRestoreUserVars := False;
+    PFP := PrintFieldPtr(pbFields.Head);
+
+    while PFP <> Last do begin
+      if PFP^.pfVarPtrIsStatic then
+        if not pbRestoreOneUserVar(IdS, PFP) then
+          Exit;
+      PFP := PrintFieldPtr(PFP^.dlNext)
+    end;
+    pbRestoreUserVars := True;
+  end;
+
+  procedure PrintBlock.pbSetUserRecord(var UserRec; UserRecSize : Word);
+    {-Set the address and size of the user record}
+  begin
+    pbUserRecPtr := @UserRec;
+    pbUserRecSize := UserRecSize;
+  end;
+
+  function PrintBlock.pbGetUserRecord : Pointer;
+    {-Return a pointer to the user record}
+  begin
+    pbGetUserRecord := pbUserRecPtr;
+  end;
+
+  function PrintBlock.pbGetUserRecordSize : Word;
+    {-Return the size of the user record}
+  begin
+    pbGetUserRecordSize := pbUserRecSize;
+  end;
+
+  procedure PrintBlock.Store(var S : IdStream);
+  var
+    PFP : PrintFieldPtr;
+  begin
+    S.WriteRange(pbBaseRow,pbUserRecPtr);
+    if not pbFixUserVars(S, PFP) then begin
+      if not pbRestoreUserVars(S, PFP) then {internal error} ;
+      S.Error(epNonFatal+ecIDNotRegistered);
+      Exit;
+    end;
+    S.WriteUserPointer(pbUserRecPtr,ptNil);
+    pbFields.Store(S);
+    if not pbRestoreUserVars(S, PFP) then {internal error} ;
+
+    S.WritePointer(@pbUserBlockFunc);
+  end;
+
+  constructor PrintBlock.Load(var S : IdStream);
+  begin
+    pbZeroOut;
+    S.ReadRange(pbBaseRow,pbUserRecPtr);
+    pbUserRecPtr := S.ReadPointer;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+    if (pbUserRecSize <> 0) and (pbUserRecPtr = Nil) then
+      if not GetMemCheck(pbUserRecPtr, pbUserRecSize) then begin
+        InitStatus := ecOutOfMemory;
+        Done;
+        Fail;
+      end
+      else
+        SetByteFlag(pbFlags,pbDeallocUserRec);
+    if not pbFields.Load(S) then begin
+      Done;
+      Fail;
+    end;
+    if not pbRestoreUserVars(S, Nil) then begin
+      InitStatus := ecIdUnknown;
+      Done;
+      Fail;
+    end;
+    @pbUserBlockFunc := S.ReadPointer;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+{$ENDIF}
+
+  constructor PrintBlock.pbInitFrom(var B : PrintBlock);
+  begin
+    pbZeroOut;
+    if not SingleListNode.Init then
+      Fail;
+    if not pbFields.Init then
+      Fail;
+    pbBaseRow       := B.pbBaseRow;
+    pbBaseCol       := B.pbBaseCol;
+    pbFlags         := B.pbFlags;
+    pbUserRecSize   := B.pbUserRecSize;
+    pbUserRecPtr    := B.pbUserRecPtr;
+    pbUserBlockFunc := B.pbUserBlockFunc;
+  end;
+
+  constructor PrintBlock.pbCopy(var B : PrintBlock;
+                                NewBaseRow,NewBaseCol : Dimension);
+  var
+    Field, NewField : PrintFieldPtr;
+  begin
+    if not PrintBlock.pbInitFrom(B) then
+      Fail;
+    Field := PrintFieldPtr(B.pbFields.Head);
+    while Field <> Nil do begin
+      Field^.pfClone(Field,NewField);
+      if NewField = Nil then begin
+        InitStatus := ecOutOfMemory;
+        Done;
+        Fail;
+      end;
+      NewField^.pfAdjustBase(B.pbBaseRow,B.pbBaseCol,
+                             NewBaseRow,NewBaseCol);
+
+      pbFields.Append(NewField);
+      Field := PrintFieldPtr(Field^.dlNext);
+    end;
+  end;
+
+  destructor PrintBlock.Done;
+    {-Destroy the Print Block}
+  begin
+    if ByteFlagIsSet(pbFlags,pbDeallocUserRec) then
+      FreeMemCheck(pbUserRecPtr,pbUserRecSize);
+    pbFields.Done;
+    SingleListNode.Done;
+  end;
+
+  function PrintBlock.pbGetLastError : Word;
+    {-Return the last error code and clear error}
+  begin
+    pbGetLastError := pbLastError;
+    pbLastError := 0;
+  end;
+
+  procedure PrintBlock.pbAddTextField(pFieldID : Word; Prompt : String;
+                                      pRow, pCol : Dimension;
+                                      pAttr : Byte;
+                                      pWidth : Byte);
+  var
+    Field : StringPrintFieldPtr;
+    Sptr  : StringPtr;
+    PLen  : Byte absolute Prompt;
+
+  begin
+    {if string is longer than field width, then truncate to field width}
+    if PLen > pWidth then
+      PLen := pWidth;
+
+    {allocate memory for the string on the heap}
+    if not GetMemCheck(Sptr,Word(pWidth)+1) then begin {!!.22}
+      pbLastError := epFatal + ecOutOfMemory;
+      Exit;
+    end;
+
+    {copy string to heap}
+    Sptr^ := Prompt;
+(*
+    {adjust the coordinates for Block dimensions and margins}
+    fAdjustCoordinates(pRow,pCol);
+*)
+    {Call the StringPrintField constructor}
+    Field := New(StringPrintFieldPtr,Init(pFieldID,NullPicture,
+                                          pRow,pCol,pAttr,pWidth,
+                                          Sptr^,' ',
+                                          pfDeallocVarPtr or
+                                          pfTextField));
+    if Field = Nil then begin
+      pbLastError := epFatal + ecOutOfMemory;
+      FreeMemCheck(Sptr,Word(pWidth)+1); {!!.22}
+    end
+    else
+      {add the field to the current page's current block}
+      pbAddField(Field);
+  end;
+
+
+  procedure PrintBlock.pbAddLine(pOptions              : Word;
+                                 FieldID               : Word;
+                                 Row, Col              : Dimension;
+                                 Len,LineThickness     : Dimension;
+                                 Horizontal            : Boolean;
+                                 LineChar              : Char;
+                                 Attr                  : Byte);       {!!.20}
+  var
+    Row2,Col2 : Dimension;
+    Line      : LineFieldPtr;
+    Opts      : LongInt;
+    I         : Word;
+    L         : Byte;
+  begin
+    if Horizontal then begin
+      Col2 := Col + Len;
+      Row2 := Row;
+    end
+    else begin
+      Col2 := Col;
+      Row2 := Row + Len;
+    end;
+    if (not FlagIsSet(pOptions, pSupportsHPRules)) then begin
+      {simple lines}
+      L := Round(Len);
+      if Horizontal then
+        pbAddTextField(FieldID,CharStr(LineChar,L),Row,Col,Attr,L)
+      else
+        for I := 1 to L do
+          pbAddTextField(FieldID,LineChar,Row + (I-1),Col,Attr,1);
+    end
+    else begin
+      Line := New(LineFieldPtr,Init(FieldID,Row,Col,
+                                    Row2,Col2,LineThickness,
+                                    Attr,LJRule));
+      if Line = Nil then begin
+        pbLastError := InitStatus;
+        Exit;
+      end;
+      pbAddField(Line);
+    end;
+  end;
+
+  procedure PrintBlock.pbAddField(pf : PrintFieldPtr);
+    {-Add a field to this Print Block}
+  begin
+    pbFields.Append(pf);
+  end;
+
+  procedure PrintBlock.pbSetUserBlockFunc(pbFunc : UserBlockFunc);
+    {-Set the User Block Function}
+  begin
+    pbUserBlockFunc := pbFunc;
+  end;
+
+  function PrintBlock.pbCallUserBlockFunc : Boolean;
+    {-Call the user block function}
+  begin
+    if @pbUserBlockFunc <> Nil then
+      pbCallUserBlockFunc := pbUserBlockFunc(@Self)
+    else
+      pbCallUserBlockFunc := True;
+  end;
+
+  constructor FieldListNode.Init(PF : PrintFieldPtr);
+    {-Create a new FieldListNode}
+  begin
+    if not SingleListNode.Init then
+      Fail;
+    flField := PF;
+  end;
+
+  destructor FieldListNode.Done;
+    {-Destroy a FieldListNode}
+  begin
+    SingleListNode.Done;
+  end;
+
+  constructor PrintPage.Init;
+    {-Create a new Print page}
+  begin
+    ppZeroOut;
+    if not SingleListNode.Init then
+      Fail;
+    if not ppBlocks.Init then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure PrintPage.ppZeroOut;
+  begin
+    @ppPrePage     := Nil;
+    ppCurrentField := Nil;
+    ppCurrentBlock := Nil;
+    ppLastError    := 0;
+    ppFlags        := 0;
+    ppHeader       := Nil;
+    ppFooter       := Nil;
+  end;
+
+  constructor PrintPage.ppInitFrom(var P : PrintPage);
+  begin
+    ppZeroOut;
+    if not SingleListNode.Init then
+      Fail;
+    if not ppBlocks.Init then begin
+      Done;
+      Fail;
+    end;
+    ppFlags        := P.ppFlags;
+    ppLastError    := P.ppLastError;
+    ppPrePage      := P.ppPrePage;
+    if P.ppHeader <> Nil then begin
+      P.ppHeader^.pfClone(P.ppHeader, ppHeader);
+      if ppHeader = Nil then begin
+        InitStatus := epFatal + ecOutOfMemory;
+        Done;
+        Fail;
+      end;
+      ppHeader^.pfVarPtr := Nil;                    {!!.01}
+      ppHeader^.pfString^ := P.ppHeader^.pfString^; {!!.01}
+    end;
+    if P.ppFooter <> Nil then begin
+      P.ppFooter^.pfClone(P.ppFooter, ppFooter);
+      if ppFooter= Nil then begin
+        InitStatus := epFatal + ecOutOfMemory;
+        Done;
+        Fail;
+      end;
+      ppFooter^.pfVarPtr := Nil;                    {!!.01}
+      ppFooter^.pfString^ := P.ppFooter^.pfString^; {!!.01}
+    end;
+    ppCurrentField := P.ppCurrentField;
+    ppCurrentBlock := P.ppCurrentBlock;
+  end;
+
+  constructor PrintPage.ppCopy(var P : PrintPage);
+  var
+    Block, NewBlock : PrintBlockPtr;
+  begin
+    if not ppInitFrom(P) then begin
+      Done;
+      Fail;
+    end;
+    Block := PrintBlockPtr(P.ppBlocks.Head);
+    while Block <> Nil do begin
+      with Block^ do
+        DuplicateBlock(pbBaseRow, pbBaseCol, Block, NewBlock);
+      if NewBlock = Nil then begin
+        InitStatus := epFatal + ecOutOfMemory;
+        Done;
+        Fail;
+      end;
+      ppBlocks.Append(NewBlock);
+      Block := PrintBlockPtr(Block^.slNext);
+    end;
+  end;
+
+{$IFDEF UseStreams}
+
+  procedure PrintPage.Store(var S : IdStream);
+  begin
+    S.WriteRange(ppFlags,ppBlocks);
+    if S.PeekStatus <> 0 then
+      Exit;
+    ppBlocks.Store(S);
+    S.WritePointer(@ppPrePage);
+    if FlagIsSet(ppFlags,ppHeaderActive) then
+      S.PutPtr(ppHeader);
+    if FlagIsSet(ppFlags,ppFooterActive) then
+      S.PutPtr(ppFooter);
+  end;
+
+  constructor PrintPage.Load(var S : IdStream);
+  begin
+    ppZeroOut;
+    SingleListNode.Init;
+    S.ReadRange(ppFlags,ppBlocks);
+    ppBlocks.Load(S);
+    @ppPrePage := S.ReadPointer;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+    if FlagIsSet(ppFlags,ppHeaderActive) then
+      ppHeader := PrintFieldPtr(S.GetPtr);
+    if FlagIsSet(ppFlags,ppFooterActive) then
+      ppFooter := PrintFieldPtr(S.GetPtr);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+{$ENDIF}
+
+  destructor PrintPage.Done;
+    {-Destroy a print page}
+  begin
+    if ppHeader <> Nil then
+      Dispose(ppHeader,Done);
+    if ppFooter <> Nil then
+      Dispose(ppFooter,Done);
+
+    ppBlocks.Done;
+    SingleListNode.Done;
+  end;
+
+  procedure PrintPage.Print(PrinterP : PrinterPtr);
+  var
+    Block       : PrintBlockPtr;
+    Field       : PrintFieldPtr;
+    ListItem    : FieldListPtr;
+    ErrorCode   : Word;
+    S           : String;
+  const                                                    {!!.03}
+    Optimizable = pPositionable + pNoSortPositionable;     {!!.03}
+  label                                                    {!!.12}
+    ExitPoint;                                             {!!.12}
+  begin
+    with PrinterP^ do                                      {!!.03 begin}
+      if pOptions and Optimizable = Optimizable then
+        SetFlag(ppFlags, ppNoSortFields)
+      else
+        ClearFlag(ppFlags, ppNoSortFields);                 {!!.03 end}
+
+    {call user page function, if it returns false, exit without printing}
+    if not ppCallUserPageFunc then
+      Exit;
+    if PrinterP^.pLastError <> 0 then begin                {!!.11}
+      ppLastError := PrinterP^.pLastError;                 {!!.11}
+      Exit;
+    end;                                                   {!!.11}
+    ppFields.Init;        {init the list of fields to print}
+
+    Block := PrintBlockPtr(ppBlocks.Head);   {get first block}
+    {loop for each print block}
+    while Block <> Nil do begin
+      {determine if this block is to be printer}
+      if Block^.pbCallUserBlockFunc then begin
+        {block is to be printed, so append all fields of this block to list
+         of fields to print}
+        if PrinterP^.pLastError <> 0 then begin            {!!.11}
+          ppLastError := PrinterP^.pLastError;             {!!.11}
+          Goto ExitPoint;                                  {!!.12}
+        end;                                               {!!.11}
+        with Block^ do begin
+          Field := PrintFieldPtr(pbFields.Head);  {get first field for block}
+          {loop for each field}
+          while Field <> Nil do begin
+            if  Field^.Convert and (not Field^.pfFieldIsHidden) then begin
+              ListItem := New(FieldListPtr,Init(Field));
+              if ListItem = Nil then begin                           {!!.12}
+                ppLastError := ecOutOfMemory;                        {!!.12}
+                if PrinterP^.PrintError(ppLastError, False) then ;   {!!.12}
+                goto ExitPoint;                                      {!!.12}
+              end;                                                   {!!.12}
+              ppFields.Append(ListItem);
+            end;
+            Field := PrintFieldPtr(Field^.dlNext); {get next field}
+          end;
+        end;
+      end;
+      Block := PrintBlockPtr(Block^.slNext);  {get next block}
+    end;
+
+    {print the header (if any)}
+    if ppHeader <> Nil then {begin} {!!.02}
+      if ppHeader^.Convert and (not ppHeader^.pfFieldIsHidden) then begin {!!.02}
+        ppHeader^.Print(PrinterP);
+        if PrinterP^.pLastError <> 0 then begin               {!!.11}
+          ppLastError := PrinterP^.pLastError;                {!!.11}
+          Goto ExitPoint;                                     {!!.12}
+        end;                                                  {!!.11}
+      end;
+    {now walk through the list repeatedly, printing the top leftmost field
+     each time and remove it from the list}
+    ErrorCode := 0;
+    Field := ppLowestField;               {get first field to print}
+    if Field = Nil then begin                               {!!.02}
+      ErrorCode := epWarning + ecNoFieldsOnPage;
+      if PrinterP^.PrintError(ErrorCode, True) then         {!!.02}
+        ErrorCode := 0;                                     {!!.02}
+    end;                                                    {!!.02}
+    while Field <> Nil do begin
+      Field^.Print(PrinterP);             {Print the field}
+      ErrorCode := Field^.pfGetLastError; {preserve the error code}
+      Field := ppLowestField;             {get next lowest field}
+      if ErrorCode = 0 then
+        ErrorCode :=  PrinterP^.pLastError;
+      if  (ErrorCode <> 0) then {if Error, then fall out of loop}
+        Field := Nil;
+    end;
+
+    if ErrorCode = 0 then begin
+      {print the footer (if any)}
+      if ppFooter <> Nil then {begin} {!!.02}
+        if ppFooter^.Convert and (not ppFooter^.pfFieldIsHidden) then begin {!!.02}
+          ppFooter^.Print(PrinterP);
+          ErrorCode := PrinterP^.pLastError;
+        end;
+      if ErrorCode = 0 then
+        PrinterP^.FormFeed;                   {issue a form feed}
+    end;
+  ExitPoint:                                                {!!.12}
+    ppLastError := ErrorCode;                               {!!.14}
+    ppFields.Done;        {destroy the list of fields to print}
+  end;
+
+  function PrintPage.ppGetLastError : Word;
+    {-Returns the last error and resets to zero}
+  begin
+    ppGetLastError := ppLastError;
+    ppLastError    := 0;
+  end;
+
+  procedure PrintPage.ppAddBlockPrim(Block : PrintBlockPtr);
+  begin
+    ppBlocks.Append(Block);
+  end;
+
+  procedure PrintPage.ppAddBlock(BaseRow, BaseCol : Dimension;
+                                 BlockFunc : UserBlockFunc);
+    {-Add a block to this page}
+  var
+    Block : PrintBlockPtr;
+  begin
+    {call PrintBlock constructor}
+    Block := New(PrintBlockPtr,Init(BaseRow, BaseCol));
+    if Block = Nil then begin
+      ppLastError := epFatal + ecOutOfMemory;
+      Exit;
+    end;
+    {Set the user block function}
+    Block^.pbSetUserBlockFunc(BlockFunc);
+    {add Block to list of Blocks and make current}
+    ppAddBlockPrim(Block);
+    ppCurrentBlock := Block;
+  end;
+
+  procedure PrintPage.ppAddField(pf : PrintFieldPtr);
+    {-Add a field to this page's current block}
+  begin
+    if ppCurrentBlock = Nil then
+      ppLastError := epWarning + ecNoBlockDefined
+    else
+      ppCurrentBlock^.pbAddField(pf);
+  end;
+
+  procedure PrintPage.SetPrePageFunc(ppFunc : UserPageFunc);
+    {-set the function that gets called prior to the printing of the page}
+  begin
+    ppPrePage := ppFunc;
+  end;
+
+  function PrintPage.ppCallUserPageFunc : Boolean;
+    {-Calls User Page function.  Always returns true if user page func is Nil.
+      If False is returned, then this page will not be printed}
+  begin
+    if @ppPrePage <> Nil then
+      ppCallUserPageFunc := ppPrePage(@Self)
+    else
+      ppCallUserPageFunc := True;
+  end;
+
+  function PrintPage.ppLowerField(A,B : PrintFieldPtr) : Boolean;
+    {-Return true if A < B.
+      Rules of comparison:
+        1) The Row of A is less than Row of B
+        2) The Rows are equal and the Col of A is less than B
+        3) The Rows and Cols are equal and A is a "directive"
+    }
+  begin
+    ppLowerField := False;
+    if (A^.pfRow < B^.pfRow) then
+      ppLowerField := True
+    else if (A^.pfRow = B^.pfRow) then
+      if (A^.pfCol < B^.pfCol) or ((A^.pfCol = B^.pfCol) and
+                                  LongFlagIsSet(A^.pfOptions,pfDirective)) then
+      ppLowerField := True;
+  end;
+
+  function PrintPage.ppLowestField : PrintFieldPtr;
+    {-Return the next field to process and remove it from ppFields}
+  var
+    ListItem,
+    LowestItem    : FieldListPtr;
+  begin
+    ListItem := FieldListPtr(ppFields.Head);   {get the first field in list}
+    if ListItem <> Nil then begin              {if not nil make it lowest}
+      LowestItem := ListItem;
+      ListItem := FieldListPtr(ListItem^.slNext); {get next field}
+    end
+    else
+      LowestItem := Nil;
+
+    if not FlagIsSet(ppFlags, ppNoSortFields) then               {!!.03 begin}
+      {for each item in list, check to see if it is "lower" than Lowest field so
+       far}
+      while ListItem <> Nil do begin
+        if ppLowerField(ListItem^.flField,LowestItem^.flField) then
+          LowestItem := ListItem;
+        ListItem := FieldListPtr(ListItem^.slNext); {get next field in list}
+      end;                                                       {!!.03 end}
+
+    if LowestItem <> Nil then begin
+      ppLowestField := LowestItem^.flField;     {return the lowest field}
+      {now remove from list and dispose of this list item}
+      ppFields.Delete(LowestItem);
+    end
+    else
+      ppLowestField := Nil;   {no items left in list}
+  end;
+
+  function PrintPage.ppGetCurrentBlock : PrintBlockPtr;
+    {-Return the current block}
+  begin
+    ppGetCurrentBlock := ppCurrentBlock;
+  end;
+
+  function PrintPage.ppGetCurrentField : PrintFieldPtr;
+    {-Return the current field}
+  begin
+    ppGetCurrentField := ppCurrentField;
+  end;
+
+  procedure PrintPage.SetHeader(HeaderStr : String; Row, Col : Dimension;
+                                HAttr : Byte);
+    {-Set up a header}
+  var
+    L : Byte;
+  begin
+    if ppHeader <> Nil then begin
+      Dispose(ppHeader,Done);
+      ClearFlag(ppFlags,ppHeaderActive);
+    end;
+    L := Length(HeaderStr);
+    ppHeader := New(PrintFieldPtr,Init(ReservedFieldID,'',Row,Col,
+                                       HAttr,L,1,L,Word(L)+1,0, {!!.22}
+                                       DummyConversion,L,' ',0));
+    if ppHeader = Nil then begin
+      ppLastError := epFatal + ecOutOfMemory;
+      Exit;
+    end;
+    ppHeader^.pfVarPtr  := Nil;
+    ppHeader^.pfString^ := HeaderStr;
+    SetFlag(ppFlags,ppHeaderActive);
+  end;
+
+  procedure PrintPage.SetHeaderFunc(Picture : String;
+                                    HeadFunc : PrintConversionFunc);
+    {-Set the HeadFunc function pointer}
+  begin
+    if ppHeader <> Nil then begin
+      ppHeader^.pfSetPicture(Picture);
+      ppHeader^.SetConversion(HeadFunc);
+    end;
+  end;
+
+  function PrintPage.GetHeader : String;
+    {-Returns the header string}
+  begin
+    if ppHeader = Nil then
+      GetHeader := ''
+    else
+      GetHeader := ppHeader^.GetFieldString;
+  end;
+
+  procedure PrintPage.SetFooter(FooterStr : String; Row, Col : Dimension;
+                                FAttr : Byte);
+    {-Set up a Footer}
+  var
+    L : Byte;
+  begin
+    if ppFooter <> Nil then begin
+      Dispose(ppFooter,Done);
+      ClearFlag(ppFlags,ppFooterActive);
+    end;
+    L := Length(FooterStr);
+    ppFooter := New(PrintFieldPtr,Init(ReservedFieldID,'',Row,Col,
+                                       FAttr,L,1,L,Word(L)+1,0, {!!.22}
+                                       DummyConversion,L,' ',0));
+    if ppFooter = Nil then begin
+      ppLastError := epFatal + ecOutOfMemory;
+      Exit;
+    end;
+    ppFooter^.pfVarPtr  := Nil;
+    ppFooter^.pfString^ := FooterStr;
+    SetFlag(ppFlags,ppFooterActive);
+  end;
+
+  procedure PrintPage.SetFooterFunc(Picture : String;
+                                    FootFunc : PrintConversionFunc);
+    {-Set the HeadFunc function pointer}
+  begin
+    if ppFooter <> Nil then begin
+      ppFooter^.pfSetPicture(Picture);
+      ppFooter^.SetConversion(FootFunc);
+    end;
+  end;
+
+  function PrintPage.GetFooter : String;
+    {-Returns the Footer string}
+  begin
+    if ppFooter = Nil then
+      GetFooter := ''
+    else
+      GetFooter := ppFooter^.GetFieldString;
+  end;

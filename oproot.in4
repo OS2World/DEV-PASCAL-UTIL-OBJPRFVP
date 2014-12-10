@@ -1,0 +1,1165 @@
+{*********************************************************}
+{*                   OPROOT.IN4 1.30                     *}
+{*     Copyright (c) TurboPower Software 1989, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  constructor DirEntry.Init;
+    {-Initialize an empty directory entry}
+  begin
+    Root.Init;
+
+    FillChar(deSig, SizeOf(DirEntry)-SizeOf(Root), 0);
+    deSig := DirectorySig;
+    deFlags := deUnused;
+    deCode := 0;
+    deVer := 0;
+  end;
+
+  constructor DirEntry.Load(var S : IdStream);
+    {-Load a directory entry from a stream}
+  begin
+    S.ReadRange(deSig, deUser);
+    deUser := S.ReadPointer;
+    if SizeOf(Self) <> SizeOf(DirEntry) then
+      S.Read(deCustom, SizeOf(Self)-SizeOf(DirEntry));
+
+    if (S.PeekStatus <> 0) or (deSig <> DirectorySig) then begin
+      if (S.PeekStatus = 0) then
+        InitStatus := epFatal+ecBadSignature;
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure DirEntry.Store(var S : IdStream);
+    {-Store a directory entry in a stream}
+  begin
+    S.WriteRange(deSig, deUser);
+    S.WriteUserPointer(nil, ptNil);
+    if SizeOf(Self) <> SizeOf(DirEntry) then
+      S.Write(deCustom, SizeOf(Self)-SizeOf(DirEntry));
+  end;
+
+  procedure DirEntry.Rename(Name : DirEntryName);
+    {-Change the name of the directory entry}
+  Var
+    WordFlag : Word absolute deFlags;
+  begin
+    deName := StUpcase(Name);
+    ClearFlag(WordFlag, deUnused);
+  end;
+
+  procedure DirEntry.Update(Start, Len : LongInt; Code, Ver : SmallWord);
+    {-Update the start and length data}
+  begin
+    deStart := Start;
+    deLength := Len;
+    deCode := Code;
+    deVer := Ver;
+  end;
+
+  procedure DirEntry.deOptionsOn(Options : Word);
+    {-Set the specified flag(s)}
+  Var
+    WordFlag : Word absolute deFlags;
+  begin
+    SetFlag(WordFlag, Options);
+  end;
+
+  procedure DirEntry.deOptionsOff(Options : Word);
+    {-Clear the specified flag(s)}
+  Var
+    WordFlag : Word absolute deFlags;
+  begin
+    ClearFlag(WordFlag, Options);
+  end;
+
+  function DirEntry.deOptionsAreOn(Options : Word) : Boolean;
+    {-Returns True if the specified flag(s) are on}
+  begin
+    deOptionsAreOn := (deFlags and Options) = Options;
+  end;
+
+  procedure DirEntry.SetUserPointer(P : Pointer);
+    {-Set the user pointer to P}
+  begin
+    deUser := P;
+  end;
+
+  function DirEntry.GetEntryName : DirEntryName;
+    {-Return the name of the entry}
+  begin
+    GetEntryName := deName;
+  end;
+
+  function DirEntry.GetEntryStart : LongInt;
+    {-Return the starting point for the entry}
+  begin
+    GetEntryStart := deStart;
+  end;
+
+  function DirEntry.GetEntryLength : LongInt;
+    {-Return the length of the entry}
+  begin
+    GetEntryLength := deLength;
+  end;
+
+  function DirEntry.GetUserPointer : Pointer;
+    {-Return the user pointer}
+  begin
+    GetUserPointer := deUser;
+  end;
+
+  {!!.20} {All instances of Library renamed to OpLibrary}
+
+  constructor OpLibrary.Init(FileName : PathStr; Mode, BufferSize : Word;
+                           Sig : OpLibrarySig);
+    {-Open an existing OpLibrary}
+  var
+    I : Word;
+  begin
+    {don't allow file to be created here}
+    if Mode = SCreate then begin
+      InitStatus := epFatal+ecBadParam;
+      Fail;
+    end;
+
+    {initialize directory pointer to nil in case we fail}
+    liDirectory := nil;
+
+    {try to open the file}
+    if not BufIdStream.Init(FileName, Mode, BufferSize) then
+      Fail;
+
+    {read the header}
+    ReadRange(liSig, liCustom);
+    if SizeOf(Self) <> SizeOf(OpLibrary) then
+      Read(liCustom, SizeOf(Self)-SizeOf(OpLibrary));
+    if (PeekStatus <> 0) then begin
+      InitStatus := PeekStatus;  {!!.03}
+      Done;
+      Fail;
+    end;
+
+    {directory entries start here}
+    liDirStart := GetPos;
+
+    {verify the signature if desired}
+    if (Sig <> '') and (liSig <> Sig) then begin
+      InitStatus := epFatal+ecBadSignature;
+      Done;
+      Fail;
+    end;
+
+    {allocate the directory}
+    I := liEntries*SizeOf(Pointer);
+    if not GetMemCheck(liDirectory, I) then begin
+      InitStatus := epFatal+ecOutOfMemory;
+      Done;
+      Fail;
+    end;
+
+    {initialize all the pointers to nil}
+    FillChar(liDirectory^, I, 0);
+
+    {register the directory entry type}
+    RegisterEntryType;
+    for I := 1 to liEntries do begin
+      {allocate and load the directory entry}
+      liDirectory^[I] := DirEntryPtr(GetPtr);
+      if PeekStatus <> 0 then begin
+        InitStatus := PeekStatus;  {!!.03}
+        Done;
+        Fail;
+      end;
+    end;
+
+    {save the filename}
+    liFileName := FileName;
+  end;
+
+  constructor OpLibrary.Create(FileName : PathStr; BufferSize : Word;
+                             Sig : OpLibrarySig; Entries : Word);
+    {-Create a new OpLibrary}
+  var
+    I : Word;
+    L : LongInt;
+  begin
+    {initialize directory pointer to nil in case we fail}
+    liDirectory := nil;
+
+    {make sure there's at least one entry in the directory}
+    if Entries = 0 then
+      Entries := 1;
+
+    {try to open the file}
+    if not BufIdStream.Init(FileName, SCreate, BufferSize) then
+      Fail;
+
+    {initialize misc. variables}
+    liSig := Sig;
+    liEntries := Entries;
+    liFileName := FileName;
+
+    {register the directory entry type (initializes liEntrySize too)}
+    RegisterEntryType;
+
+    {allocate the directory}
+    L := LongInt(Entries)*SizeOf(Pointer);
+    if (L > 65521) or not GetMemCheck(liDirectory, L) then begin
+      InitStatus := epFatal+ecOutOfMemory;
+      Done;
+      Fail;
+    end;
+
+    {initialize all the pointers to nil}
+    FillChar(liDirectory^, L, 0);
+
+    {allocate and initialize the directory entries}
+    for I := 1 to Entries do begin
+      InitEntry(I);
+      if liDirectory^[I] = nil then begin
+        if InitStatus = 0 then
+          InitStatus := epFatal+ecOutOfMemory;
+        Done;
+        Fail;
+      end;
+    end;
+
+    {write the header and the directory to disk}
+    UpdateHeader;
+    UpdateDirectory;
+    if PeekStatus <> 0 then begin
+      InitStatus := PeekStatus;  {!!.03}
+      Done;
+      Fail;
+    end;
+  end;
+
+  destructor OpLibrary.Done;
+    {-Flush and close OpLibrary file, and dispose of directory and stream}
+  var
+    I : Word;
+  begin
+    if liDirectory <> nil then begin
+      {deallocate all the directory entries}
+      for I := 1 to liEntries do
+        if liDirectory^[I] <> nil then     {!!.01}
+          Dispose(liDirectory^[I], Done);
+
+      {deallocate the directory itself}
+      FreeMemCheck(liDirectory, liEntries*SizeOf(Pointer));
+    end;
+
+    {call parent's destructor to close the file and deallocate the stream}
+    BufIdStream.Done;
+  end;
+
+  procedure OpLibrary.PutEntry(Name : DirEntryName; var R : Root);
+    {-Calls polymorphic Store method to write object R}
+  var
+    I : Word;
+    Start : LongInt;
+    Vmt : Word absolute R;
+    Id : IdNodePtr;
+    WordFlag : Word;
+  begin
+    {check for blank name}
+    if Name = '' then begin
+      Error(epNonFatal+ecNameBlank);
+      Exit;
+    end;
+
+    {find the directory index to use}
+    I := FindAnyDirectoryIndex(Name);
+    if I = 0 then begin
+      {it's a new entry--find an available slot}
+      I := FindAvailableEntry;
+      if I = 0 then begin
+        {directory is full}
+        Error(epNonFatal+ecDirectoryFull);
+        Exit;
+      end;
+    end;
+
+    {go to end of file}
+    SetPos(0, PosEnd);
+
+    {write the object}
+    Start := GetPos;
+    Put(R);
+    if PeekStatus <> 0 then
+      Exit;
+
+    with liDirectory^[I]^ do begin
+      Id := idRegistered.FindByVmt(Vmt);
+
+      {update the directory entry}
+      WordFlag := deFlags;
+      ClearFlag(WordFlag, deDeleted);
+      deFlags := WordFlag;
+      Rename(Name);
+      with Id^ do
+        Update(Start, GetPos-Start, idCode, idVer);
+    end;
+
+    {write the updated directory entry to disk}
+    UpdateDirectoryEntry(I);
+    Flush;
+  end;
+
+  procedure OpLibrary.GetEntry(Name : DirEntryName; var R : Root);
+    {-Calls polymorphic Load constructor to read static object R}
+  var
+    DEP : DirEntryPtr;
+  begin
+    {locate the entry}
+    DEP := FindDirectoryEntry(Name);
+
+    if DEP = nil then
+      Error(epNonFatal+ecEntryNotFound)
+    else
+      with DEP^ do begin
+        {seek to beginning of entry and load the object}
+        Seek(deStart);
+        Get(R);
+      end;
+  end;
+
+  function OpLibrary.GetEntryPtr(Name : DirEntryName) : RootPtr;
+    {-Calls polymorphic Load constructor to allocate and read object}
+  var
+    DEP : DirEntryPtr;
+  begin
+    {locate the entry}
+    DEP := FindDirectoryEntry(Name);
+
+    if DEP = nil then begin
+      GetEntryPtr := nil;
+      Error(epNonFatal+ecEntryNotFound);
+    end
+    else
+      with DEP^ do begin
+        {seek to beginning of entry and allocate/load the object}
+        Seek(deStart);
+        GetEntryPtr := GetPtr;
+      end;
+  end;
+
+  procedure OpLibrary.DeleteEntry(Name : DirEntryName);
+    {-Mark the entry of the specified name as deleted}
+  var
+    I : Word;
+    WordFlags : Word;
+  begin
+    {locate the entry}
+    I := FindAnyDirectoryIndex(Name);
+
+    if I = 0 then
+      Error(epNonFatal+ecEntryNotFound)
+    else begin
+      {mark it as deleted}
+      WordFlags := liDirectory^[I]^.deFlags;
+      SetFlag( WordFlags, deDeleted);
+      liDirectory^[I]^.deFlags := WordFlags;
+      UpdateDirectoryEntry(I);
+      Flush;
+    end;
+  end;
+
+  procedure OpLibrary.UndeleteEntry(Name : DirEntryName);
+    {-Remove deletion mark from the specified entry}
+  var
+    I : Word;
+    WordFlags : Word;
+  begin
+    {locate the entry}
+    I := FindAnyDirectoryIndex(Name);
+
+    if I = 0 then
+      Error(epNonFatal+ecEntryNotFound)
+    else begin
+      {mark it as not deleted}
+      WordFlags := liDirectory^[I]^.deFlags;
+      ClearFlag(WordFlags, deDeleted);
+      liDirectory^[I]^.deFlags := WordFlags;
+      UpdateDirectoryEntry(I);
+      Flush;
+    end;
+  end;
+
+  procedure OpLibrary.KillEntry(Name : DirEntryName);
+    {-Permanently delete the entry of the specified name}
+  var
+    I : Word;
+  begin
+    {locate the entry}
+    I := FindAnyDirectoryIndex(Name);
+
+    if I = 0 then
+      Error(epNonFatal+ecEntryNotFound)
+    else begin
+      {restore the entry to its original state}
+      InitEntry(I);
+      UpdateDirectoryEntry(I);
+      Flush;
+    end;
+  end;
+
+  procedure OpLibrary.RenameEntry(OldName, NewName : DirEntryName);
+    {-Rename the specified entry}
+  var
+    I : Word;
+  begin
+    {new name the same?}
+    if StUpcase(OldName) = StUpcase(NewName) then
+      Exit;
+
+    {check for conflict}
+    I := FindAnyDirectoryIndex(NewName);
+    if I <> 0 then begin
+      Error(epNonFatal+ecDuplicateName);
+      Exit;
+    end;
+
+    {locate the entry}
+    I := FindAnyDirectoryIndex(OldName);
+
+    if I = 0 then
+      Error(epNonFatal+ecEntryNotFound)
+    else begin
+      {change the name}
+      liDirectory^[I]^.Rename(NewName);
+      UpdateDirectoryEntry(I);
+      Flush;
+    end;
+  end;
+
+  procedure OpLibrary.Pack;
+    {-Pack the OpLibrary}
+  var
+    WorkName : PathStr;
+    I, OldH, NewH : Word;
+
+    procedure MakeAsciiz(var FName : PathStr);
+      {-Make FName an ASCIIZ string}
+    var
+      FLen : Byte;
+    begin
+      FLen := Length(FName);
+      Move(FName[1], FName[0], FLen);
+      FName[FLen] := #0;
+    end;
+
+    procedure OpenFile(FName : PathStr);
+      {-Open the file of the specified name}
+    begin
+      MakeAsciiz(FName);
+      Open(FName, SOpen);
+    end;
+
+    procedure CreateFile(FName : PathStr);
+      {-Create a file of the specified name}
+    begin
+      MakeAsciiz(FName);
+      Open(FName, SCreate);
+    end;
+
+    procedure RenameFile(OldName, NewName : PathStr);
+      {-Rename OldName to NewName}
+    {$IFDEF VIRTUALPASCAL}
+    var
+      rc : Longint;
+    begin
+      MakeAsciiz(OldName);
+      MakeAsciiz(NewName);
+      rc := SysFileMove(@OldName[1], @NewName[1]);
+      If rc <> 0 then
+        Error( epFatal + rc );
+    end;
+    {$ELSE}
+    var
+      Regs : Registers;
+    begin
+      MakeAsciiz(OldName);
+      MakeAsciiz(NewName);
+      with Regs do begin
+        AH := $56;
+        DS := Seg(OldName);
+        DX := Ofs(OldName);
+        ES := Seg(NewName);
+        DI := Ofs(NewName);
+        MsDos(Regs);
+        if Odd(Flags) then
+          Error(epFatal+AX);
+      end;
+    end;
+    {$ENDIF VIRTUALPASCAL}
+
+    procedure EraseFile(FName : PathStr);
+      {-Erase the specified file}
+    {$IFDEF VIRTUALPASCAL}
+    var
+      rc : Longint;
+    begin
+      MakeAsciiz(FName);
+      rc := SysFileDelete( @Fname[1] );
+      If rc <> 0 then
+        Error( epFatal + rc );
+    end;
+    {$ELSE}
+    var
+      Regs : Registers;
+    begin
+      MakeAsciiz(FName);
+      with Regs do begin
+        AH := $41;
+        DS := Seg(FName);
+        DX := Ofs(FName);
+        MsDos(Regs);
+        if Odd(Flags) then
+          Error(epFatal+AX);
+      end;
+    end;
+    {$ENDIF VIRTUALPASCAL}
+
+    procedure CopyEntry(N : Word);
+      {-Copy the N'th entry into the packed library}
+    var
+      BytesToCopy : LongInt;
+      BytesRemaining : LongInt;
+      NewStart : LongInt;
+    begin
+      with liDirectory^[N]^ do begin
+        {go to start of entry}
+        Handle := OldH;
+        Seek(deStart);
+
+        {go to end of new file}
+        Handle := NewH;
+        SetPos(0, PosEnd);
+
+        {save the new starting offset}
+        deStart := GetPos;
+
+        {copy the contents of the entry}
+        BytesRemaining := deLength;
+        while BytesRemaining > 0 do begin
+          {calculate bytes to copy}
+          if BytesRemaining > BufSize then
+            BytesToCopy := BufSize
+          else
+            BytesToCopy := BytesRemaining;
+
+          {read into the buffer using DosIdStream's Read routine}
+          Handle := OldH;
+          DosIdStream.Read(Buffer^, BytesToCopy);
+          if PeekStatus <> 0 then
+            Exit;
+
+          {write the buffer using DosIdStream's Write routine}
+          Handle := NewH;
+          DosIdStream.Write(Buffer^, BytesToCopy);
+          if PeekStatus <> 0 then
+            Exit;
+
+          {decrement counter}
+          Dec(BytesRemaining, BytesToCopy);
+        end;
+
+        {make sure the buffer looks empty}
+        BufPtr := 0;
+        BufEnd := 0;
+
+        {update the directory}
+        UpdateDirectoryEntry(N);
+        Flush;
+      end;
+    end;
+
+    procedure ProcessEntry(N : Word);
+      {-Process the N'th entry}
+    begin
+      {does this entry get copied?}
+      if not WriteEntryWhenPacking(N) then begin
+        {blank it out}
+        InitEntry(N);
+
+        {update the directory}
+        Handle := NewH;
+        UpdateDirectoryEntry(N);
+        Flush;
+      end
+      else
+        {copy the entry}
+        CopyEntry(N);
+    end;
+
+    procedure EraseWorkFile;
+      {-Erase the working library}
+    begin
+      Handle := NewH;
+      Close;
+      EraseFile(WorkName);
+      Handle := OldH;
+    end;
+
+  begin
+    {do nothing if packing not needed}
+    if not FileNeedsPacking then
+      Exit;
+
+    {update the file}
+    UpdateHeader;
+    UpdateDirectory;
+    Flush;
+    if PeekStatus <> 0 then
+      Exit;
+
+    {create a new one}
+    OldH := Handle;
+    WorkName := ForceExtension(liFileName, TempLibExt);
+    CreateFile(WorkName);
+    if PeekStatus <> 0 then begin
+      {non-fatal}
+      Error(epNonFatal+ecPackFailed);
+      Exit;
+    end;
+
+    {write the header and directory}
+    NewH := Handle;
+    UpdateHeader;
+    UpdateDirectory;
+    if PeekStatus <> 0 then begin
+      {non-fatal}
+      EraseWorkFile;
+      Error(epNonFatal+ecPackFailed);
+      Exit;
+    end;
+
+    {process each entry as appropriate}
+    for I := 1 to liEntries do begin
+      ProcessEntry(I);
+      if PeekStatus <> 0 then begin
+        {fatal}
+        EraseWorkFile;
+        Close;
+        Error(epFatal+ecPackFailed);
+        Exit;
+      end;
+    end;
+
+    {close and erase the old library}
+    Handle := OldH;
+    Close;
+    EraseFile(liFileName);
+    if PeekStatus <> 0 then begin
+      {fatal}
+      Error(epFatal+ecPackFailed);
+      Exit;
+    end;
+
+    {rename the new OpLibrary}
+    Handle := NewH;
+    Close;
+    RenameFile(WorkName, liFileName);
+    if PeekStatus = 0 then
+      OpenFile(liFileName);
+    if PeekStatus <> 0 then
+      {fatal}
+      Error(epFatal+ecPackFailed);
+  end;
+
+  function OpLibrary.PackedFileSize : LongInt;
+    {-Returns size of OpLibrary after packing}
+  var
+    I : Word;
+    Size : LongInt;
+  begin
+    {start with header size + size of directory}
+    Size := LongInt(liDirStart)+(liEntries*liEntrySize);
+
+    for I := 1 to liEntries do
+      {will this entry be written when packing?}
+      if WriteEntryWhenPacking(I) then
+        {add its size to the total}
+        Inc(Size, liDirectory^[I]^.deLength);
+
+    PackedFileSize := Size;
+  end;
+
+  function OpLibrary.FileNeedsPacking : Boolean;
+    {-Returns True if library needs packing}
+  begin
+    {packing needed if file size would be different after packing}
+    FileNeedsPacking := GetSize <> PackedFileSize;
+  end;
+
+  function OpLibrary.FindEntryByIndex(N : Word) : DirEntryPtr;
+    {-Return a pointer to the N'th entry}
+  begin
+    if (N > 0) and (N <= liEntries) then
+      FindEntryByIndex := liDirectory^[N]
+    else
+      FindEntryByIndex := nil;
+  end;
+
+  function OpLibrary.FindDirectoryIndex(Name : DirEntryName) : Word;
+    {-Return the directory index for Name; 0 if not found or deleted}
+  var
+    I : Word;
+  begin
+    {locate the entry}
+    I := FindAnyDirectoryIndex(Name);
+
+    {return 0 if entry is marked for deletion}
+    if (I <> 0) and FlagIsSet(liDirectory^[I]^.deFlags, deDeleted) then
+      FindDirectoryIndex := 0
+    else
+      FindDirectoryIndex := I;
+  end;
+
+  function OpLibrary.FindAnyDirectoryIndex(Name : DirEntryName) : Word;
+    {-Return the directory index for Name; 0 if not found}
+  var
+    I : Word;
+  begin
+    {convert name to upper case}
+    Name := StUpcase(Name);
+
+    for I := 1 to liEntries do
+      {does name match?}
+      if liDirectory^[I]^.deName = Name then begin
+        FindAnyDirectoryIndex := I;
+        Exit;
+      end;
+
+    FindAnyDirectoryIndex := 0;
+  end;
+
+  function OpLibrary.FindDirectoryEntry(Name : DirEntryName) : DirEntryPtr;
+    {-Return a pointer to a directory entry; nil if not found or deleted}
+  var
+    I : Word;
+  begin
+    {locate the entry}
+    I := FindDirectoryIndex(Name);
+
+    if I = 0 then
+      FindDirectoryEntry := nil
+    else
+      {return a pointer to the directory entry}
+      FindDirectoryEntry := liDirectory^[I];
+  end;
+
+  function OpLibrary.FindAnyDirectoryEntry(Name : DirEntryName) : DirEntryPtr;
+    {-Return a pointer to a directory entry; nil if not found}
+  var
+    I : Word;
+  begin
+    {locate the entry}
+    I := FindAnyDirectoryIndex(Name);
+
+    if I = 0 then
+      FindAnyDirectoryEntry := nil
+    else
+      {return a pointer to the directory entry}
+      FindAnyDirectoryEntry := liDirectory^[I];
+  end;
+
+  procedure OpLibrary.GetCodeAndVersion(Name : DirEntryName; var Code, Ver : SmallWord);
+    {-Return the code and version for the specified entry}
+  var
+    DEP : DirEntryPtr;
+  begin
+    {locate the entry}
+    DEP := FindAnyDirectoryEntry(Name);
+
+    if DEP = nil then
+      Error(epNonFatal+ecEntryNotFound)
+    else with DEP^ do begin
+      {return the code and version}
+      Code := deCode;
+      Ver := deVer;
+    end;
+  end;
+
+  function OpLibrary.MaxEntries : Word;
+    {-Return the maximum number of entries in the OpLibrary's directory}
+  begin
+    MaxEntries := liEntries;
+  end;
+
+  function OpLibrary.CurrentEntries : Word;
+    {-Return the number of used entries in the library's directory,
+      not including deleted entries}
+  var
+    I, J : Word;
+  begin
+    {add up number of directory entries in use}
+    J := 0;
+    for I := 1 to liEntries do
+      with liDirectory^[I]^ do
+        if not FlagIsSet(deFlags, deDeleted+deUnused) then
+          Inc(J);
+
+    CurrentEntries := J;
+  end;
+
+  function OpLibrary.DeletedEntries : Word;
+    {-Return the number of deleted entries in the library's directory}
+  var
+    I, J : Word;
+  begin
+    {add up number of deleted directory entries}
+    J := 0;
+    for I := 1 to liEntries do
+      with liDirectory^[I]^ do
+        if FlagIsSet(deFlags, deDeleted) and not FlagIsSet(deFlags, deUnused) then
+          Inc(J);
+
+    DeletedEntries := J;
+  end;
+
+  function OpLibrary.AvailableEntries : Word;
+    {-Return number of entries available in library's directory}
+  var
+    I, J : Word;
+  begin
+    {add up number of unused directory entries}
+    J := 0;
+    for I := 1 to liEntries do
+      if FlagIsSet(liDirectory^[I]^.deFlags, deUnused) then
+        Inc(J);
+
+    AvailableEntries := J;
+  end;
+
+  procedure OpLibrary.UpdateHeader;
+    {-Write the contents of the library header to disk}
+  begin
+    {seek to beginning of file}
+    Seek(0);
+
+    {write our data}
+    WriteRange(liSig, liCustom);
+    if SizeOf(Self) <> SizeOf(OpLibrary) then
+      {write data for derived types}
+      Write(liCustom, SizeOf(Self)-SizeOf(OpLibrary));
+
+    {directory entries start at current position}
+    liDirStart := GetPos;
+  end;
+
+  procedure OpLibrary.UpdateDirectoryEntry(N : Word);
+    {-Write the specified directory entry to disk}
+  begin
+    {is N in range?}
+    if (N > 0) and (N <= liEntries) then begin
+      {seek to the start of the directory entry}
+      Seek( LongInt(liDirStart) + (LongInt(liEntrySize)*Pred(N)) );
+
+      {store the directory entry}
+      Put(liDirectory^[N]^);
+    end
+    else
+      Error(epNonFatal+ecEntryNotFound);
+  end;
+
+  procedure OpLibrary.UpdateDirectory;
+    {-Update the entire directory}
+  var
+    I : Word;
+    x : Word;
+  begin
+    {position cursor at beginning of directory}
+    Seek(liDirStart);
+
+    {update all directory entries}
+    for I := 1 to liEntries do
+    begin
+      Put(liDirectory^[I]^);
+      x := GetPos;
+      end;
+    Flush;
+  end;
+
+  procedure OpLibrary.RegisterEntryType;
+    {-Register the type of the directory entry and set liEntrySize}
+  begin
+    {register the directory entry type}
+    RegisterType(otDirEntry, veDirEntry, TypeOf(DirEntry),
+                 @DirEntry.Store, @DirEntry.Load);
+
+    {set the size of a directory entry}
+    {Virtual Pascal for OS/2: Changed to reflect what is saved}
+    liEntrySize := SizeOf(DirEntry) - { Size of Self }
+                   SizeOf(Root)     - { Minus parent size }
+                   SizeOf(Pointer)  + { Minus Size of deUser saved separately }
+                   4*Sizeof(SmallWord);    { Plus room for 2*(Code,Version) }
+  end;
+
+  procedure OpLibrary.InitEntry(N : Word);
+    {-Allocate and initialize directory entry N}
+  begin
+    if liDirectory^[N] = nil then
+      {allocate and initialize}
+      liDirectory^[N] := New(DirEntryPtr, Init)
+    else
+      {just reinitialize}
+      liDirectory^[N]^.Init;
+  end;
+
+  function OpLibrary.WriteEntryWhenPacking(N : Word) : Boolean;
+    {-Return True if entry will be written to library when packing}
+  begin
+    with liDirectory^[N]^ do
+      {deleted and unused entries will not be written}
+      WriteEntryWhenPacking := not FlagIsSet(deFlags, deUnused+deDeleted);
+  end;
+
+  function OpLibrary.FindAvailableEntry : Word;
+    {-Return index of first available entry, 0 if none}
+  var
+    I : Word;
+  begin
+    for I := 1 to liEntries do
+      {is entry unused?}
+      if FlagIsSet(liDirectory^[I]^.deFlags, deUnused) then begin
+        FindAvailableEntry := I;
+        Exit;
+      end;
+
+    FindAvailableEntry := 0;
+  end;
+
+  constructor MemOpLibrary.Init(BasePtr : Pointer; Size : Word);
+    {-Open an existing library in memory}
+  var
+    DEP : DirEntryPtr;
+    N : Word;
+  begin
+    if not MemIdStream.Init(BasePtr, Size) then
+      Fail;
+
+    {read the header}
+    ReadRange(mlSig, mlCustom);
+    if SizeOf(Self) <> SizeOf(MemOpLibrary) then
+      Read(mlCustom, SizeOf(Self)-SizeOf(MemOpLibrary));
+    if (PeekStatus <> 0) then begin
+      InitStatus := PeekStatus;  {!!.03}
+      Done;
+      Fail;
+    end;
+
+    {directory entries start here}
+    mlDirStart := GetPos;
+
+    {register the directory entry type}
+    RegisterEntryType;
+
+    for N := 1 to mlEntries do begin
+      {get pointer to N'th entry}
+      DEP := GetDirEntryPtr(N);
+
+      {point to the word just before it}
+      {$IFDEF VIRTUALPASCAL}
+      Dec( Longint(DEP), Sizeof( Word ) );
+      {$ELSE}
+      Dec( OS(DEP).O, 2 );
+      {$ENDIF}
+
+      {initialize the VMT offset}
+      InitEntry(DEP^);
+    end;
+
+    if PeekStatus <> 0 then begin
+      InitStatus := PeekStatus;  {!!.03}
+      Done;
+      Fail;
+    end;
+  end;
+
+  destructor MemOpLibrary.Done; {!!.03}
+    {-Close the library}
+  type
+    StreamRec =
+      record case Boolean of
+        True  : (Code, Ver : Word);
+        False : (Unused, VMT : Word);
+      end;
+  var
+    DEP : DirEntryPtr;
+    SRP : ^StreamRec absolute DEP;
+    N : Word;
+  begin
+    for N := 1 to mlEntries do begin
+      {get pointer to N'th entry}
+      DEP := GetDirEntryPtr(N);
+
+      {point to the word just before it}
+      {$IFDEF VIRTUALPASCAL}
+      Dec( Longint(DEP), Sizeof( Word ) );
+      {$ELSE}
+      Dec( OS(DEP).O, 2 );
+      {$ENDIF}
+
+      {uninitialize the VMT offset}
+      with SRP^ do
+        if VMT = Ofs(TypeOf(DirEntry)^) then
+          Ver := veDirEntry;
+    end;
+    MemIdStream.Done;
+  end;
+
+  procedure MemOpLibrary.GetEntry(Name : DirEntryName; var R : Root);
+    {-Calls polymorphic Load constructor to read static object R}
+  var
+    DEP : DirEntryPtr;
+  begin
+    {locate the entry}
+    DEP := FindDirectoryEntry(Name);
+
+    if DEP <> nil then
+      with DEP^ do begin
+        {seek to beginning of entry and load the object}
+        Seek(deStart);
+        Get(R);
+      end;
+  end;
+
+  function MemOpLibrary.GetEntryPtr(Name : DirEntryName) : RootPtr;
+    {-Calls polymorphic Load constructor to allocate and read object}
+  var
+    DEP : DirEntryPtr;
+  begin
+    {locate the entry}
+    DEP := FindDirectoryEntry(Name);
+
+    if DEP = nil then
+      GetEntryPtr := nil
+    else
+      with DEP^ do begin
+        {seek to beginning of entry and allocate/load the object}
+        Seek(deStart);
+        GetEntryPtr := GetPtr;
+      end;
+  end;
+
+  procedure MemOpLibrary.GetCodeAndVersion(Name : DirEntryName;
+                                         var Code, Ver : SmallWord);
+    {-Return the code and version for the specified entry}
+  var
+    DEP : DirEntryPtr;
+  begin
+    {locate the entry}
+    DEP := FindDirectoryEntry(Name);
+
+    if DEP = nil then
+      Error(epNonFatal+ecEntryNotFound)
+    else with DEP^ do begin
+      Code := deCode;
+      Ver := deVer;
+    end;
+  end;
+
+  function MemOpLibrary.FindDirectoryEntry(Name : DirEntryName) : DirEntryPtr;
+    {-Return a pointer to a directory entry; nil if not found or deleted}
+  var
+    DEP : DirEntryPtr;
+  begin
+    {locate the entry}
+    DEP := FindAnyDirectoryEntry(Name);
+
+    {return nil if entry is marked for deletion}
+    if (DEP <> nil) and FlagIsSet(DEP^.deFlags, deDeleted) then
+      FindDirectoryEntry := nil
+    else
+      FindDirectoryEntry := DEP;
+  end;
+
+  function MemOpLibrary.FindAnyDirectoryEntry(Name : DirEntryName) : DirEntryPtr;
+    {-Return a pointer to a directory entry; nil if not found}
+  var
+    N : Word;
+    DEP : DirEntryPtr;
+  begin
+    {convert name to upper case}
+    Name := StUpcase(Name);
+
+    for N := 1 to mlEntries do begin
+      {get pointer to N'th entry}
+      DEP := GetDirEntryPtr(N);
+
+      {does name match?}
+      if DEP^.deName = Name then begin
+        FindAnyDirectoryEntry := DEP;
+        Exit;
+      end;
+    end;
+
+    FindAnyDirectoryEntry := nil;
+  end;
+
+  procedure MemOpLibrary.RegisterEntryType;
+    {-Register the type of the directory entry}
+  begin
+    {register the directory entry type}
+    RegisterType(otDirEntry, veDirEntry, TypeOf(DirEntry),
+                 @DirEntry.Store, @DirEntry.Load);
+  end;
+
+  procedure MemOpLibrary.InitEntry(var DE);
+    {-Initialize the VMT pointer for a directory entry}
+  type
+    StreamRec =
+      record case Boolean of
+        True  : (Code, Ver : Word);   {representation on disk}
+        False : (Unused, VMT : Word); {representation in memory}
+      end;
+  var
+    StRec : StreamRec absolute DE;
+    P : Pointer;
+  begin
+    with StRec do
+      if (Code = otDirEntry) and (Ver = veDirEntry) then begin
+        P := TypeOf(DirEntry);
+        {$IFDEF VIRTUALPASCAL}
+        VMT := Longint(P);
+        {$ELSE}
+        VMT := OS(P).O;
+        {$ENDIF}
+      end
+      else
+        Error(epFatal+ecIdNotRegistered);
+  end;
+
+  function MemOpLibrary.GetDirEntryPtr(N : Word) : DirEntryPtr;
+    {-Return a pointer to the N'th directory entry}
+  var
+    P : Pointer;
+  begin
+    {point to start of library}
+    P := MPtr;
+
+    {$IFDEF VIRTUALPASCAL}
+    Inc(Longint(P), mlDirStart+((N-1)*mlEntrySize)+2);
+    {$ELSE}
+    with OS(P) do
+      Inc(O, mlDirStart+((N-1)*mlEntrySize)+2);
+    {        ^            ^                 ^ extra word before the VMT
+             ^            ^ start of N'th entry
+             ^ skip OpLibrary header
+    }
+    {$ENDIF}
+
+    GetDirEntryPtr := P;
+  end;
+
+  procedure MemOpLibrary.Write(var Buf; Count : Word);
+    {-Write bytes to memory stream}
+  begin
+    {! this kind of library is read-only !}
+    Error(epNonFatal+ecNotOpenOutput);
+  end;

@@ -1,0 +1,1046 @@
+{*********************************************************}
+{*                   MMMAIN.IN3 1.30                     *}
+{*     Copyright (c) TurboPower Software 1989, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {!!.11} {numerous changes throughout this file}
+
+  function AbleToRewrite(var OutF : Text; var Name : PathStr) : Boolean;
+    {-Return True if able to Rewrite the specified file}
+  const
+    FileExistsMsg = 'File exists. Overwrite it?';
+    ErrorMsg = 'Error creating ';
+  var
+    Esc : Boolean;
+  begin
+    AbleToRewrite := False;
+    Assign(OutF, Name);
+    Reset(OutF);
+    if IoResult = 0 then begin
+      {File exists already}
+      Close(OutF);
+      if not PopupYesNo(JustFilename(Name), FileExistsMsg, NoChar, Esc) then
+        Exit;
+      if Esc then
+        Exit;
+    end;
+    Rewrite(OutF);
+    if IoResult <> 0 then
+      PopupErrorMessage(ErrorMsg+Name)
+    else
+      AbleToRewrite := True;
+  end;
+
+  function DefaultSymName(IPtr : MenuItemNodePtr) : String;
+    {-Return the default constant symbol name for an item}
+  var
+    I : Word;
+    First : Boolean;
+    DisplayPos : Byte;
+    SelectPos : Byte;
+    RawSt : String;
+    St : String;
+    StLen : byte absolute St;
+
+    procedure AppendSymChar(Ch : Char);    {!!.30}
+    begin                                  {!!.30}
+      if (StLen < 10) then begin           {!!.30}
+        Inc(StLen);                        {!!.30}
+        if First then begin                {!!.30}
+          St[StLen] := Ch;                 {!!.30}
+          First := False;                  {!!.30}
+        end else                           {!!.30}
+          St[StLen] := Ch;                 {!!.30}
+      end;
+    end;
+
+  begin
+    IPtr^.DisplayInfo(DisplayPos, SelectPos, RawSt);
+    StLen := 0;
+    First := True;
+    I := 1;
+    while I <= Length(RawSt) do begin
+      case Upcase(RawSt[I]) of
+        ' ' :
+          AppendSymChar('_');              {!!.30}
+        'A'..'Z', '_' :
+          AppendSymChar(RawSt[I]);         {!!.30}
+      else
+        First := True;
+      end;
+      Inc(I);
+    end;
+    DefaultSymName := 'mi'+St+Long2Str(IPtr^.ItemKey);
+  end;
+
+  function SymName(IPtr : MenuItemNodePtr) : String;
+    {-Return the actual constant symbol name for an item}
+  begin
+    if IPtr^.inConsPtr = nil then
+      SymName := DefaultSymName(IPtr)
+    else
+      SymName := IPtr^.inConsPtr^;
+  end;
+
+  function TypeConstName(IPtr : MenuItemNodePtr) : String;
+    {-Return name of typed constant to identify item string}
+  begin
+    TypeConstName := SymName(IPtr)+'Str';
+  end;
+
+  procedure GenerateColorConstants(var OutF : Text);
+    {-Generate the ColorSet for the menu system}
+  var
+    Index : Word;
+    ColorWidth : Word;
+    TempColors : ColorSet;
+    ColorArray : array[1..SizeOf(ColorSet)] of Byte absolute TempColors;
+  begin
+    {Use a temporary ColorSet for this work}
+    UserMenu.mnCloneColors(DefColors, TempColors);
+
+    if GenColorNames then
+      ColorWidth := 20
+    else
+      ColorWidth := 4;
+
+    {Write the ColorSet constant}
+    WriteLn(OutF, '{Color set used by menu system}'^M^J'const');
+    WriteLn(OutF, '  MenuColors : ColorSet = (');
+    for Index := 1 to NamesInColorSet do begin
+      Write(OutF, '    ',
+            Pad(ColorSetNames[Index]+'Color', 16),
+            ': ', Pad(ColorName(ColorArray[2*Index-1])+'; ', ColorWidth),
+            Pad(ColorSetNames[Index]+'Mono', 16),
+            ': ', ColorName(ColorArray[2*Index]));
+      if Index <> NamesInColorSet then
+        Write(OutF, ';');
+      WriteLn(OutF);
+    end;
+    WriteLn(OutF, '  );'^M^J);
+  end;
+
+  procedure WriteItemList(IPtr : MenuItemNodePtr; var D; MPtr : MenuPtr);
+    {-Write menu item constant for specified item}
+  begin
+    WriteLn(Text(D), '  ', Pad(SymName(IPtr), 15), ' = ', IPtr^.ItemKey, ';');
+  end;
+
+  procedure GenerateUserProcs(var OutF : Text);
+    {-Generate user procedures}
+  begin
+    WriteLn(OutF, '{$F+}');
+    WriteLn(OutF, 'procedure ErrorHandler(UnitCode : Byte; var ErrCode : Word; Msg : string);');
+    WriteLn(OutF, '  {-Report errors}');
+    WriteLn(OutF, 'begin');
+    WriteLn(OutF, '  RingBell;');
+    WriteLn(OutF, 'end;');
+    WriteLn(OutF);
+
+    WriteLn(OutF, 'procedure DisplayHelp(UnitCode : Byte; IdPtr : Pointer; HelpIndex : Word);');
+    WriteLn(OutF, '  {-Display context sensitive help}');
+    WriteLn(OutF, 'begin');
+    WriteLn(OutF, 'end;');
+    WriteLn(OutF);
+
+    WriteLn(OutF, 'procedure CustomizeItemString(var Name : String; Key : LongInt;');
+    WriteLn(OutF, '                              Selected, Highlighted : Boolean;');
+    WriteLn(OutF, '                              WPtr : RawWindowPtr);');
+    WriteLn(OutF, '  {-Customize menu item strings}');
+    WriteLn(OutF, 'begin');
+    WriteLn(OutF, 'end;');
+    WriteLn(OutF, '{$F-}');
+    WriteLn(OutF);
+  end;
+
+type
+  FrameOutRec =
+    record
+      OutFP : ^Text;
+      FrameDictP : ^StringDict;
+      Index : Word;
+    end;
+
+  procedure CountFrameList(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+    {-Write the frames used in the menu system and build a dictionary of them}
+  var
+    FrCh : FrameArray;
+  begin
+    with FrameOutRec(D) do begin
+      FrCh := WPtr^.wFrame.frChars;
+      if FrCh <> NoWindowFrame then
+        inc(Index);
+    end;
+  end;
+
+  procedure WriteFrameList(WPtr : RawWindowPtr; var D; MPtr : MenuPtr);
+    {-Write the frames used in the menu system and build a dictionary of them}
+  var
+    Value : LongInt;
+    FrCh : FrameArray;
+  begin
+    with FrameOutRec(D) do begin
+      FrCh := WPtr^.wFrame.frChars;
+      if FrCh <> NoWindowFrame then
+        if not FrameDictP^.Member(FrCh, Value) then begin
+          inc(Index);
+          FrameDictP^.Add(FrCh, Index);
+                                      {!!.01  vvvvvvvvvvvvv}
+          WriteLn(OutFP^, '  Frame', Index, ' : FrameArray = ', PascalFrame(FrCh), ';');
+        end;
+    end;
+  end;
+
+  procedure GenerateFrameConstants(var OutF : Text;
+                                   var FrameDict : StringDict);
+    {-Build a dictionary of frames used in the menu system and write constants}
+  var
+    FrameOut : FrameOutRec;
+  begin
+    FrameOut.OutFP := @OutF;
+    FrameOut.FrameDictP := @FrameDict;
+    FrameOut.Index := 0;
+    {Make sure there is a framed window first}
+    UserMenu.VisitAllWindows(CountFrameList, FrameOut);
+    if FrameOut.Index > 0 then begin
+      {Write the frames and build the dictionary}
+      FrameOut.Index := 0;
+      WriteLn(OutF, 'const'^M^J'  {Frame constants}');
+      UserMenu.VisitAllWindows(WriteFrameList, FrameOut);
+    end;
+  end;
+
+  procedure WriteStringList(IPtr : MenuItemNodePtr; var D; MPtr : MenuPtr);
+    {-Write menu item typed constant strings for specified item}
+  var
+    OutF : Text absolute D;
+    DisplayPos : Byte;
+    SelectPos : Byte;
+    S : String;
+    H : String;
+  begin
+    IPtr^.DisplayInfo(DisplayPos, SelectPos, S);
+    H := IPtr^.HelpString;
+    WriteLn(OutF, '  ', TypeConstName(IPtr),
+            ' : String[', Length(S), '] = ',
+            PascalString(S), ';');
+    if Length(H) <> 0 then
+      WriteLn(OutF, '  ', TypeConstName(IPtr),
+              'Help : String[', Length(H), '] = ',
+              PascalString(H), ';');
+  end;
+
+  procedure GenerateStringConstants(var OutF : Text);
+  begin
+    WriteLn(OutF, 'const'^M^J'  {String constants}');
+    UserMenu.VisitAllItems(WriteStringList, OutF);
+  end;
+
+  function OrientationName(Orient : mnOrientation) : String;
+    {-Return the orientation name for given orientation}
+  begin
+    if Orient = Vertical then
+      OrientationName := 'Vertical'
+    else
+      OrientationName := 'Horizontal';
+  end;
+
+  procedure GenerateSpans(var OutF : Text;
+                          var Win : RawWindow;
+                          VertSpan : Boolean;
+                          Indent : Word);
+    {-Generate calls to draw spans}
+  var
+    HP : HeaderPtr;
+    SetColor : Boolean;
+    DisplayPos : Byte;
+    SCA : SpanCharArray;
+  begin
+    HP := HeaderPtr(Win.wFrame.frHeaders.Head);
+
+    while HP <> nil do begin
+      with HP^ do
+        case heType of
+          heSpan :
+            begin
+              Write(OutF, '':Indent, 'AddSeparator');
+              SetColor := (heAttrColor <> Win.wFrame.frFrameColor) or
+                          (heAttrMono <> Win.wFrame.frFrameMono);
+              if SetColor then
+                Write(OutF, 'Color');
+
+              {Write the span characters}
+              FillChar(SCA, SizeOf(SCA), heName^[1]);
+              if Length(heName^) > 2 then begin
+                SCA[2] := heName^[2];
+                SCA[3] := heName^[Length(heName^)];
+              end;
+              Write(OutF, '(',
+                    PascalChar(SCA[1]), ', ',
+                    PascalChar(SCA[2]), ', ',
+                    PascalChar(SCA[3]), ', ');
+
+              if VertSpan then
+                DisplayPos := heDX
+              else
+                DisplayPos := heDY;
+              Write(OutF, DisplayPos);
+              if SetColor then
+                Write(OutF, ', ', ColorName(heAttrColor),
+                            ', ', ColorName(heAttrMono));
+              WriteLn(OutF, ');');
+            end;
+        end;
+
+      {Move to next header}
+      HP := HeaderPtr(Win.wFrame.frHeaders.Next(HP));
+    end;
+  end;
+
+  procedure GenerateFrameConstant(var OutF : Text;
+                                  var FrameDict : StringDict;
+                                  var frChars : FrameArray);
+    {-Write the name of the appropriate frame constant}
+  var
+    FrameIndex : LongInt;
+  begin
+    if FrameDict.Member(frChars, FrameIndex) then
+      Write(OutF, 'Frame', FrameIndex)
+    else
+      {Shouldn't get here}
+      Write(OutF, 'DefWindowFrame');
+  end;
+
+  procedure GenerateLeftPad(var OutF : Text;
+                            Orient : mnOrientation;
+                            Pad : Byte;
+                            Indent : Word);
+    {-Write code for padding}
+  var
+    Changed : Boolean;
+  begin
+    if Orient = Vertical then
+      Changed := (Pad <> 1)
+    else
+      Changed := (Pad <> 0);
+    if Changed then
+      WriteLn(OutF, '':Indent, 'SetLeftPad(', Pad, ');');
+  end;
+
+  procedure GenerateSelectChars(var OutF : Text;
+                                var Left, Right : String;
+                                Indent : Word);
+    {-Write code to modify the selection characters}
+  begin
+    if (Length(Left) <> 0) or (Length(Right) <> 0) then
+      WriteLn(OutF, '':Indent,
+              'SetSelectMarker(',
+              PascalCtrlString(Left), ', ',
+              PascalCtrlString(Right), ');');
+  end;
+
+  procedure GenerateMainMenu(var OutF : Text;
+                             var FrameDict : StringDict);
+    {Main menu initialization}
+  const
+    MaxMenuOptionBit = 11;                                            {!!.03}
+    MenuOptionNames : array[0..MaxMenuOptionBit] of string[17] = (
+      'mnAlphaMatch', 'mnSelectOnMatch', 'mnAllowPending',
+      'mnArrowSelect', 'mnPopOnSelect', 'mnAllHotSpots',
+      'mnUseItemForTopic', 'mnSelectOnClick',
+      '', '', '', 'mnAltMatch');                                      {!!.03}
+  var
+    X1 : Byte;
+    Y1 : Byte;
+    X2 : Byte;
+    Y2 : Byte;
+    Bit : Word;
+    SOnLine : Byte;  {!!.01}
+    SOffLine : Byte; {!!.01}
+    SOn : String;
+    SOff : String;
+
+    {!!.01}
+    procedure AppendOption(var S, Option : String;
+                           var SLine : Byte; LeadIn : Byte);
+      {-Append an option name, wrapping if required}
+    begin
+      if Length(S) <> 0 then
+        S := S+'+';
+      if LeadIn+SLine+Length(Option)+1 > 79 then begin
+        {Wrap to new line}
+        S := S+^M^J+CharStr(' ', LeadIn);
+        SLine := 0;
+      end;
+      S := S+Option;
+      inc(SLine, Length(Option)+1);
+    end;
+
+
+  begin
+    {Call the main menu constructor}
+    UserMenu.Coordinates(X1, Y1, X2, Y2);
+    WriteLn(OutF, '    if not InitCustom(',
+            X1, ', ', Y1, ', ', X2, ', ', Y2, ', Colors,');
+    WriteLn(OutF, '                      ', WindowOptions(UserMenu), ', ');
+    WriteLn(OutF, '                      ',
+            OrientationName(UserMenu.mnItems.Orientation), ') then begin');
+    WriteLn(OutF, '      InitMenu := InitStatus;');
+    WriteLn(OutF, '      Exit;');
+    WriteLn(OutF, '    end;');
+
+    {Set menu options on and off}
+    SOn := '';
+    SOff := '';
+    SOnLine := 0;    {!!.01}
+    SOffLine := 0;   {!!.01}
+    for Bit := 0 to MaxMenuOptionBit do
+      if Length(MenuOptionNames[Bit]) <> 0 then                   {!!.03}
+        if UserMenu.mnOptionsAreOn(Word(1) shl Bit) then
+          AppendOption(SOn, MenuOptionNames[Bit], SOnLine, 16)    {!!.01}
+        else
+          AppendOption(SOff, MenuOptionNames[Bit], SOffLine, 17); {!!.01}
+    if Length(SOn) <> 0 then
+      WriteLn(OutF, '    mnOptionsOn(', SOn, ');');
+    if Length(SOff) <> 0 then
+      WriteLn(OutF, '    mnOptionsOff(', SOff, ');');
+
+    {Set frame type if any}
+    if UserMenu.HasFrame then begin
+      Write(OutF, '    wFrame.SetFrameType(');
+      GenerateFrameConstant(OutF, FrameDict, UserMenu.wFrame.frChars);
+      WriteLn(OutF, ');');
+    end;
+
+    {Generate code to ornament the main window}
+    GenerateExploding(OutF, UserMenu, 4);
+    GenerateShadows(OutF, UserMenu, 4);
+    GenerateHeaders(OutF, UserMenu, 4);
+    GenerateSpans(OutF, UserMenu,
+                  (UserMenu.mnItems.Orientation = Horizontal), 4);
+
+    {Generate code to customize main item list}
+    with UserMenu.mnItems do begin
+      GenerateLeftPad(OutF, Orientation, ilPad, 4);
+      GenerateSelectChars(OutF, ilLeftSel, ilRightSel, 4);
+    end;
+  end;
+
+  procedure GenerateItem(var OutF : Text; Indent : Word;
+                         IPtr : MenuItemNodePtr);
+    {-Write an AddItem call for one item}
+  var
+    DisplayPos : Byte;
+    SelectPos : Byte;
+    S : String;
+    H : String;
+  begin
+    IPtr^.DisplayInfo(DisplayPos, SelectPos, S);
+    H := IPtr^.HelpString;
+    Write(OutF, '':Indent, 'AddItem');
+    if Length(H) <> 0 then
+      Write(OutF, 'Help');
+    if DefTypeConst then
+      Write(OutF, 'Ptr');
+    Write(OutF, '(');
+    if DefTypeConst then
+      Write(OutF, TypeConstName(IPtr))
+    else
+      Write(OutF, PascalString(S));
+    Write(OutF, ', ', DisplayPos, ', ', SelectPos, ', ', SymName(IPtr));
+    if Length(H) <> 0 then
+      if DefTypeConst then
+        Write(OutF, ', ', TypeConstName(IPtr), 'Help')
+      else
+        Write(OutF, ','^M^J, '':Indent, '            ', PascalString(H));
+    WriteLn(OutF, ');');
+  end;
+
+  procedure GenerateSubColor(var OutF : Text;
+                             Name : String; Indent : Word;
+                             sColor, sMono, mColor, mMono : Byte);
+    {-Write an AddXXXColor statement for a submenu}
+  begin
+    if (sColor <> mColor) or (sMono <> mMono) then
+      WriteLn(OutF, '':Indent, 'Set', Name, 'Attr(',
+              ColorName(sColor), ', ', ColorName(sMono), ');');
+  end;
+
+  procedure GenerateItems(var OutF : Text;
+                          var FrameDict : StringDict;
+                          Indent : Word;
+                          ListPtr : MenuItemListPtr);
+    {-Generate source code for an item list, recursively}
+  var
+    IPtr : MenuItemNodePtr;
+    SPtr : SubMenuPtr;
+  begin
+    with ListPtr^ do begin
+      {Scan list}
+      IPtr := MenuItemNodePtr(Head);
+      if IPtr <> nil then
+        repeat
+          {Write the AddItem call}
+          GenerateItem(OutF, Indent, IPtr);
+
+          {See if item has a submenu}
+          SPtr := IPtr^.SubPtr;
+          if SPtr <> nil then
+            with SPtr^ do begin
+              {Has a submenu, generate it}
+              inc(Indent, 2);
+              Write(OutF, '':Indent, 'Add');
+              if HasFrame then
+                Write(OutF, 'Framed');
+              Write(OutF, 'SubMenu(',
+                    wXL, ', ', wYL, ', ', wXH, ', ', wYH, ', ',
+                    OrientationName(smItems.Orientation));
+              if HasFrame then begin
+                Write(OutF, ', ');
+                GenerateFrameConstant(OutF, FrameDict, wFrame.frChars);
+              end;
+              WriteLn(OutF, ');');
+
+              {Generate code to modify the default attributes}
+              GenerateSubColor(OutF, 'Norm', Indent,
+                               smItems.ilNormColor,
+                               smItems.ilNormMono,
+                               UserMenu.mnItems.ilNormColor,
+                               UserMenu.mnItems.ilNormMono);
+              GenerateSubColor(OutF, 'Select', Indent,
+                               smItems.ilSelectColor,
+                               smItems.ilSelectMono,
+                               UserMenu.mnItems.ilSelectColor,
+                               UserMenu.mnItems.ilSelectMono);
+              GenerateSubColor(OutF, 'High', Indent,
+                               smItems.ilHighColor,
+                               smItems.ilHighMono,
+                               UserMenu.mnItems.ilHighColor,
+                               UserMenu.mnItems.ilHighMono);
+              GenerateSubColor(OutF, 'Protect', Indent,
+                               smItems.ilProtectColor,
+                               smItems.ilProtectMono,
+                               UserMenu.mnItems.ilProtectColor,
+                               UserMenu.mnItems.ilProtectMono);
+              GenerateSubColor(OutF, 'Frame', Indent,
+                               wFrame.frFrameColor,
+                               wFrame.frFrameMono,
+                               UserMenu.wFrame.frFrameColor,
+                               UserMenu.wFrame.frFrameMono);
+              GenerateSubColor(OutF, 'Header', Indent,
+                               wFrame.frHeaderColor,
+                               wFrame.frHeaderMono,
+                               UserMenu.wFrame.frHeaderColor,
+                               UserMenu.wFrame.frHeaderMono);
+              GenerateSubColor(OutF, 'Shadow', Indent,
+                               wFrame.frShadowColor,
+                               wFrame.frShadowMono,
+                               UserMenu.wFrame.frShadowColor,
+                               UserMenu.wFrame.frShadowMono);
+
+              {Generate code to ornament the submenu}
+              GenerateExploding(OutF, SPtr^, Indent);
+              {!!.13} {Code for controlling submenu-level sound added}
+              if SPtr^.wOptionsAreOn(wSoundEffects) then begin
+                if not UserMenu.wOptionsAreOn(wSoundEffects) then
+                  WriteLn(OutF, '':Indent, 'ActiveWinPtr^.wOptionsOn(wSoundEffects);');
+              end else begin
+                if UserMenu.wOptionsAreOn(wSoundEffects) then
+                  WriteLn(OutF, '':Indent, 'ActiveWinPtr^.wOptionsOff(wSoundEffects);');
+              end;
+              GenerateShadows(OutF, SPtr^, Indent);
+              GenerateHeaders(OutF, SPtr^, Indent);
+              GenerateSpans(OutF, SPtr^,
+                            (smItems.Orientation = Horizontal), Indent);
+
+              {Generate code to customize the item list}
+              with smItems do begin
+                GenerateLeftPad(OutF, Orientation, ilPad, Indent);
+                GenerateSelectChars(OutF, ilLeftSel, ilRightSel, Indent);
+              end;
+
+              {Generate the list of items for the submenu}
+              GenerateItems(OutF, FrameDict, Indent, @smItems);
+
+              dec(Indent, 2);
+            end;
+          IPtr := MenuItemNodePtr(Next(IPtr));
+        until IPtr = MenuItemNodePtr(Head);
+
+      {Finish off the list}
+      WriteLn(OutF, '':Indent, 'ItemsDone;');
+    end;
+  end;
+
+  procedure GenerateHelpWindow(var OutF : Text);
+    {-Generate code for help line}
+  begin
+    WriteLn(OutF, 'function InitHelpLine(var H : RawWindow) : Word;');
+    WriteLn(OutF, '  {-Initialize window for the help line}');
+    WriteLn(OutF, 'var');
+    WriteLn(OutF, '  Row : Byte;');
+    WriteLn(OutF, 'begin');
+    WriteLn(OutF, '  Row := ',
+            DefHelpRow, ';');
+    if DefHelpRow > 25 then begin
+      WriteLn(OutF, '  if Row > ScreenHeight then');
+      WriteLn(OutF, '    Row := ScreenHeight;');
+    end;
+    WriteLn(OutF, '  if not H.InitCustom(1, Row, ScreenWidth, Row,');
+    WriteLn(OutF, '                      MenuColors, wClear) then begin');
+    WriteLn(OutF, '    InitHelpLine := InitStatus;');
+    WriteLn(OutF, '    Exit;');
+    WriteLn(OutF, '  end;');
+    WriteLn(OutF, '  H.SetTextAttr(',
+            ColorName(DefHelpLineColor), ', ',
+            ColorName(DefHelpLineMono), ');');
+    WriteLn(OutF, '  InitHelpLine := 0;');
+    WriteLn(OutF, 'end;');
+    WriteLn(OutF);
+  end;
+
+  procedure WriteCaseList(IPtr : MenuItemNodePtr; var D; MPtr : MenuPtr);
+    {-Write menu item case label for specified item}
+  begin
+    if IPtr^.SubPtr = nil then
+      WriteLn(Text(D), '      ', Pad(SymName(IPtr), 15), ' : ;');
+  end;
+
+  procedure GenerateTestCode(var OutF : Text); {!!.11} {numerous changes}
+    {-Generate source code to demonstrate and test menu system}
+  begin
+    if DefHelpActive then begin
+      WriteLn(OutF, '{$F+}');
+      WriteLn(OutF, 'procedure UpdateHelpLine(CurrentItem : MenuItemNodePtr; MPtr : MenuPtr);');
+      WriteLn(OutF, '  {-Update HelpLine for each menu item}');
+      WriteLn(OutF, 'var');
+      WriteLn(OutF, '  S : String;');
+      WriteLn(OutF, 'begin');
+      WriteLn(OutF, '  if CurrentItem = nil then');
+      WriteLn(OutF, '    S := ''''');
+      WriteLn(OutF, '  else');
+      WriteLn(OutF, '    S := CurrentItem^.HelpString;');
+      WriteLn(OutF, '  H.wFastText(Pad(S, H.Width), 1, 1);');
+      WriteLn(OutF, 'end;');
+      WriteLn(OutF, '{$F-}');
+      WriteLn(OutF);
+    end;
+
+    WriteLn(OutF, 'begin');
+    WriteLn(OutF, '  ClrScr;');
+    WriteLn(OutF);
+
+    WriteLn(OutF, '  Status := InitMenu(M, MenuColors);');
+    WriteLn(OutF, '  if Status <> 0 then begin');
+    WriteLn(OutF, '    WriteLn(''Error initializing menu: '', Status);');
+    WriteLn(OutF, '    Halt(1);');
+    WriteLn(OutF, '  end;');
+    WriteLn(OutF);
+
+    {set procedure pointers}
+    if DefUserProcs then begin
+      WriteLn(OutF, '  {set up user hooks}');
+      WriteLn(OutF, '  M.SetErrorProc(ErrorHandler);');
+      WriteLn(OutF, '  M.SetCustomStringProc(CustomizeItemString);');
+      WriteLn(OutF, '  MenuCommands.SetHelpProc(DisplayHelp);');
+      WriteLn(OutF);
+    end;
+
+    if DefHelpActive then begin
+      WriteLn(OutF, '  Status := InitHelpLine(H);');
+      WriteLn(OutF, '  if Status <> 0 then begin');
+      WriteLn(OutF, '    WriteLn(''Error initializing help line: '', Status);');
+      WriteLn(OutF, '    Halt(1);');
+      WriteLn(OutF, '  end;');
+      WriteLn(OutF, '  M.SetCurrentItemProc(UpdateHelpLine);');
+      WriteLn(OutF);
+    end;
+
+    if UserMenu.mnOptionsAreOn(mnMouseSupport) then begin
+      WriteLn(OutF, '  {$IFDEF UseMouse}');
+      WriteLn(OutF, '  if MouseInstalled then');
+      WriteLn(OutF, '    with MenuColors do begin');
+      WriteLn(OutF, '      {activate mouse cursor}');
+      WriteLn(OutF, '      SoftMouseCursor($0000, (ColorMono(MouseColor, MouseMono) shl 8)+');
+      WriteLn(OutF, '                             Byte(MouseChar));');
+      WriteLn(OutF, '      ShowMouse;');
+      WriteLn(OutF, '      {enable mouse support}');
+      WriteLn(OutF, '      MenuCommands.cpOptionsOn(cpEnableMouse);');
+      WriteLn(OutF, '    end;');
+      WriteLn(OutF, '  {$ENDIF}');
+      WriteLn(OutF);
+    end;
+
+    if DefHelpActive then
+      WriteLn(OutF, '  H.Draw;');
+    WriteLn(OutF, '  M.Draw;');
+
+    WriteLn(OutF, '  M.Process;');
+
+    if DefCaseState then begin
+      WriteLn(OutF, '  {Skeleton for menu choice handling}');
+      WriteLn(OutF, '  if M.GetLastCommand = ccSelect then');
+      WriteLn(OutF, '    case M.MenuChoice of');
+      UserMenu.VisitAllItems(WriteCaseList, OutF);
+      WriteLn(OutF, '    end;');
+    end;
+
+    WriteLn(OutF, '  M.Erase;');
+    if DefHelpActive then
+      WriteLn(OutF, '  H.Erase;');
+
+    {!!.02} {Moved from below}
+    if UserMenu.mnOptionsAreOn(mnMouseSupport) then begin
+      WriteLn(OutF);
+      WriteLn(OutF, '  {$IFDEF UseMouse}');
+      WriteLn(OutF, '  HideMouse;');
+      WriteLn(OutF, '  {$ENDIF}');
+    end;
+
+    WriteLn(OutF, '  WriteLn(''Item '', M.MenuChoice);');
+    WriteLn(OutF, '  WriteLn(''Command '', M.GetLastCommand);');
+
+    if DefHelpActive then
+      WriteLn(OutF, '  H.Done;');
+    WriteLn(OutF, '  M.Done;');
+
+    WriteLn(OutF, 'end.');
+  end;
+
+  procedure GenerateSource; {!!.11} {numerous changes}
+    {-Generate source code for the current object}
+  label
+    CloseUp, CloseUp2;
+  const
+    UnitNameMsg = 'Name of unit [.';
+    SuccessMsg = 'Source code written successfully...';
+    WritingSrc = ' writing source';
+  var
+    Status : Word;
+    UnitName, TestName : PathStr;
+    OutF : Text;
+    FrameDict : StringDict;
+
+    procedure GenLine(Indent : Byte; S : string);
+    begin
+      WriteLn(OutF, '':Indent, S);
+    end;
+
+    procedure BlankLine;
+    begin
+      WriteLn(OutF);
+    end;
+
+    procedure MakeTestName;
+    var
+      Dir  : DirStr;
+      Name : NameStr;
+      Ext  : ExtStr;
+    begin
+      FSplit(UnitName, Dir, Name, Ext);
+      TestName := CleanPathName(Dir+'T'+Name+Ext);
+    end;
+
+    procedure MakeBoilerplate(ForUnit : Boolean);
+    begin
+      {Generate compiler directives}
+      GenLine(0, '{$R-,S-,I-,V-,B-}');
+
+      {Starting boilerplate}
+      BlankLine;
+      if ForUnit then begin
+        GenLine(0, 'unit '+JustName(UnitName)+';'^M^J);
+        GenLine(0, 'interface'^M^J);
+      end
+      else
+        GenLine(0, 'program T'+JustName(UnitName)+';'^M^J);
+      GenLine(0, '{$I OPDEFINE.INC}'^M^J);
+    end;
+
+    procedure MakeUsesList(ForUnit : Boolean);
+    begin
+      GenLine(0, 'uses');
+      GenLine(2,   'Dos,');
+      GenLine(2,   'OpInline,');
+      GenLine(2,   'OpString,');
+      GenLine(2,   'OpRoot,');
+      GenLine(2,   'OpCrt,');
+      if GenColorNames then
+        GenLine(2, 'OpColor,');
+      if UserMenu.mnOptionsAreOn(mnMouseSupport) then begin
+        GenLine(2, '{$IFDEF UseMouse}');
+        GenLine(2, 'OpMouse,');
+        GenLine(2, '{$ENDIF}');
+      end;
+      GenLine(2,   'OpFrame,');
+      GenLine(2,   'OpCmd,');
+      GenLine(2,   'OpWindow,');
+      if ForUnit then
+        GenLine(2,   'OpMenu;')
+      else begin
+        GenLine(2,   'OpMenu,');
+        GenLine(2,   JustName(UnitName)+';');
+      end;
+      BlankLine;
+    end;
+
+  begin
+    {Assure there's a bit of working memory}
+    if (MemAvail < 4096) or (MaxAvail < 1024) then begin
+      InsufficientMemory;
+      Exit;
+    end;
+
+    {Get the filename to write to}
+    UnitName := ForceExtension(CleanPathName(ObjName), DefSrcExt);
+    if not PopupGetFileName('', UnitNameMsg+DefSrcExt+']: ', PathLen, DefSrcExt, UnitName) then
+      Exit;
+
+    {create name for test file}
+    MakeTestName;
+
+    {Open output file}
+    if not AbleToRewrite(OutF, UnitName) then
+      Exit;
+
+    {Initialize the frame dictionary now in case of error}
+    FrameDict.Init;
+
+    {generate boilerplate at start of file}
+    MakeBoilerplate(True);
+
+    {generate USES list}
+    MakeUsesList(True);
+
+    {Write list of menu item constants}
+    WriteLn(OutF, '{Menu item constants}'^M^J'const');
+    UserMenu.VisitAllItems(WriteItemList, OutF);
+    WriteLn(OutF);
+
+    {Write proc/func portion of interface section}
+    WriteLn(OutF, 'function InitMenu(var M : Menu; var Colors : ColorSet) : Word;');
+    WriteLn(OutF, '  {-Initialize menu system generated by MAKEMENU}');
+    BlankLine;
+
+    {mark start of implementation section}
+    GenLine(2,   '{'+CharStr('=', 59)+'}'^M^J);
+    GenLine(0, 'implementation'^M^J);
+
+    {Write header for menu initialization function}
+    WriteLn(OutF, 'function InitMenu(var M : Menu; var Colors : ColorSet) : Word;');
+    WriteLn(OutF, '  {-Initialize menu system generated by MAKEMENU}');
+
+    {List of frame constants}
+    GenerateFrameConstants(OutF, FrameDict);
+
+    {List of string constants}
+    if DefTypeConst then
+      GenerateStringConstants(OutF);
+
+    {Boilerplate to start function}
+    WriteLn(OutF, 'begin');
+    WriteLn(OutF, '  with M do begin');
+
+    {Main menu initialization}
+    GenerateMainMenu(OutF, FrameDict);
+
+    {Generate the item list for the main menu and its children}
+    GenerateItems(OutF, FrameDict, 4, @UserMenu.mnItems);
+
+    {Boilerplate to end function}
+    BlankLine;
+    WriteLn(OutF, '    if RawError <> 0 then');  {!!.22}
+    WriteLn(OutF, '      M.Done;');              {!!.22}
+    BlankLine;                                   {!!.22}
+    WriteLn(OutF, '    InitMenu := RawError;');
+    WriteLn(OutF, '  end;');
+    WriteLn(OutF, 'end;');
+    BlankLine;
+    GenLine(0, 'end.');
+    Status := IoResult;
+    Close(OutF);
+    if Status <> 0 then
+      goto CloseUp2;
+
+    {Open output file for test program}
+    if not AbleToRewrite(OutF, TestName) then
+      goto CloseUp2;
+
+    {generate boilerplate at start of file}
+    MakeBoilerplate(False);
+
+    {generate USES list}
+    MakeUsesList(False);
+
+    if UserMenu.mnOptionsAreOn(mnMouseSupport) then begin
+      WriteLn(OutF, '  {$IFDEF UseMouse}');
+      WriteLn(OutF, 'const');
+      WriteLn(OutF, '  MouseChar : Char = #04;');
+      WriteLn(OutF, '  {$ENDIF}');
+      WriteLn(OutF);
+    end;
+
+    {Write list of color constants}
+    GenerateColorConstants(OutF);
+
+    WriteLn(OutF, 'var');
+    WriteLn(OutF, '  Status : Word;');
+    WriteLn(OutF, '  M      : Menu;      {menu system}');
+    if DefHelpActive then
+      WriteLn(OutF, '  H      : RawWindow; {item help window}');
+    BlankLine;
+
+    {Code to support help line}
+    if DefHelpActive then
+      GenerateHelpWindow(OutF);
+
+    if DefUserProcs then
+      {generate shell routines}
+      GenerateUserProcs(OutF);
+
+    {Code to test menu}
+    GenerateTestCode(OutF);
+
+    Status := IoResult;
+
+CloseUp:
+    Close(OutF);
+    if Status = 0 then
+      Status := IoResult;
+
+CloseUp2:
+    {Done with frame dictionary now}
+    FrameDict.Done;
+
+    if Status = 0 then
+      PopupDelayMessage(SuccessMsg)
+    else
+      PopupErrorMessage(ErrorLeadIn+Long2Str(Status)+WritingSrc);
+  end;
+
+  function XPos(Orient : mnOrientation; WinPtr : RawWindowPtr;
+                DisplayPos : Byte) : Byte;
+    {-Return the absolute x position of menu item}
+  begin
+    if Orient = Vertical then
+      XPos := WinPtr^.wXL
+    else
+      XPos := WinPtr^.wXL+DisplayPos;
+  end;
+
+  function YPos(Orient : mnOrientation; WinPtr : RawWindowPtr;
+                DisplayPos : Byte) : Byte;
+    {-Return the absolute y position of menu item}
+  begin
+    if Orient = Vertical then
+      YPos := WinPtr^.wYL+DisplayPos
+    else
+      YPos := WinPtr^.wYL;
+  end;
+
+  procedure WriteDocList(var OutF : Text;
+                         Nest : Word;
+                         ListPtr : MenuItemListPtr;
+                         WinPtr : RawWindowPtr);
+    {-Write documentation for one item list, recursively}
+  var
+    IPtr : MenuItemNodePtr;
+    SPtr : SubMenuPtr;
+    DisplayPos : Byte;
+    SelectPos : Byte;
+    S : String;
+  begin
+    with ListPtr^ do begin
+      {Scan list}
+      IPtr := MenuItemNodePtr(Head);
+      if IPtr <> nil then
+        repeat
+          IPtr^.DisplayInfo(DisplayPos, SelectPos, S);
+          WriteLn(OutF,
+                  '':(4*Nest),                              {Nesting}
+                  Pad(PascalString(S), 40-(4*Nest)),        {Item string}
+                  '  ',
+                  XPos(Orientation, WinPtr, DisplayPos):3,  {X position}
+                  ' ',
+                  YPos(Orientation, WinPtr, DisplayPos):3,  {Y position}
+                  '   ',
+                  Pad(SymName(IPtr), 15),                   {Const name}
+                  ' = ',
+                  IPtr^.ItemKey);                           {Actual key}
+          if DefHelpActive then begin
+            {Write help string, if any}
+            S := IPtr^.HelpString;
+            if Length(S) > 0 then
+              WriteLn(OutF, '':(4*Nest+2), PascalString(S));
+          end;
+          SPtr := IPtr^.SubPtr;
+          if SPtr <> nil then
+            WriteDocList(OutF, Nest+1, @SPtr^.smItems, SPtr);
+          IPtr := MenuItemNodePtr(Next(IPtr));
+        until IPtr = MenuItemNodePtr(Head);
+    end;
+  end;
+
+  procedure DocumentUserMenu;
+    {-Write a text listing of the user menu}
+  const
+    DocNameMsg = 'Name of document file: ';
+    SuccessMsg = 'Documentation written successfully...';
+    WritingDoc = ' writing documentation';
+    {
+             1         2         3         4         5         6
+    1234567890123456789012345678901234567890123456789012345678901234567890
+        itemnameiiiiiiiiiiiiiiiiiiiiiiiiiiii  xxx yyy   symname = nnn
+    }
+    Legend =
+   'Item name                                   X   Y    Const        Number';
+    LegendUnd =
+   '----------------------------------------  --- ---  -------------  ------';
+  var
+    ItemCount : Word;
+    SubMenuCount : Word;
+    HighItem : LongInt;
+    Status : Word;
+    DocName : PathStr;
+    OutF : Text;
+  begin
+    {Get file name}
+    DocName := ForceExtension(CleanPathName(ObjName), DefDocExt);
+    if not PopupGetFileName('', DocNameMsg, PathLen, DefDocExt, DocName) then
+      Exit;
+
+    {Open it}
+    if not AbleToRewrite(OutF, DocName) then
+      Exit;
+
+    {Write the documentation}
+    WriteLn(OutF, 'Menu System Documentation');
+    WriteLn(OutF, '-------------------------');
+    WriteLn(OutF, '  Object:               ', ObjName);
+    WriteLn(OutF, '  Library:              ', LibName);
+    WriteLn(OutF, '  Size when last saved: ', SizeLastSaved:4);
+    WriteLn(OutF);
+
+    CollectUserStats(ItemCount, SubMenuCount, HighItem);
+    WriteLn(OutF, '  Menu items:           ', ItemCount:4);
+    WriteLn(OutF, '  Highest item key:     ', HighItem:4);
+    WriteLn(OutF, '  Submenus:             ', SubMenuCount:4);
+    WriteLn(OutF);
+
+    {Listing of all items}
+    WriteLn(OutF, Legend);
+    WriteLn(OutF, LegendUnd);
+    WriteDocList(OutF, 0, @UserMenu.mnItems, @UserMenu);
+
+    Status := IoResult;
+    Close(OutF);
+    if Status = 0 then
+      Status := IoResult;
+
+    if Status = 0 then
+      PopupDelayMessage(SuccessMsg)
+    else
+      PopupErrorMessage(ErrorLeadIn+Long2Str(Status)+WritingDoc);
+  end;
+

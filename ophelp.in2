@@ -1,0 +1,1610 @@
+  {*********************************************************}
+  {*                    OPHELP.IN2 1.30                    *}
+  {*     Copyright (c) TurboPower Software 1987, 1992.     *}
+  {*                 All rights reserved.                  *}
+  {*********************************************************}
+
+  constructor PagedHelpWindow.Init(X1, Y1, X2, Y2 : Byte;
+                                   HelpFile : PathStr;
+                                   PickOrientation : pkGenlProc);
+    {-Initialize help window and open help file}
+  begin
+    if not PagedHelpWindow.InitDeluxe(X1, Y1, X2, Y2,
+                                      DefaultColorSet, DefWindowOptions,
+                                      HelpFile, PickOrientation,
+                                      DefHelpOptions) then
+      Fail;
+  end;
+
+  constructor PagedHelpWindow.InitMem(X1, Y1, X2, Y2 : Byte;
+                                      HelpAddr : Pointer;
+                                      PickOrientation : pkGenlProc);
+    {-Initialize help window using help bound into code}
+  begin
+    if not PagedHelpWindow.InitMemDeluxe(X1, Y1, X2, Y2,
+                                         DefaultColorSet, DefWindowOptions,
+                                         HelpAddr, PickOrientation,
+                                         DefHelpOptions) then
+      Fail;
+  end;
+
+  constructor PagedHelpWindow.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                         var Colors : ColorSet;
+                                         Options : LongInt;
+                                         HelpFile : PathStr;
+                                         PickOrientation : pkGenlProc);
+    {-Initialize help window and open help file}
+  begin
+    if not PagedHelpWindow.InitDeluxe(X1, Y1, X2, Y2,
+                                      Colors, Options,
+                                      HelpFile, PickOrientation,
+                                      DefHelpOptions) then
+      Fail;
+
+  end;
+
+  constructor PagedHelpWindow.InitDeluxe(X1, Y1, X2, Y2 : Byte;
+                                         var Colors : ColorSet;
+                                         Options : LongInt;
+                                         HelpFile : PathStr;
+                                         PickOrientation : pkGenlProc;
+                                         HelpOptions : Word);
+    {-Initialize help window and open help file}
+  begin
+    {Initialize topic stack in case of error}
+    hwStack.Init(0, SizeOf(phStackRec), False);
+
+    {Call parent's constructor}
+    if not AbstractHelpWindow.InitDeluxe(X1, Y1, X2, Y2, Colors, Options,
+                                         HelpFile, PickOrientation,
+                                         HelpOptions) then
+      Fail;
+
+    {Allocate previous topic stack}
+    if not hwStack.Init(MaxPreviousTopics, SizeOf(phStackRec), False) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+  end;
+
+  constructor PagedHelpWindow.InitMemCustom(X1, Y1, X2, Y2 : Byte;
+                                            var Colors : ColorSet;
+                                            Options : LongInt;
+                                            HelpAddr : Pointer;
+                                            PickOrientation : pkGenlProc);
+    {-Initialize help window using help bound into code}
+  begin
+    if not PagedHelpWindow.InitMemDeluxe(X1, Y1, X2, Y2,
+                                         Colors, Options,
+                                         HelpAddr, PickOrientation,
+                                         DefHelpOptions) then
+      Fail;
+
+  end;
+
+  constructor PagedHelpWindow.InitMemDeluxe(X1, Y1, X2, Y2 : Byte;
+                                            var Colors : ColorSet;
+                                            Options : LongInt;
+                                            HelpAddr : Pointer;
+                                            PickOrientation : pkGenlProc;
+                                            HelpOptions : Word);
+    {-Initialize help window using help bound into code}
+  begin
+    {Initialize topic stack in case of error}
+    hwStack.Init(0, SizeOf(phStackRec), False);
+
+    {Call parent's constructor}
+    if not AbstractHelpWindow.InitMemDeluxe(X1, Y1, X2, Y2, Colors, Options,
+                                            HelpAddr, PickOrientation,
+                                            HelpOptions) then
+      Fail;
+
+    {Allocate previous topic stack}
+    if not hwStack.Init(MaxPreviousTopics, SizeOf(phStackRec), False) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+  end;
+
+  procedure PagedHelpWindow.phNewPage(var Finished : Boolean;
+                                      var PrvPageRec, CurPageRec : phPageRec);
+    {-Store information about a help page when the end is reached}
+  begin
+    if phPageCnt < MaxPagesPerSection then begin
+      {Store information about this page}
+      Inc(phPageCnt);
+      phPageInx[phPageCnt] := PrvPageRec;
+      PrvPageRec := CurPageRec;
+    end else
+      Finished := True;
+  end;
+
+  procedure UpdFlex(var FlexStk : FlexStack; var FlexSp : Byte; Ch : Char);
+    {-Update a flex stack}
+  begin
+    if (FlexSp > 0) and (FlexStk[FlexSp] = Ch) then
+      {Toggling current state off}
+      Dec(FlexSp)
+    else if FlexSp < FlexStackSize then begin
+      {Changing to new attribute}
+      Inc(FlexSp);
+      FlexStk[FlexSp] := Ch;
+    end;
+  end;
+
+  procedure PagedHelpWindow.phInitTopic;
+    {-Initialize topic by paginating and analyzing cross-refs}
+  var
+    WinCol : Word;
+    WinRow : Word;
+    MaxRow : Word;
+    PrvPageRec : phPageRec;
+    CurPageRec : phPageRec;
+    Finished : Boolean;
+    BufCh : Char;
+  begin
+    {No special video attributes initially active}
+    with PrvPageRec do begin
+      TextOfs := 0;
+      FlexSP := 0;
+      FlexStk[0] := Char(0);
+    end;
+    CurPageRec := PrvPageRec;
+
+    {Initialize counters and limits}
+    phPageCnt := 0;
+    phXrefCnt := 0;
+    phInitHgt := Height;
+
+    WinCol := hwHelpPad;
+    WinRow := 0;
+    MaxRow := phInitHgt-1;
+
+    Finished := False;
+
+    with CurPageRec do
+      repeat
+        BufCh := hwBufP^[TextOfs];
+
+        case BufCh of
+          Attr1Toggle..Attr3Toggle,
+          XrefToggle :       {Modifying video attribute}
+            begin
+              {Update the flex stack}
+              UpdFlex(FlexStk, FlexSp, BufCh);
+              Inc(TextOfs);
+            end;
+
+          IndexMarker :      {Indicating cross-reference topic}
+            begin
+              if phXrefCnt < MaxXrefsPerSection then begin
+                {Initialize the xref link}
+                Inc(phXrefCnt);
+                with phXrefInx[phXrefCnt] do begin
+                  XrefPage := phPageCnt+1;
+                  XrefRow := WinRow;
+                  XrefCol := WinCol;
+                  XrefOfs := TextOfs+4; {Skips over topic number and XrefToggle}
+                  XrefTopic := Word(Pointer(@hwBufP^[TextOfs+1])^);
+                end;
+              end;
+              Inc(TextOfs, 3); {Skip over the topic number link}
+            end;
+
+          LineBrkMark :      {End of line}
+            begin
+              WinCol := hwHelpPad;
+              Inc(WinRow);
+              Inc(TextOfs);
+              if WinRow > MaxRow then begin
+                WinRow := 0;
+                phNewPage(Finished, PrvPageRec, CurPageRec);
+              end;
+            end;
+
+          PageBrkMark :      {End of page}
+            begin
+              if TextOfs = PrvPageRec.TextOfs then begin
+                {Page break marker coincides with natural end of page}
+                Inc(TextOfs);
+                Inc(PrvPageRec.TextOfs)
+              end else begin
+                WinCol := hwHelpPad;
+                WinRow := 0;
+                Inc(TextOfs);
+                phNewPage(Finished, PrvPageRec, CurPageRec);
+              end;
+            end;
+
+          SectEndMark :      {End of section}
+            begin
+              if TextOfs <> PrvPageRec.TextOfs then
+                phNewPage(Finished, PrvPageRec, CurPageRec);
+              Finished := True;
+            end;
+
+        else
+          {Normal character}
+          Inc(WinCol);
+          Inc(TextOfs);
+        end;
+
+      until Finished;
+  end;
+
+  function PagedHelpWindow.phNextPageOfs : Word;
+    {-Return text offset of next help page}
+  begin
+    if phCurPage < phPageCnt then
+      phNextPageOfs := phPageInx[phCurPage+1].TextOfs
+    else
+      phNextPageOfs := $FFFF;
+  end;
+
+  procedure PagedHelpWindow.hwUpdateHelp;
+    {-Draw one help page}
+  var
+    BufPos : Word;
+    BufNxt : Word;
+    WinCol : Word;
+    MaxCol : Word;
+    WinRow : Word;
+    MaxRow : Word;
+    CurFlexStk : FlexStack;
+    CurFlexSP : Byte;
+    BufCh : Char;
+    Attr : Byte;
+    BackAttr : Byte; {!!.03}
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    if Height <> phInitHgt then begin
+      {Window height changed: paginate topic and generate indexes}
+      phInitTopic;
+      if phCurPage > phPageCnt then begin
+        phCurPage := phPageCnt;
+        phCurXref := phFirstXref;
+      end;
+    end;
+
+    {Starting characteristics of page}
+    with phPageInx[phCurPage] do begin
+      BufPos := TextOfs;
+      CurFlexSP := FlexSP;
+      CurFlexStk := FlexStk;
+    end;
+    Attr := hwSetAttr(CurFlexStk[CurFlexSP]);
+    BackAttr := ColorMono(wTextColor, wTextMono); {!!.03}
+
+    {End offset of page}
+    BufNxt := phNextPageOfs;
+
+    {Coordinates within window}
+    WinCol := hwHelpPad;
+    WinRow := 0;
+    MaxCol := Width-1-hwHelpPad;
+    MaxRow := phInitHgt-1;
+
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+
+    {Clear window}
+    {Clear;} {!!.03}
+
+    {!!.03} {Fill first left pad area}
+    if hwHelpPad > 0 then
+      FastFill(hwHelpPad, wBackChar, wYL, wXL, BackAttr);
+
+    repeat
+      BufCh := hwBufP^[BufPos];
+
+      case BufCh of
+        Attr1Toggle..Attr3Toggle : {Modifying video attribute}
+          begin
+            if (CurFlexSP > 0) and (CurFlexStk[CurFlexSP] = BufCh)
+            then begin
+              {Toggling current state off}
+              Dec(CurFlexSP);
+              Attr := hwSetAttr(CurFlexStk[CurFlexSP]);
+            end else if CurFlexSP < FlexStackSize then begin
+              {Changing to new attribute}
+              Inc(CurFlexSP);
+              CurFlexStk[CurFlexSP] := BufCh;
+              Attr := hwSetAttr(BufCh);
+            end;
+            Inc(BufPos);
+          end;
+
+        IndexMarker :      {Index for cross-reference topic}
+          Inc(BufPos, 3);
+
+        XrefToggle :       {Marking a cross-reference}
+          begin
+            if (CurFlexSP > 0) and (CurFlexStk[CurFlexSP] = XrefToggle)
+            then begin
+              {Toggling Xref highlight off}
+              Dec(CurFlexSP);
+              Attr := hwSetAttr(CurFlexStk[CurFlexSP]);
+            end else if CurFlexSP < FlexStackSize then begin
+              {Starting Xref highlight}
+              Inc(CurFlexSP);
+              CurFlexStk[CurFlexSP] := XrefToggle;
+              if BufPos+1 = phXrefInx[phCurXref].XrefOfs then
+                {Currently selected xref}
+                Attr := hwSetAttr(IndexMarker)
+              else
+                {Deselected xref}
+                Attr := hwSetAttr(XrefToggle);
+            end;
+            Inc(BufPos);
+          end;
+
+        LineBrkMark :      {End of line}
+          begin
+            {!!.03} {Fill end of line}
+            if WinRow <= MaxRow then   {!!.22}
+              if WinCol < Width-1 then
+                FastFill(Width-WinCol, wBackChar, wYL+WinRow, wXL+WinCol, BackAttr);
+            WinCol := hwHelpPad;
+            Inc(WinRow);
+            Inc(BufPos);
+            {!!.03} {Fill left pad area}
+            if WinRow <= MaxRow then
+              if hwHelpPad > 0 then
+                FastFill(hwHelpPad, wBackChar, wYL+WinRow, wXL, BackAttr);
+          end;
+
+        PageBrkMark,       {End of page}
+        SectEndMark :      {End of section}
+          begin
+            if WinRow <= MaxRow then begin             {!!.11}
+              {!!.03} {Fill remainder of last line}
+              if WinCol < Width-1 then
+                FastFill(Width-WinCol, wBackChar, wYL+WinRow, wXL+WinCol, BackAttr);
+              Inc(WinRow);
+            end;                                       {!!.11}
+            BufPos := $FFFF;
+          end;
+
+      else
+        {Normal character}
+        if (WinCol <= MaxCol) and (WinRow <= MaxRow) then
+          FastWrite(BufCh, wYL+WinRow, wXL+WinCol, Attr);
+        Inc(WinCol);
+        Inc(BufPos);
+      end;
+
+    until BufPos >= BufNxt;
+
+    {!!.03} {Fill any empty lines}
+    while WinRow <= MaxRow do begin
+      {Clear line}
+      FastFill(Width, wBackChar, wYL+WinRow, wXL, BackAttr);
+      Inc(WinRow);
+    end;
+
+    {Update more header and scroll bars}
+    if not FlagIsSet(hwFlags, hwProcessingHelp) then begin
+      {Update more header if appropriate}
+      if hwMoreRec.HdrNum <> 255 then
+        if ActiveFramePtr = @wFrame then begin    {!!.13}
+          pkResetMoreRec(hwMoreRec, (phPageCnt > 1));
+          pkUpdateMoreRec(hwMoreRec,
+                          (phCurPage > 1),
+                          (phCurPage < phPageCnt),
+                          (phPageCnt > 1));
+        end;
+
+      {$IFDEF UseScrollBars}
+      {Update scroll bars}
+      hwSetupForScrollBars;
+      hwUpdateScrollBars;
+      {$ENDIF}
+    end;
+
+    {Position cursor}                         {!!.13}
+    if phCurXref = 0 then                     {!!.13}
+      wGoToXY(1+hwHelpPad, 1)                 {!!.13}
+    else                                      {!!.13}
+      with phXrefInx[phCurXref] do            {!!.13}
+        wGoToXY(1+xrefCol, 1+XrefRow);        {!!.13}
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+  end;
+
+  procedure PagedHelpWindow.phDrawXref(Xref : Xrefs);
+    {-Draw one cross-reference}
+  var
+    BufPos : Word;
+    BufNxt : Word;
+    WinCol : Word;
+    MaxCol : Word;
+    WinRow : Word;
+    BufCh : Char;
+    Attr : Byte;
+    IsCur : Boolean; {!!.13}
+  begin
+    {Starting position of xref}
+    with phXrefInx[Xref] do begin
+      BufPos := XrefOfs;
+      WinRow := XrefRow;
+      WinCol := XrefCol;
+    end;
+    MaxCol := Width-1-hwHelpPad;
+
+    {Position cursor}                                  {!!.13}
+    IsCur := (Xref = phCurXref);                       {!!.13}
+    if IsCur then                                      {!!.13}
+      wGoToXY(WinCol+1, WinRow+1);                     {!!.13}
+
+    {Video attribute to use}
+    Attr := pkColorPtr^[pkPrivate][True][Byte(IsCur)]; {!!.13}
+
+    {End offset of page}
+    BufNxt := phNextPageOfs;
+
+    repeat
+      BufCh := hwBufP^[BufPos];
+      case BufCh of
+        LineBrkMark :
+          begin
+            Inc(WinRow);
+            WinCol := hwHelpPad;
+          end;
+        XrefToggle,
+        PageBrkMark,
+        SectEndMark :
+          Exit;
+      else
+        if WinCol <= MaxCol then
+          FastWrite(BufCh, wYL+WinRow, wXL+WinCol, Attr);
+        Inc(WinCol);
+      end;
+      Inc(BufPos);
+    until BufPos >= BufNxt;
+  end;
+
+  function PagedHelpWindow.phFirstXref : Xrefs;
+    {-Return the index of the first cross-reference on the current page}
+  var
+    I : Xrefs;
+  begin
+    for I := 1 to phXrefCnt do
+      if phXrefInx[I].XrefPage = phCurPage then begin
+        phFirstXref := I;
+        Exit;
+      end;
+    phFirstXref := 0;
+  end;
+
+  {$IFDEF UseScrollBars}
+  procedure PagedHelpWindow.hwSetupForScrollBars;
+    {-Set boundaries for all scroll bars}
+  begin
+    {Horizontal scroll bar never supported here}
+    ChangeAllScrollBars(0, 0, 1, phPageCnt);
+  end;
+
+  procedure PagedHelpWindow.hwUpdateScrollBars;
+    {-Update vertical scroll bars}
+  begin
+    DrawAllSliders(0, phCurPage);
+  end;
+  {$ENDIF}
+
+  {$IFDEF UseMouse}
+  function PagedHelpWindow.phMatchXref(Xref : Xrefs; MX, MY : Byte) : Boolean;
+    {-Return True if Xref covers the position <MX,MY>, where MX,MY are
+      0-based window-relative coordinates}
+  var
+    BufPos : Word;
+    BufNxt : Word;
+    WinCol : Word;
+    MaxCol : Word;
+    WinRow : Word;
+    BufCh : Char;
+  begin
+    phMatchXref := False;
+
+    with phXrefInx[Xref] do begin
+      BufPos := XrefOfs;
+      WinRow := XrefRow;
+      WinCol := XrefCol;
+    end;
+    BufNxt := phNextPageOfs;
+
+    repeat
+      case hwBufP^[BufPos] of
+        LineBrkMark :
+          begin
+            Inc(WinRow);
+            WinCol := hwHelpPad;
+          end;
+        XrefToggle,
+        PageBrkMark,
+        SectEndMark :
+          Exit;
+      else
+        if (WinRow = MY) and (WinCol = MX) then begin
+          phMatchXref := True;
+          Exit;
+        end;
+        inc(WinCol);
+      end;
+      Inc(BufPos);
+    until BufPos >= BufNxt;
+  end;
+
+  function PagedHelpWindow.phFindXref(MX, MY : Byte) : Xrefs;
+    {-Return a cross-reference number at position MX,MY, 0 for none}
+  var
+    I : Xrefs;
+  begin
+    for I := 1 to phXrefCnt do
+      if phXrefInx[I].XrefPage = phCurPage then
+        if phMatchXref(I, MX, MY) then begin
+          phFindXref := I;
+          Exit;
+        end;
+    phFindXref := 0;
+  end;
+  {$ENDIF}
+
+  procedure PagedHelpWindow.phIncXrefPrim(Delta : Integer);
+    {-Move to the next cross-reference, wrap at page edge}
+  var
+    Next : Xrefs;
+  begin
+    if phCurXref <> 0 then begin
+      Next := phCurXref;
+      repeat
+        Inc(Next, Delta);
+        if Next < 1 then
+          Next := phXrefCnt
+        else if Next > phXrefCnt then
+          Next := 1;
+      until (Next = phCurXref) or (phXrefInx[Next].XrefPage = phCurPage);
+      phCurXref := Next;
+    end;
+  end;
+
+  procedure PagedHelpWindow.phIncHorizXref(Delta : Integer);
+    {-Move to next cross-reference horizontally}
+  var
+    Prev : Xrefs;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    Prev := phCurXref;
+    phIncXrefPrim(Delta);
+    if Prev <> phCurXref then begin
+      {$IFDEF UseMouse}
+      HideMousePrim(MOn);
+      {$ENDIF}
+      phDrawXref(Prev);
+      phDrawXref(phCurXref);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure PagedHelpWindow.phIncVertXref(Delta : Integer);
+    {-Move to next cross-reference vertically}
+  var
+    OrigXref : Xrefs;
+    OrigRow : Byte;
+    OrigCol : Byte;
+    PrevXref : Xrefs;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    OrigXref := phCurXref;
+    OrigRow := phXrefInx[OrigXref].XrefRow;
+    OrigCol := phXrefInx[OrigXref].XrefCol;
+
+    {Move to a new row}
+    repeat
+      phIncXrefPrim(Delta);
+    until (phCurXref = OrigXref) or (phXrefInx[phCurXref].XrefRow <> OrigRow);
+
+    {Move to appropriate field on that row}
+    if Delta*phXrefInx[phCurXref].XrefCol < Delta*OrigCol then
+      repeat
+        {Store previous xref}
+        PrevXref := phCurXref;
+        phIncXrefPrim(Delta);
+        if phCurXref <> PrevXref then
+          {Able to move}
+          if phXrefInx[phCurXref].XrefRow <> phXrefInx[PrevXref].XrefRow then
+            {Moved to new row, back up}
+            phCurXref := PrevXref
+          else if Delta*phXrefInx[phCurXref].XrefCol >= Delta*OrigCol then
+            {Far enough, force exit}
+            PrevXref := phCurXref;
+      until phCurXref = PrevXref;
+
+    if OrigXref <> phCurXref then begin
+      {$IFDEF UseMouse}
+      HideMousePrim(MOn);
+      {$ENDIF}
+      phDrawXref(OrigXref);
+      phDrawXref(phCurXref);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure PagedHelpWindow.hwNewTopic(Topic : Word);
+    {-Initialize instance variables for a new topic}
+  begin
+    hwCurTopic := Topic;
+    phCurPage := 1; {Start with first page}
+    phPrvPage := 0; {Assure window is redrawn}
+    phCurXref := 0; {Assure start on first xref if any}
+  end;
+
+  procedure PagedHelpWindow.hwPushNewTopic(Topic : Word);
+    {-Push a new topic onto the topic stack}
+  var
+    StackRec : phStackRec;
+  begin
+    with StackRec do begin
+      STopic := Topic;
+      SPage := 1;
+      SXnum := 0;
+    end;
+    hwStack.PushTail(StackRec);
+  end;
+
+  procedure PagedHelpWindow.hwPushCurTopic;
+    {-Push current topic, page, xref onto stack}
+  var
+    StackRec : phStackRec;
+  begin
+    with StackRec do begin
+      STopic := hwCurTopic;
+      SPage := phCurPage;
+      SXnum := phCurXref;
+    end;
+    hwStack.PushTail(StackRec);
+  end;
+
+  procedure PagedHelpWindow.hwPopCurTopic;
+    {-Pop top of stack into current topic}
+  var
+    StackRec : phStackRec;
+  begin
+    hwStack.PopTail(StackRec);
+    if hwStack.GetStatus = 0 then
+      with StackRec do begin
+        hwCurTopic := STopic;
+        phCurPage := SPage;
+        phPrvPage := 0;     {Force full screen update}
+        phCurXref := SXnum;
+      end;
+  end;
+
+  procedure PagedHelpWindow.SetTopicAndPos(Topic, TOfs : Word; ShowLen : Byte); {!!.13}
+    {-Specify next topic to display. Page or cursor will display
+      specified text offset}
+  var
+    P : Pages;
+    Found : Boolean;
+    StackRec : phStackRec;
+  begin
+    {Load and decompress topic if needed}
+    if Topic <> hwCurTopic then begin
+      hwCurTopic := Topic;
+      if hwLoadTopic <> 0 then
+        Exit;
+      {Paginate topic and generate temporary indexes}
+      phInitTopic;
+    end;
+
+    with StackRec do begin
+      STopic := Topic;
+      SXnum := 0;
+      P := 1;
+      Found := False;
+      while not Found and (P <= phPageCnt) do
+        if phPageInx[P].TextOfs > TOfs then begin
+          SPage := P-1;
+          Found := True;
+        end;
+    end;
+    hwStack.PushTail(StackRec);
+  end;
+
+  function PagedHelpWindow.phSelectXref : Boolean;
+    {-Process a selection command}
+  begin
+    phSelectXref := False;
+    if phCurXref <> 0 then
+      if phXrefInx[phCurXref].XrefTopic = XrefForIndex then
+        {Show index}
+        phSelectXref := hwHelpIndex
+      else begin
+        {New topic}
+        hwPushCurTopic;
+        hwNewTopic(phXrefInx[phCurXref].XrefTopic);
+      end;
+  end;
+
+  {$IFDEF UseMouse}
+  {!!.03} {Reorganization to support mouse dragging}
+  function PagedHelpWindow.phEvaluateMouseCmd : Boolean;
+    {-Evaluate a mouse selection, returning true to exit help window}
+  var
+    BarPos : LongInt;
+    FramePos : FramePosType;
+    HotCode : Byte;
+    PrevXref : Xrefs;
+    MOn : Boolean;
+    SameItem : Boolean;
+    Dragging : Boolean;
+  begin
+    phEvaluateMouseCmd := False;
+
+    {Determine position of mouse}
+    BarPos := cwMouseResults(cwCmd, FramePos, HotCode);    {!!.03} {!!.13}
+
+    {Should mouse event be ignored?}
+    if cwIgnoreMouseEvent(Dragging, cwCmd, FramePos, HotCode) then {!!.03}
+      Exit;
+
+    case HotCode of
+      hsNone: {Not a hot spot}
+        if FramePos = frInsideActive then begin
+          {Inside window, search for an xref at the mouse position}
+          PrevXref := phCurXref;
+          phCurXref := phFindXref(MouseKeyWordX+MouseXLo-wXL,
+                                  MouseKeyWordY+MouseYLo-wYL);
+
+          if phCurXref = 0 then
+            {No matching xref, restore previous}
+            phCurXref := PrevXref
+          else begin
+            {Highlight is on same xref as before}
+            SameItem := (phCurXref = PrevXref);
+
+            if not SameItem then begin
+              {Selecting a new xref}
+              HideMousePrim(MOn);
+              phDrawXref(PrevXref);
+              phDrawXref(phCurXref);
+              ShowMousePrim(MOn);
+              if FlagIsSet(pkFlags, pkSelectOnClick) then
+                {Force immediate selection}
+                SameItem := True
+              else if cwCmd <> ccMouseSel then         {!!.13}
+                {Set flag that requires double click when dragging}
+                SetFlag(hwFlags, hwChangedXref);
+            end;
+
+            if cwCmd = ccMouseSel then
+              {Button was released}
+              if SameItem then
+                if FlagIsSet(hwFlags, hwChangedXref) then
+                  {Clear double click flag}
+                  ClearFlag(hwFlags, hwChangedXref)
+                else
+                  {Reselecting same xref, act like ccSelect}
+                  phEvaluateMouseCmd := phSelectXref;
+          end;
+
+        end else if (not Dragging) or (cwCmd = ccMouseDown) then {!!.13}
+          {Button was pressed outside of active window, not on a hot spot}
+          phEvaluateMouseCmd := LongFlagIsSet(wFlags, wAllMouseEvents);
+
+      hsSpot,            {Single character hot spot}
+      hsRegion0..255 :   {User-defined region relative to a frame}
+        begin
+          if HotCode = hwPrevHotSpot then begin
+            {Potential request for previous topic}
+            case HotCode of
+              hsSpot :           {Single character hot spot}
+                {Check position}
+                if FramePos <> hwPrevSpotPos then
+                  Exit;
+            end;
+            if (cwCmd = ccMouseSel) and (hwStack.Elements <> 0) then
+              hwPopCurTopic;
+            Exit;
+          end;
+          if (cwCmd <> ccMouseAuto) then begin {!!.13}
+            {Treat like user exit command}
+            hwPushCurTopic;
+            phEvaluateMouseCmd := True;
+          end;
+          Exit;
+        end;
+    else
+      if Dragging and (cwCmd = ccMouseSel) then {!!.13}
+        {A hot spot, but this wasn't the right kind of mouse event}
+        Exit;
+    end;
+
+    case HotCode of
+      hsDecV :           {Decrement vertical scroll}
+        if phCurPage > 1 then begin
+          Dec(phCurPage);
+          phCurXref := 0;
+        end;
+
+      hsDecH :           {Decrement horizontal scroll}
+        {Not supported} ;
+
+      hsIncV :
+        if phCurPage < phPageCnt then begin
+          Inc(phCurPage);
+          phCurXref := 0;
+        end;
+
+      hsIncH :
+        {Not supported} ;
+
+      {$IFDEF UseScrollBars}
+      hsBar :            {Slider portion of a scroll bar}
+        if BarPos <> phCurPage then begin
+          phCurPage := BarPos;
+          phCurXref := 0;
+        end;
+      {$ENDIF}
+    end;
+  end;
+  {$ENDIF}
+
+  function PagedHelpWindow.phEvaluateCmd : Boolean;
+    {-Evaluate keyboard command, returning true to exit help window}
+  begin
+    phEvaluateCmd := False;
+
+    case cwCmd of
+      ccNone :             {Invalid keystroke}
+        ;
+
+      ccUp,                {Change cross-reference links}
+      ccScrollUp :
+        phIncVertXref(-1);
+      ccDown,
+      ccScrollDn :
+        phIncVertXref(+1);
+      ccPrevXref,
+      ccLeft :
+        phIncHorizXref(-1);
+      ccNextXref,
+      ccRight :
+        phIncHorizXref(+1);
+
+      ccPageUp :           {Change pages}
+        if phCurPage > 1 then begin
+          Dec(phCurPage);
+          phCurXref := 0;
+        end;
+      ccPageDn :
+        if phCurPage < phPageCnt then begin
+          Inc(phCurPage);
+          phCurXref := 0;
+        end;
+
+      ccHome,
+      ccTopOfFile :
+        if phCurPage <> 1 then begin
+          phCurPage := 1;
+          phCurXref := 0;
+        end;
+      ccEnd,
+      ccEndofFile :
+        if phCurPage <> phPageCnt then begin
+          phCurPage := phPageCnt;
+          phCurXref := 0;
+        end;
+
+      ccSelect :           {Select xref}
+        phEvaluateCmd := phSelectXref;
+
+      {$IFDEF UseMouse}
+      ccMouseSel,          {Mouse selection - left button up}
+      ccMouseDown,         {Mouse left button down} {!!.03}
+      ccMouseAuto :        {Mouse autorepeat event} {!!.03}
+        phEvaluateCmd := phEvaluateMouseCmd;
+      {$ENDIF}
+
+      ccPrevTopic :        {Previous topic}
+        if hwStack.Elements <> 0 then
+          hwPopCurTopic;
+
+      ccIndex :            {Help index}
+        if FlagIsSet(hwFlags, hwPickIndex) then
+          phEvaluateCmd := hwHelpIndex;
+
+      ccNested :           {Call to nested user routine}
+        phEvaluateCmd := hwUserNested(@Self);
+
+      ccHelp :             {Help - weird but not impossible}
+        RequestHelp(wHelpIndex);
+
+      ccQuit,              {Exit}
+      ccUser0..$FFFF :     {User exit commands}
+        begin
+          hwPushCurTopic;
+          phEvaluateCmd := True;
+        end;
+
+    else
+      if (cwCmd <= 255) and (GetExitCommandPtr <> nil) then
+        {Possibly a special exit command defined by a derived object}
+        if (cwCmd in GetExitCommandPtr^) then begin
+          hwPushCurTopic;
+          phEvaluateCmd := True;
+        end;
+    end;
+  end;
+
+  procedure PagedHelpWindow.hwForceRedraw; {!!.13}
+    {-Reset variables to force redraw of topic}
+  begin
+    phPrvPage := 0;
+  end;
+
+  function PagedHelpWindow.hwShowCurTopic : Boolean; {!!.13}
+    {-Display current help topic}
+  var
+    Status : Word;
+    HdrStr : String;
+  begin
+    hwShowCurTopic := False;
+
+    {Load new topic if required}
+    if hwCurTopic <> hwPrvTopic then begin
+      Status := hwLoadTopic;
+      if Status <> 0 then begin
+        {Restore previous topic and exit with error}
+        hwCurTopic := hwPrvTopic;
+        hwPrvTopic := 0;
+        GotError(Status, emNullError);
+        Exit;
+      end;
+
+      {Paginate topic and generate temporary indexes}
+      phInitTopic;
+
+      {Update more header if appropriate}
+      pkResetMoreRec(hwMoreRec, (phPageCnt > 1));
+
+      {$IFDEF UseScrollBars}
+      {Set up for scroll bars}
+      hwSetupForScrollBars;
+      {$ENDIF}
+
+      {Get help header if needed}
+      if hwTopicHdr <> 255 then begin
+        Status := hwGetHeaderString(HdrStr);
+        if Status <> 0 then begin
+          GotError(Status, emNullError);
+          Exit;
+        end;
+        hwChangeHeader(hwTopicHdr, HdrStr);
+      end;
+
+      {Redraw contents now}
+      phPrvPage := 0;
+
+      hwPrvTopic := hwCurTopic;
+    end;
+
+    {Draw new help page if needed}
+    if phCurPage <> phPrvPage then begin
+
+      {Find first xref on page unless we already have a valid xref}
+      if phCurXref = 0 then
+        phCurXref := phFirstXref;
+
+      {Update more marker if appropriate}
+      if hwMoreRec.HdrNum <> 255 then
+        pkUpdateMoreRec(hwMoreRec,
+                        (phCurPage > 1),
+                        (phCurPage < phPageCnt),
+                        (phPageCnt > 1));
+
+      {Activate window if not already}
+      if IsCurrent then
+        {Just fill in the page}
+        hwUpdateHelp
+      else begin
+        {Activate the window as needed}
+        Draw;
+        if RawError <> 0 then begin {!!.01}
+          {GotError(epNonFatal+ecWinNotCurrent, emNullError);} {!!.01}
+          Exit;
+        end;
+        ClearFlag(hwFlags, hwModeChangePending);
+      end;
+
+      if FlagIsSet(hwFlags, hwModeChangePending) then begin
+        {Draw the new frame now}
+        {$IFDEF UseShadows}
+        hwFrame.EraseShadows;
+        {$ENDIF}
+        wFrame.Draw;
+        SetCursor(wCursor);
+        GotoXYAbs(wCursorX, wCursorY);
+        ClearFlag(hwFlags, hwModeChangePending);
+      end;
+
+      {$IFDEF UseScrollBars}
+      {Update scroll bars}
+      hwUpdateScrollBars;
+      {$ENDIF}
+
+      {Mark this page as current}
+      phPrvPage := phCurPage;
+    end;
+
+    hwShowCurTopic := True;
+  end;
+
+  procedure PagedHelpWindow.hwShowTopTopic;
+    {-Display the topic at the top of the topic stack and accept commands}
+  label
+    ExitPoint;
+  var
+    Finished : Boolean;
+  begin
+    {Pop top topic from stack into current}
+    hwPopCurTopic;
+    if hwCurTopic = PickTopic then begin
+      {Really a pick request}
+      hwPickHelpTopic;
+      Exit;
+    end;
+
+    {Make sure we don't reenter}
+    if FlagIsSet(hwFlags, hwProcessingHelp) then
+      Exit;
+    SetFlag(hwFlags, hwProcessingHelp);
+
+    {$IFDEF UseMouse}
+    if cwCmdPtr^.MouseEnabled then
+      ShowMouse;
+    {$ENDIF}
+
+    {Set up color pointer used to draw help pages}
+    pkColorPtr := @pkColors[UseColor];
+
+    {Indicate we're in help, not pick, mode}
+    hwSetHelpMode(True);
+
+    {Force page redraw first time through loop}
+    hwForceRedraw; {!!.13}
+
+    Finished := False;
+    repeat
+      if not hwShowCurTopic then {!!.13}
+        goto ExitPoint;
+
+      {Call pre-move routine}
+      PreMove;
+
+      {Get next command}
+      GetNextCommand;
+
+      {Evaluate command}
+      Finished := phEvaluateCmd;
+    until Finished or (cwCmd = ccError);
+
+    {Clear stack if requested}
+    if FlagIsSet(hwFlags, hwClearStackAtExit) then
+      hwStack.Clear;
+
+ExitPoint:
+    ClearFlag(hwFlags, hwProcessingHelp);
+  end;
+
+  function PagedHelpWindow.CurrentXrefTopic : Word;
+    {-Return help topic of current cross reference, $FFFF if none}
+  begin
+    if phCurXref = 0 then
+      CurrentXrefTopic := $FFFF
+    else
+      CurrentXrefTopic := phXrefInx[phCurXref].XrefTopic;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor PagedHelpWindow.Load(var S : IdStream);
+    {-Load a help system from a stream}
+  begin
+    {Initialize topic stack in case of error}
+    hwStack.Init(0, SizeOf(phStackRec), False);
+
+    {Load the underlying raw help window}
+    if not AbstractHelpWindow.Load(S) then
+      Fail;
+
+    {Allocate previous topic stack}
+    if not hwStack.Init(MaxPreviousTopics, SizeOf(phStackRec), False) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+  end;
+
+  procedure PagedHelpWindow.Store(var S : IdStream);
+    {-Store a help system in a stream}
+  begin
+    {Store the underlying raw help window}
+    AbstractHelpWindow.Store(S);
+  end;
+
+  procedure PagedHelpWindowStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing paged help windows}
+  begin
+    AbstractHelpWindowStream(SPtr);
+    with SPtr^ do begin
+      RegisterType(otPagedHelpWindow, vePagedHelpWindow, TypeOf(PagedHelpWindow),
+                   @PagedHelpWindow.Store, @PagedHelpWindow.Load);
+    end;
+  end;
+
+{$ENDIF}
+
+  function NoCopyFunc(T : CharArrayPtr ; Len : Word;
+                      SH : ScrollingHelpWindowPtr) : Boolean;
+    {-Default CopyBlock procedure that does nothing}
+  begin
+    NoCopyFunc := False;
+  end;
+
+  constructor ScrollingHelpWindow.Init(X1, Y1, X2, Y2 : Byte;
+                                       HelpFile : PathStr;
+                                       PickOrientation : pkGenlProc);
+    {-Initialize help window and open help file}
+  begin
+    if not ScrollingHelpWindow.InitDeluxe(X1, Y1, X2, Y2,
+                                          DefaultColorSet, DefWindowOptions,
+                                          HelpFile, PickOrientation,
+                                          DefHelpOptions) then
+      Fail;
+  end;
+
+  constructor ScrollingHelpWindow.InitMem(X1, Y1, X2, Y2 : Byte;
+                                          HelpAddr : Pointer;
+                                          PickOrientation : pkGenlProc);
+    {-Initialize help window using help bound into code}
+  begin
+    if not ScrollingHelpWindow.InitMemDeluxe(X1, Y1, X2, Y2,
+                                             DefaultColorSet, DefWindowOptions,
+                                             HelpAddr, PickOrientation,
+                                             DefHelpOptions) then
+      Fail;
+  end;
+
+  function ScrollingHelpWindow.shFinalInit : Word;
+    {-Perform final constructor initialization}
+  begin
+    {Allocate previous topic stack}
+    if not hwStack.Init(MaxPreviousTopics, SizeOf(shStackRec), False) then begin
+      shFinalInit := epFatal+ecOutOfMemory;
+      Exit;
+    end;
+
+    if FlagIsSet(hwFlags, hwAdjustScroll) then
+      {Maximum horizontal scroll based on MaxLineLength}
+      shSetMaxScroll
+    else
+      {Something big enough that no one should run into it}
+      SetMaxScroll(30000);
+
+    {Save initial window height}
+    shInitHgt := Height; {!!.03}
+
+    {Save initial info for topic highlighting}  {!!.13}
+    shPrvX := 0;                                {!!.13}
+    shPrvY := 0;                                {!!.13}
+    shPrvXRO := $FFFF;                          {!!.13}
+    shPrvXRT := $FFFF;                          {!!.13}
+
+    {Default to normal cursor}
+    hwCursor := cuNormal;
+
+    {Set up for block marking}
+    shBlockBegin := 0;
+    shBlockEnd := 0;
+    shBlockOn := False;
+    shSend := NoCopyFunc;
+
+    shFinalInit := 0;
+  end;
+
+  constructor ScrollingHelpWindow.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                             var Colors : ColorSet;
+                                             Options : LongInt;
+                                             HelpFile : PathStr;
+                                             PickOrientation : pkGenlProc);
+    {-Initialize help window and open help file}
+  begin
+    if not ScrollingHelpWindow.InitDeluxe(X1, Y1, X2, Y2,
+                                          Colors, Options,
+                                          HelpFile, PickOrientation,
+                                          DefHelpOptions) then
+      Fail;
+  end;
+
+  constructor ScrollingHelpWindow.InitDeluxe(X1, Y1, X2, Y2 : Byte;
+                                             var Colors : ColorSet;
+                                             Options : LongInt;
+                                             HelpFile : PathStr;
+                                             PickOrientation : pkGenlProc;
+                                             HelpOptions : Word);
+    {-Initialize help window and open help file}
+  var
+    Status : Word;
+  begin
+    {Initialize topic stack in case of error}
+    hwStack.Init(0, SizeOf(shStackRec), False);
+
+    {Call parent's constructor}
+    if not AbstractHelpWindow.InitDeluxe(X1, Y1, X2, Y2, Colors, Options,
+                                         HelpFile, PickOrientation,
+                                         HelpOptions) then
+      Fail;
+
+    {Finish the initialization}
+    Status := shFinalInit;
+    if Status <> 0 then begin
+      Done;
+      InitStatus := Status;
+      Fail;
+    end;
+
+    {Initialize block marking colors}
+    shBlockColor := Colors.BlockColor;
+    shBlockMono := Colors.BlockMono;
+  end;
+
+  constructor ScrollingHelpWindow.InitMemCustom(X1, Y1, X2, Y2 : Byte;
+                                                var Colors : ColorSet;
+                                                Options : LongInt;
+                                                HelpAddr : Pointer;
+                                                PickOrientation : pkGenlProc);
+    {-Initialize help window using help bound into code}
+  var
+    Status : Word;
+  begin
+    if not ScrollingHelpWindow.InitMemDeluxe(X1, Y1, X2, Y2,
+                                             Colors, Options,
+                                             HelpAddr, PickOrientation,
+                                             DefHelpOptions) then
+      Fail;
+  end;
+
+  constructor ScrollingHelpWindow.InitMemDeluxe(X1, Y1, X2, Y2 : Byte;
+                                                var Colors : ColorSet;
+                                                Options : LongInt;
+                                                HelpAddr : Pointer;
+                                                PickOrientation : pkGenlProc;
+                                                HelpOptions : Word);
+    {-Initialize help window using help bound into code}
+  var
+    Status : Word;
+  begin
+    {Initialize topic stack in case of error}
+    hwStack.Init(0, SizeOf(shStackRec), False);
+
+    {Call parent's constructor}
+    if not AbstractHelpWindow.InitMemDeluxe(X1, Y1, X2, Y2, Colors, Options,
+                                            HelpAddr, PickOrientation,
+                                            HelpOptions) then
+      Fail;
+
+    {Finish the initialization}
+    Status := shFinalInit;
+    if Status <> 0 then begin
+      Done;
+      InitStatus := Status;
+      Fail;
+    end;
+
+    {Initialize block marking colors}
+    shBlockColor := Colors.BlockColor;
+    shBlockMono := Colors.BlockMono;
+  end;
+
+  procedure ScrollingHelpWindow.SetSendFunc(SF : shSendFunc);
+    {-Sets procedure to be called on CopyBlock command}
+  begin
+    shSend := SF;
+  end;
+
+  procedure ScrollingHelpWindow.SetBlockAttr(Color, Mono : Byte);
+    {-Sets the block attribute}
+  begin
+    shBlockColor := Color;
+    shBlockMono := Mono;
+  end;
+
+  procedure ScrollingHelpWindow.ResetBlock;
+    {-Clear the current block. No screen update}
+  begin
+    if FlagIsSet(hwFlags, hwBlockMark) then begin
+      shBlockBegin := 0;
+      shBlockEnd := 0;
+      shBlockOn := False;
+    end;
+  end;
+
+  procedure ScrollingHelpWindow.HideBlock;
+    {-Hide the current block. No screen update}
+  begin
+    if FlagIsSet(hwFlags, hwBlockMark) then
+      shBlockOn := False;
+  end;
+
+  procedure ScrollingHelpWindow.SetMaxScroll(MaxFirstCol : Word);
+    {-Set a new value for maximum scrolling}
+  begin
+    if MaxFirstCol < 1 then
+      MaxFirstCol := 1;
+    shMaxCol := MaxFirstCol;
+  end;
+
+  procedure ScrollingHelpWindow.SetHelpPadSize(Pad : Byte);
+    {-Set number of blank characters at edges of help window}
+  begin
+    AbstractHelpWindow.SetHelpPadSize(Pad);
+    if FlagIsSet(hwFlags, hwAdjustScroll) then
+      {Adjust maximum horizontal scroll}
+      shSetMaxScroll;
+  end;
+
+  procedure ScrollingHelpWindow.shSetMaxScroll;
+    {-Set maximum horizontal scroll based on maximum line length}
+  begin
+    {Add one extra to allow cursor to position past end of line}
+    shMaxCol := hwHdrP^.MaxLineLen+2-(Width-2*hwHelpPad);
+    if shMaxCol < 1 then
+      shMaxCol := 1;
+    if shCurCol > shMaxCol then
+      shCurCol := shMaxCol;
+  end;
+
+  procedure ScrollingHelpWindow.shInitFirst(var Line : shLineRec);
+    {-Initialize a line record as the first line}
+  begin
+    with Line do begin
+      TextOfs := 0;
+      FlexSP  := 0;
+      FlexStk[0] := Char(0);
+    end;
+  end;
+
+  procedure ScrollingHelpWindow.shNextLine(var Line, NewLine : shLineRec);
+    {-Return the linerec of next line}
+  var
+    BufCh : Char;
+    Finished : Boolean;
+  begin
+    NewLine := Line;
+    Finished := False;
+    with NewLine do
+      repeat
+        BufCh := hwBufP^[TextOfs];
+
+        case BufCh of
+          Attr1Toggle..Attr3Toggle,
+          XrefToggle :       {Modifying video attribute}
+            UpdFlex(FlexStk, FlexSp, BufCh);
+
+          IndexMarker :      {Cross-reference topic}
+            Inc(TextOfs, 2); {Skip over the topic number link}
+
+          LineBrkMark,       {End of line}
+          PageBrkMark :      {End of page -- acts like end of line here}
+            Finished := True;
+
+          SectEndMark :      {End of section}
+            begin
+              TextOfs := $FFFE; {There is no next line}
+              Finished := True;
+            end;
+        end;
+        Inc(TextOfs);
+      until Finished;
+  end;
+
+  procedure ScrollingHelpWindow.shPrevLine(var Line, NewLine : shLineRec);
+    {-Return the linerec of line prior to current}
+  var
+    BufCh : Char;
+    Finished : Boolean;
+  begin
+    if Line.TextOfs = 0 then begin
+      {Existing line is the first line}
+      NewLine.TextOfs := $FFFF;
+      Exit;
+    end;
+
+    NewLine := Line;
+    Finished := False;
+    with NewLine do begin
+      {Move to end of previous line}
+      dec(TextOfs);
+
+      repeat
+        if TextOfs = 0 then
+          {Beginning of buffer}
+          Finished := True
+        else begin
+          {Check previous character}
+          dec(TextOfs);
+          BufCh := hwBufP^[TextOfs];
+          case BufCh of
+            Attr1Toggle..Attr3Toggle : {Modifying video attribute}
+              UpdFlex(FlexStk, FlexSp, BufCh);
+
+            XrefToggle :
+              begin
+                UpdFlex(FlexStk, FlexSp, BufCh);
+                if FlexStk[FlexSp] <> XrefToggle then
+                  {Topic number precedes this XrefToggle}
+                  dec(TextOfs, 2);
+              end;
+
+            IndexMarker :      {Cross-reference topic}
+              ;
+
+            LineBrkMark,       {End of previous line}
+            PageBrkMark :      {End of page -- acts like end of line here}
+              begin
+                Inc(TextOfs);  {Point back to beginning of line}
+                Finished := True;
+              end;
+          end;
+        end;
+      until Finished;
+    end;
+  end;
+
+  procedure ScrollingHelpWindow.shFindLastLine;
+    {-Initialize the shLast field if possible}
+  var
+    WinRow : Byte;
+    MaxRow : Byte;
+  begin
+    {Start from known top line}
+    shLast := shFirst;
+
+    {Scan to last line in window}
+    WinRow := 1;
+    MaxRow := Height;
+    repeat
+      shNextLine(shLast, shLast);
+      inc(WinRow);
+    until (WinRow = MaxRow) or (shLast.TextOfs = $FFFF);
+  end;
+
+  procedure ScrollingHelpWindow.shDrawLine(Row : Byte; var Line : shLineRec);
+    {-Draw one line of the help window}
+  var
+    LineCol : Word;
+    ScrnCol : Word;
+    MaxCol : Word;
+    ScrnRow : Word;
+    Attr : Byte;
+    BufCh : Char;
+    Finished : Boolean;
+    NormCharAttr : Byte;
+    BlockCharAttr : Byte;
+    ShowBlock : Boolean;
+    BlockBegin : Word;
+    BlockEnd : Word;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    LineCol := 1;             {Visible position within line}
+    ScrnCol := wXL+hwHelpPad; {Screen output column}
+    MaxCol := wXH-hwHelpPad;  {Highest output column on screen}
+    ScrnRow := wYL+Row-1;     {Screen output row}
+
+    ShowBlock := FlagIsSet(hwFlags, hwBlockMark) and shBlockOn;
+    if ShowBlock then begin
+      BlockCharAttr := ColorMono(shBlockColor, shBlockMono);
+      BlockBegin := shBlockBegin;
+      BlockEnd := shBlockEnd;
+    end;
+
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+
+    with Line do begin
+      {Get initial video attribute}
+      Attr := hwSetAttr(FlexStk[FlexSP]);
+
+      Finished := False;
+      repeat
+        BufCh := hwBufP^[TextOfs];
+
+        case BufCh of
+          Attr1Toggle..Attr3Toggle, {Modifying video attribute}
+          XrefToggle :
+            if (FlexSP > 0) and (FlexStk[FlexSP] = BufCh) then begin
+              {Toggling current state off}
+              Dec(FlexSP);
+              Attr := hwSetAttr(FlexStk[FlexSP]);
+            end else if FlexSP < FlexStackSize then begin
+              {Changing to new attribute}
+              Inc(FlexSP);
+              FlexStk[FlexSP] := BufCh;
+              Attr := hwSetAttr(BufCh);
+            end;
+
+          IndexMarker :      {Index for cross-reference topic}
+            Inc(TextOfs, 2);
+
+          LineBrkMark,       {End of line}
+          PageBrkMark :      {End of page -- acts like end of line here}
+            Finished := True;
+
+          SectEndMark :      {End of section}
+            begin
+              Finished := True;
+              TextOfs := $FFFE;
+            end;
+
+        else
+          {Visible character?}
+          if LineCol >= shCurCol then
+            {In visible region of line}
+            if ScrnCol <= MaxCol then begin
+              if not ShowBlock then
+                NormCharAttr := Attr
+              else if (TextOfs <= BlockEnd) and (TextOfs >= BlockBegin) then
+                NormCharAttr := BlockCharAttr
+              else
+                NormCharAttr := Attr;
+              FastWrite(BufCh, ScrnRow, ScrnCol, NormCharAttr);
+              Inc(ScrnCol);
+            end;
+          Inc(LineCol);
+        end;
+
+        Inc(TextOfs);
+      until Finished;
+
+      {Clear remainder of line}
+      Attr := hwSetAttr(Char(0));
+      if ScrnCol <= MaxCol then begin
+        if not ShowBlock then
+          NormCharAttr := Attr                     {!!.01}
+        else if (TextOfs <= BlockEnd) and (TextOfs > BlockBegin) then
+          NormCharAttr := BlockCharAttr
+        else
+          NormCharAttr := Attr;
+        FastFill(MaxCol-ScrnCol+1, wBackChar, ScrnRow, ScrnCol, NormCharAttr);
+      end;
+    end;
+
+    {Fill padding areas}
+    if hwHelpPad > 0 then begin
+      FastFill(hwHelpPad, wBackChar, ScrnRow, wXL, Attr);
+      FastFill(hwHelpPad, wBackChar, ScrnRow, wXH-hwHelpPad+1, Attr);
+    end;
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+  end;
+

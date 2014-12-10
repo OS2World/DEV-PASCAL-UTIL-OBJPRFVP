@@ -1,0 +1,1844 @@
+{*********************************************************}
+{*                    OPPICK.IN2 1.30                    *}
+{*     Copyright (c) TurboPower Software 1987, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  procedure PickList.AddMoreHeader(PromptStr : String80;
+                                   Posn : HeaderPosType;
+                                   UpStr, DnStr, SepStr : String10;
+                                   UpPos, DnPos, SepPos : Byte);
+    {-Add a specialized more header to indicate more pick items}
+  var
+    Status : Word;
+  begin
+    {Allocate and initialize the more record}
+    Status := pkInitMoreRec(pkMoreRec, wFrame,
+                            PromptStr, Posn, UpStr, DnStr, SepStr,
+                            UpPos, DnPos, SepPos, ' ');
+    if Status <> 0 then
+      GotError(Status, emNullError);
+  end;
+
+  procedure PickList.AddSearchHeader(MaxLen : Byte; Posn : HeaderPosType);
+    {-Add a specialized search string header}
+  begin
+    with wFrame do begin
+      AddHeader('', Posn);
+      if frRes <> 0 then begin
+        GotError(epFatal+ecOutOfMemory, emInsufficientMemory);
+        Exit;
+      end;
+      pkSearchHdr := GetLastHeaderIndex;
+    end;
+    pkSearchLen := MaxLen;
+  end;
+
+  procedure PickList.pkInitPick;
+    {-Initialize instance for current width, height, video mode}
+  begin
+    {Get current width and height from window}
+    pkWidth := Width;
+    pkHeight := Height;
+
+    {Compute size-relative fields in pick list}
+    pkInitPickSize1;   {Not orientation-specific}
+    pkReinit(@Self);   {Orientation-specific}
+    pkInitPickSize2;   {Not orientation-specific, counts on pkReinit results}
+  end;
+
+  procedure PickList.pkDrawItem(Item : Word; Row, Col : Byte;
+                                Selected : Boolean);
+    {-Draw the specified item} {!!.13 modified for dividers}
+  var
+    ARow : Byte;
+    ACol : Byte;
+    Attr : Byte;
+    DCol : Byte;
+    IType : pkItemType;
+    Flen : Byte;
+    FDel : Byte;
+    PadWidth : Byte;
+    Dividers : Boolean;
+    NoPad : Boolean;
+    S : String;
+    Slen : Byte absolute S;
+
+    procedure TruncStr;                                {!!.30}
+    var                                                {!!.30}
+      FxLen : Byte;                                    {!!.30}
+                                                       {!!.30}
+    begin                                              {!!.30}
+      if FlagIsSet(pkFlags, pkFlexWrite) then begin    {!!.30}
+        FxLen := FlexLen(S);                           {!!.30}
+        while (FxLen > PadWidth) do begin              {!!.30}
+          if (S[SLen] > ^C) or (S[SLen] = #0) then     {!!.30}
+            Dec(FxLen);                                {!!.30}
+          Dec(SLen);                                   {!!.30}
+        end;                                           {!!.30}
+      end else                                         {!!.30}
+        SLen := PadWidth;                              {!!.30}
+    end;                                               {!!.30}
+
+  begin
+    {Build the item name}
+    IType := pkNormal;
+    if Item <= pkItems then begin
+      CompleteItemString(Item, pkDisplay, IType, S);
+      if FlagIsSet(pkFlags, pkFlexWrite) then begin
+        Flen := FlexLen(S);
+        FDel := SLen-FLen;
+      end else begin
+        Flen := Slen;
+        FDel := 0;
+      end;
+    end else begin
+      Slen := 0;
+      Flen := 0;
+      FDel := 0;
+    end;
+
+    {Force the current item to alternate attribute set}
+    if FlagIsSet(pkFlags, pkAltCurrent) then           {!!.03}
+      if Item = pkChoice then                          {!!.03}
+        IType := pkAlternate;                          {!!.03}
+
+    PadWidth := pkItemWidth;
+    if pkDividers then
+      dec(PadWidth);
+
+    NoPad := FlagIsSet(pkFlags, pkNoHighlightPad);     {!!.01}
+    if Flen >= PadWidth then                           {!!.01}
+      {Truncate string}                                {!!.01}
+      TruncStr                                         {!!.30}
+    else if not NoPad then                             {!!.01}
+      {Pad string}                                     {!!.01}
+      S := PadCh(S, wBackChar, PadWidth+FDel);         {!!.01}
+
+    {Write it}
+    ARow := wYL+Row-1;
+    ACol := wXL+pkItemWidth*(Col-1);
+    if FlagIsSet(pkFlags, pkFlexWrite) then
+      FlexWrite(S, ARow, ACol, pkColorPtr^[IType, Selected])
+    else
+      FastWrite(S, ARow, ACol, pkColorPtr^[IType, Selected][0]);
+
+    if NoPad and (PadWidth > Flen) then                      {!!.01}
+      {Fill remaining space, if any, with unselected color}  {!!.01}
+        FastFill(PadWidth-Flen, wBackChar, ARow, ACol+Flen,  {!!.01}
+                 pkColorPtr^[IType, False][0]);              {!!.01}
+
+    if pkDividers then
+      with FramePtr(ActiveFramePtr)^ do begin
+        Attr := ColorMono(frFrameColor, frFrameMono); {!!.22}
+        DCol := ACol+PadWidth;
+        if Col < pkCols then begin
+          {Draw dividers}
+          FastWrite(pkBarCh, ARow, DCol, Attr);
+          if (Row = 1) and (pkTopJoinCh <> NoFrameChar) then
+            FastWrite(pkTopJoinCh, wYL-1, DCol, Attr);
+          if (Row = pkHeight) and (pkBotJoinCh <> NoFrameChar) then
+            FastWrite(pkBotJoinCh, wYH+1, DCol, Attr);
+        end else if DCol <= wXH then begin
+          {Erase previous divider}
+          FastWrite(wBackChar, ARow, DCol, pkColorPtr^[IType, False][0]);
+          if (Row = 1) and (pkTopJoinCh <> NoFrameChar) then
+            FastWrite(frChars[frTT], wYL-1, DCol, Attr);
+          if (Row = pkHeight) and (pkBotJoinCh <> NoFrameChar) then
+            FastWrite(frChars[frBB], wYH+1, DCol, Attr);
+        end;
+      end;
+
+    {Position the cursor}
+    if Selected then
+      PositionCursor(Item, ACol, ARow);
+  end;
+
+  procedure PickList.pkPadRows;
+    {-Clear unused rows} {!!.13 modified for dividers}
+  var
+    R : Byte;
+    C : Byte;
+    A : Byte;
+    SaveFlags : Word;
+    S : String;
+  begin
+    if pkDividers then begin
+      {Draw dummy items in all unused rows}
+      SaveFlags := pkFlags;
+      pkFlags := pkFlags and not pkNoHighlightPad;
+      for R := pkHeight+1 to Height do
+        for C := 1 to pkCols do
+          pkDrawItem(pkItems+1, R, C, False);
+      pkFlags := SaveFlags;
+    end else begin
+      S := CharStr(wBackChar, Width);
+      A := pkColorPtr^[pkNormal, False][0];
+      for R := pkHeight+1 to Height do
+        FastWrite(S, wYL+R-1, wXL, A);
+    end;
+  end;
+
+  procedure PickList.pkPadCols;
+    {-Clear unused columns}
+  var
+    R : Byte;
+    C : Byte;
+    A : Byte;
+    S : String;
+  begin
+    C := wXL+pkCols*pkItemWidth;
+    S := CharStr(wBackChar, Width-pkCols*pkItemWidth);
+    A := pkColorPtr^[pkNormal, False][0];
+    for R := 1 to pkHeight do
+      FastWrite(S, wYL+R-1, C, A);
+  end;
+
+  procedure PickList.pkDrawPage(ShowSelected : Boolean);
+    {-Draw the complete visible page}
+  var
+    R : Byte;
+    C : Byte;
+  begin
+    for C := 1 to pkCols do
+      for R := 1 to pkHeight do
+        pkDrawItem(pkGetCurrent(pkFirst, R, C, @Self),
+                   R, C, ShowSelected and (R = pkRow) and (C = pkCol));
+    if pkHeight < Height then
+      {Clear unused portion of window}
+      pkPadRows;
+    if pkCols*pkItemWidth < Width then
+      {Clear unused portion of window}
+      pkPadCols;
+  end;
+
+  procedure PickList.pkScrollUp(pChoice : Word; pRow, pCol : Byte);
+    {-Redraw page for special case of one-row scroll up}
+  var
+    C : Byte;
+    Sel : Boolean;
+    SaveYH : Byte;
+  begin
+    {Remove existing highlight}
+    pkDrawItem(pChoice, pRow, pCol, False);
+    {Scroll}
+    SaveYH := wYH;
+    wYH := wYL+pkHeight-1;
+    ScrollVert(-1);
+    wYH := SaveYH;
+    {Draw new row}
+    Sel := (pkRow = 1);
+    for C := 1 to pkCols do
+      pkDrawItem(pkGetCurrent(pkFirst, 1, C, @Self),
+                 1, C, Sel and (C = pkCol));
+    {Assure current item is highlighted}        {!!.01}
+    if not Sel then                             {!!.01}
+      pkDrawItem(pkChoice, pkRow, pkCol, True); {!!.01}
+  end;
+
+  procedure PickList.pkScrollDown(pChoice : Word; pRow, pCol : Byte);
+    {-Redraw page for special case of one-row scroll down}
+
+  var
+    C : Byte;
+    Sel : Boolean;
+    SaveYH : Byte;
+  begin
+    {Remove existing highlight}
+    pkDrawItem(pChoice, pRow, pCol, False);
+    SaveYH := wYH;
+    wYH := wYL+pkHeight-1;
+    ScrollVert(+1);
+    wYH := SaveYH;
+    Sel := (pkRow = pkHeight);
+    for C := 1 to pkCols do
+      pkDrawItem(pkGetCurrent(pkFirst, pkHeight, C, @Self),
+                 pkHeight, C, Sel and (C = pkCol));
+    {Assure current item is highlighted}
+    if not Sel then
+      pkDrawItem(pkChoice, pkRow, pkCol, True);
+  end;
+
+  procedure PickList.pkScrollLeft(pChoice : Word; pRow, pCol : Byte);
+    {-Redraw page for special case of one-column scroll left}
+
+  var
+    R : Byte;
+    Sel : Boolean;
+  begin
+    if pkDividers then
+      {Can't optimize the speed because the dividers get messed up}
+      pkDrawPage(True)
+    else begin
+      {Remove existing highlight}
+      pkDrawItem(pChoice, pRow, pCol, False);
+      {Scroll existing contents, leaving excess at right edge unchanged}
+      rwScrollHorizPart(-pkItemWidth, wXL+pkCols*pkItemWidth-1);
+      Sel := (pkCol = 1);
+      for R := 1 to pkHeight do
+        pkDrawItem(pkGetCurrent(pkFirst, R, 1, @Self),
+                   R, 1, Sel and (R = pkRow));
+      {Assure current item is highlighted}        {!!.02}
+      if not Sel then                             {!!.02}
+        pkDrawItem(pkChoice, pkRow, pkCol, True); {!!.02}
+    end;
+  end;
+
+  procedure PickList.pkScrollRight(pChoice : Word; pRow, pCol : Byte);
+    {-Redraw page for special case of one-column scroll right}
+    {!!.13 modified for dividers}
+  var
+    R : Byte;
+    Sel : Boolean;
+  begin
+    if pkDividers then
+      {Can't optimize the speed because the dividers get messed up}
+      pkDrawPage(True)
+    else begin
+      {Remove existing highlight}
+      pkDrawItem(pChoice, pRow, pCol, False);
+      {Scroll existing contents, leaving excess at right edge unchanged}
+      rwScrollHorizPart(pkItemWidth, wXL+pkCols*pkItemWidth-1);
+      Sel := (pkCol = pkCols);
+      for R := 1 to pkHeight do
+        pkDrawItem(pkGetCurrent(pkFirst, R, pkCols, @Self),
+                   R, pkCols, Sel and (R = pkRow));
+      {Assure current item is highlighted}
+      if not Sel then
+        pkDrawItem(pkChoice, pkRow, pkCol, True);
+    end;
+  end;
+
+  procedure PickList.UpdateContents;
+    {-Redraw the complete pick window}
+    {$IFDEF UseMouse}
+  var
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    if pkItems = 0 then begin
+      {Won't work with no items}
+      Clear;
+      StackWindow.UpdateContents; {!!.01}
+      Exit;
+    end;
+
+    if FlagIsSet(pkFlags, pkMultiChoice) then begin
+      {Allocate bit set (if not already done) to mark selected items}
+      AllocateSelectSet(pkItems);
+      if ClassifyError(cwGetLastError) = etFatal then
+        Exit;
+    end;
+
+    if not FlagIsSet(pkSecFlags, pkPickActive) then {!!.01}
+      {Set up for current width, height, video mode}
+      pkInitPick;
+
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+
+    {Draw the items visible in the current window}
+    pkDrawPage(FlagIsSet(pkFlags, pkDrawActive) {True}   {!!.01}
+               or FlagIsSet(pkSecFlags, pkPickActive));  {!!.02}
+
+    {Update the more header, if any}
+    if FlagIsSet(pkFlags, pkDrawActive) then {!!.01}
+      if pkMoreRec.HdrNum <> 255 then
+        if ActiveFramePtr = @wFrame then     {!!.13}
+          pkUpdateMoreRec(pkMoreRec,
+                          (pkFirst > 1),
+                          (pkFirst < pkMaxFirst),
+                          (pkItemRows > pkHeight));
+
+    {$IFDEF UseScrollBars}
+    {Update scroll bars}
+    pkUpdScrBar(@Self);
+    {$ENDIF}
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+
+    {Update child windows if any} {!!.01}
+    StackWindow.UpdateContents;   {!!.01}
+  end;
+
+  procedure PickList.ItemString(Item : Word;
+                                Mode : pkMode;
+                                var IType : pkItemType;
+                                var IString : String);
+    {-Supplies each item string when the list is displayed or searched}
+  begin
+    {Call via procedure pointer}
+    pkString(Item, Mode, IType, IString, @Self);
+  end;
+
+  procedure PickList.CompleteItemString(Item : Word; Mode : pkMode;
+                                        var IType : pkItemType;
+                                        var IString : String);
+    {-Supplies, pads and marks item string}
+  var
+    Sel : Boolean;
+  begin
+    if not FlagIsSet(pkSecFlags, pkItemStrActive) then begin     {!!.01}
+      if FlagIsSet(pkSecFlags, pkFakingOneItem) then             {!!.03}
+        IString := ''                                            {!!.03}
+      else begin                                                 {!!.03}
+        SetFlag(pkSecFlags, pkItemStrActive);                    {!!.01}
+        ItemString(Item, Mode, IType, IString);
+        if Mode = pkDisplay then begin
+          if FlagIsSet(pkSecFlags, pkSelStrings) then begin      {!!.03}
+            {Have selection strings}                             {!!.03}
+            Sel := False;                                        {!!.03}
+            if FlagIsSet(pkFlags, pkBitSetAlloc) then begin      {!!.03}
+              if pkSelectSet.BitIsSet(Item) then                 {!!.03}
+                Sel := True;                                     {!!.03}
+            end else if Item = pkChoice then                     {!!.03}
+              Sel := True;                                       {!!.03}
+            if Sel then                                          {!!.03}
+              IString := pkLeftSel+IString+pkRightSel
+            else if FlagIsSet(pkFlags, pkFlexWrite) then         {!!.01}
+              IString := CharStr(wBackChar, FlexLen(pkLeftSel))+ {!!.01}
+                         IString+                                {!!.01}
+                         CharStr(wBackChar, FlexLen(pkRightSel)) {!!.01}
+            else
+              IString := CharStr(wBackChar, Length(pkLeftSel))+
+                         IString+
+                         CharStr(wBackChar, Length(pkRightSel));
+          end;
+          if FlagIsSet(pkSecFlags, pkPadStrings) then            {!!.03}
+            IString := CharStr(wBackChar, pkLeftPad)+
+                       IString+
+                       CharStr(wBackChar, pkRightPad);
+        end;
+        ClearFlag(pkSecFlags, pkItemStrActive);                  {!!.01}
+      end;                                                       {!!.03}
+    end else begin                                               {!!.01}
+      {Attempted re-entrant call}                                {!!.01}
+      IType := pkProtected;                                      {!!.01}
+      IString := '';                                             {!!.01}
+    end;                                                         {!!.01}
+  end;
+
+  procedure PickList.PreMove;
+    {-Called just prior to getting each keyboard command}
+  begin
+    {Call via procedure pointer}
+    pkMove(@Self);
+  end;
+
+  function PickList.ItemSearch : Boolean;
+    {-Called each time an alphanumeric character is entered to search list}
+  begin
+    {Call via procedure pointer}
+    ItemSearch := pkSearcher(@Self);
+  end;
+
+  function PickList.OKToChangeChoice : Boolean;   {!!.13}
+    {-Called just prior to changing to a new choice in Process}
+  begin
+    OKToChangeChoice := True;
+  end;
+
+  procedure PickList.PositionCursor(Item : Word; ACol, ARow : Byte); {!!.13}
+    {-Position the hardware cursor for selected item}
+  begin
+    GotoXYAbs(ACol, ARow);
+  end;
+
+  procedure PickList.pkCheckProtected(var GetCmd : Boolean;
+                                      var bChoice, iChoice : Word);
+    {-If current item is protected, decide what to do about it}
+  begin
+    if IsProtected(pkChoice) then begin
+      {Current choice is protected}
+      if GetCmd then begin
+        {Repeat the last command, except for ccPageUp and ccPageDn}  {!!.22}
+        case cwCmd of                                                {!!.22}
+          ccPageUp : cwCmd := ccUp;                                  {!!.22}
+          ccPageDn : cwCmd := ccDown;                                {!!.22}
+        end;                                                         {!!.22}
+        bChoice := pkChoice;
+        iChoice := bChoice;
+        GetCmd := False;
+      end else if (pkChoice = bChoice) then begin
+        {Repeating last command didn't help, search exhaustively}
+        pkGetUnprotected(cwCmd);
+        {Note: if all items are protected, this will return with a
+         protected item selected}
+        GetCmd := True;
+      end else begin
+        {Choice changed, still worth trying again}
+        bChoice := pkChoice;
+        if bChoice = iChoice then begin
+          {Reached initial choice again, search exhaustively}
+          pkGetUnprotected(cwCmd);
+          {Note: if all items are protected, this will return with a
+           protected item selected}
+          GetCmd := True;
+        end;
+      end;
+    end else
+      GetCmd := True;
+  end;
+
+  {$IFDEF UseMouse}
+  {!!.03} {Reorganization to support mouse dragging}
+  procedure PickList.pkMoveToNewRowCol(nRow, nCol : Byte);
+    {-Move to new row and column if possible}
+  var
+    nChoice : Word;
+  begin
+    if (nRow >= 1) and (nRow <= pkHeight) and
+       (nCol >= 1) and (nCol <= pkCols) then begin
+      {Move to item if possible}
+      nChoice := pkGetCurrent(pkFirst, nRow, nCol, @Self);
+      if not IsProtected(nChoice) then begin
+        {Selected item within list and not protected}
+        pkCol := nCol;
+        pkRow := nRow;
+        pkChoice := nChoice;
+      end;
+    end;
+  end;
+
+  function PickList.pkProcessMouseCommand(var Cmd : Word;
+                                          Multi : Boolean) : Boolean;
+    {-Process ccMouseDown/ccMouseSel commands.
+      Returns True to return control to user.}
+  var
+    L : LongInt;
+    Choice : Word;    {!!.12}
+    FramePos : FramePosType;
+    HotCode : Byte;
+    nRow : Byte;
+    nCol : Byte;
+    Selected : Boolean;
+    SameItem : Boolean;
+    Dragging : Boolean;
+  begin
+    {Assume we won't exit Process}
+    pkProcessMouseCommand := False;
+
+    {Determine position of mouse}
+    L := cwMouseResults(Cmd, FramePos, HotCode); {!!.13}
+
+    {Should mouse event be ignored?}
+    if cwIgnoreMouseEvent(Dragging, Cmd, FramePos, HotCode) then
+      Exit;
+
+    if HotCode = hsNone then begin
+      {Not a hot spot}
+      if FramePos = frInsideActive then begin
+        {Inside active window}
+
+        {Get new row and column and see if the same item as before}
+        nCol := 1+((MouseKeyWordX+MouseXLo-wXL) div pkItemWidth);
+        nRow := MouseKeyWordY+MouseYLo-wYL+1;
+        SameItem := (nCol = pkCol) and (nRow = pkRow);
+
+        if not SameItem then begin
+          {Move to new item}
+          pkMoveToNewRowCol(nRow, nCol);
+          if (nCol = pkCol) and (nRow = pkRow) then {!!.20}
+            if FlagIsSet(pkFlags, pkSelectOnClick) then
+              {Force immediate selection}
+              SameItem := True
+            else if Cmd <> ccMouseSel then
+              {Set flag that requires double click when dragging}
+              SetFlag(pkSecFlags, pkChangedItems);
+        end;
+
+        if Cmd = ccMouseSel then
+          {Button was released}
+          if SameItem then
+            if FlagIsSet(pkSecFlags, pkChangedItems) then
+              {Clear double click flag}
+              ClearFlag(pkSecFlags, pkChangedItems)
+            else if not IsSemiProtected(pkChoice) then {!!.03}
+              {Item can be selected}
+              if Multi then begin
+                {Multichoice list, toggle the item}
+                Choice := pkChoice; {Save choice in case it gets changed}{!!.12}
+                Selected := pkSelectSet.BitIsSet(Choice);                {!!.12}
+                if Selected then
+                  DeselectItem(Choice)                                   {!!.12}
+                else
+                  SelectItem(Choice);                                    {!!.12}
+                if pkSelectSet.BitIsSet(Choice) = Selected then begin    {!!.12}
+                  {Bit didn't toggle, let caller take control}
+                  pkProcessMouseCommand := True;
+                  Cmd := ccSelect;
+                end else
+                  SetFlag(pkSecFlags, pkRedrawOne); {!!.01}
+              end else begin
+                {Select the item}
+                Cmd := ccSelect;
+                pkProcessMouseCommand := True;
+              end;
+
+      end else {if (not Dragging) or (Cmd = ccMouseDown) then} {!!.13}
+        {Button was pressed outside of active window, not on a hot spot}
+        pkProcessMouseCommand := LongFlagIsSet(wFlags, wAllMouseEvents);
+
+    end else if Dragging and (Cmd = ccMouseSel) then
+      {A hot spot, but this wasn't the right kind of mouse event}
+      Exit;
+
+    case HotCode of
+      hsDecV :           {Decrement vertical scroll}
+        begin
+          if FlagIsSet(pkFlags, pkMousePage) then
+            Cmd := ccPageUp
+          else
+            Cmd := pkCheckWrap(ccUp);
+          pkProcessMouseCommand := pkProcessCursorCommand(Cmd);
+        end;
+
+      hsDecH :           {Decrement horizontal scroll}
+        begin
+          Cmd := pkCheckWrap(ccLeft);
+          pkProcessMouseCommand := pkProcessCursorCommand(Cmd);
+        end;
+
+      hsIncV :           {Increment vertical scroll}
+        begin
+          if FlagIsSet(pkFlags, pkMousePage) then
+            Cmd := ccPageDn
+          else
+            Cmd := pkCheckWrap(ccDown);
+          pkProcessMouseCommand := pkProcessCursorCommand(Cmd);
+        end;
+
+      hsIncH :           {Increment horizontal scroll}
+        begin
+          Cmd := pkCheckWrap(ccRight);
+          pkProcessMouseCommand := pkProcessCursorCommand(Cmd);
+        end;
+
+      {$IFDEF UseScrollBars}
+      hsBar :            {Slider portion of a scroll bar}
+        begin {!!.02}
+          pkSetScroll(FramePos, MouseKeyWordX+MouseXLo,
+                      MouseKeyWordY+MouseYLo, L, @Self);
+          {!!.02} {Following statement added to handle protected items better}
+          if pkChoice = pkItems then
+            Cmd := ccEnd
+          else if pkChoice = 1 then
+            Cmd := ccHome
+          else
+            Cmd := ccNone;
+        end; {!!.02}
+      {$ENDIF}
+
+      hsSpot,            {Single character hot spot}
+      hsRegion0..255 :   {User-defined region relative to a frame}
+        pkProcessMouseCommand := (Cmd <> ccMouseAuto); {!!}
+    end;
+  end;
+  {$ENDIF}
+
+  function SingleChoiceCommand(var Cmd : Word; P : PickListPtr) : Boolean;
+    {-Evaluate a command, returning True if PickList should exit}
+  var
+    HelpTopic : Word;
+    SavePkFlags : Word;
+  begin
+    SingleChoiceCommand := False;
+    with P^ do
+      case Cmd of
+        ccNone :                  {Invalid keystroke}
+          pkResetSearchStr;
+
+        ccIns,                    {Select one item}
+        ccDel,                    {Deselect one item}
+        ccToggle,                 {Toggle one item}
+        ccBlkToggle,              {Toggle all items}
+        ccBlkBegin,               {Mark start of block}
+        ccBlkEnd,                 {Mark end of block}
+        ccRestore,                {Clear all selections}
+        ccChar :                  {Alphanumeric, possibly used for searching}
+          if FlagIsSet(pkSecFlags, pkEvaluating) or OKToChangeChoice then begin {!!.13}
+            Cmd := ccChar;        {Map all to character}
+            SingleChoiceCommand := ItemSearch;
+          end;
+
+        ccUp, ccDown,             {Cursor movements}
+        ccPageUp, ccPageDn,
+        ccHome, ccEnd,
+        ccLeft, ccRight,
+        ccNextXref, ccPrevXref,     {!!.03}
+        ccTopOfFile, ccEndOfFile :  {!!.13}
+          if FlagIsSet(pkSecFlags, pkEvaluating) or OKToChangeChoice then begin {!!.13}
+            pkResetSearchStr;
+            SingleChoiceCommand := pkProcessCursorCommand(Cmd);
+          end;
+
+        {$IFDEF UseMouse}
+        ccMouseSel,               {Mouse selection - left button up}
+        ccMouseDown,              {Mouse left button down} {!!.03}
+        ccMouseAuto  :            {Mouse moved with left down or autorepeat} {!!.03}
+          if FlagIsSet(pkSecFlags, pkEvaluating) or OKToChangeChoice then begin {!!.13}
+            pkResetSearchStr;
+            SingleChoiceCommand := pkProcessMouseCommand(Cmd, False);
+          end;
+        {$ENDIF}
+
+        ccHelp :                  {Help}
+          begin
+            if FlagIsSet(pkFlags, pkUseItemForTopic) then
+              {Pass the current item number as the help topic}
+              HelpTopic := pkChoice
+            else
+              {Pass the standard window code as the topic}
+              HelpTopic := wHelpIndex;
+
+            {Assure that current topic is highlighted on return from help}
+            SavePkFlags := pkFlags;
+            SetFlag(pkFlags, pkDrawActive);
+            RequestHelp(HelpTopic);
+            pkFlags := SavePkFlags;
+          end;
+
+        ccSelect : {Select}
+          if not IsSemiProtected(pkChoice) then {!!.03}
+            SingleChoiceCommand := True;
+
+        ccQuit,   {Exit}
+        ccUser0..$FFFF :  {User commands}
+          SingleChoiceCommand := True;
+
+      else
+        if (Cmd <= 255) and (GetExitCommandPtr <> nil) then
+          {Possibly a special exit command defined by a derived object}
+          if (Cmd in GetExitCommandPtr^) then
+            SingleChoiceCommand := True
+          else
+            pkResetSearchStr;
+
+          {Examples of special exit commands --
+            OPHELP:  ccPrevTopic
+            OPENTRY: ccTab, ccBackTab, ccNextField, ccWordLeft, ccWordRight,
+                     ccPrevField, ccNextRec, ccPrevRec, ccFirstFld, ccLastFld,
+                     ccNested, ccDone }
+      end;
+  end;
+
+  function MultipleChoiceCommand(var Cmd : Word; P : PickListPtr) : Boolean;
+    {-Evaluate a command, returning True if PickList should exit}
+  var
+    HelpTopic : Word;
+    SavePkFlags : Word;
+    N : Word;
+  begin
+    MultipleChoiceCommand := False;
+
+    with P^ do begin
+      case Cmd of
+        ccNone :                  {Invalid keystroke}
+          pkResetSearchStr;
+
+        ccChar :                  {Alphanumeric, possibly used for searching}
+          if FlagIsSet(pkSecFlags, pkEvaluating) or OKToChangeChoice then {!!.13}
+            MultipleChoiceCommand := ItemSearch;
+
+        ccUp, ccDown,             {Cursor movements}
+        ccPageUp, ccPageDn,
+        ccHome, ccEnd,
+        ccLeft, ccRight,
+        ccNextXref, ccPrevXref,     {!!.03}
+        ccTopOfFile, ccEndOfFile :  {!!.13}
+          if FlagIsSet(pkSecFlags, pkEvaluating) or OKToChangeChoice then begin {!!.13}
+            pkResetSearchStr;
+            MultipleChoiceCommand := pkProcessCursorCommand(Cmd);
+          end;
+
+        ccIns :                   {Select one item}
+          begin
+            SelectItem(pkChoice);
+            SetFlag(pkSecFlags, pkRedrawOne); {!!.01}
+          end;
+
+        ccDel :                   {Deselect one item}
+          begin
+            DeselectItem(pkChoice);
+            SetFlag(pkSecFlags, pkRedrawOne); {!!.01}
+          end;
+
+        ccToggle :                {Toggle one item}
+          begin
+            if pkSelectSet.BitIsSet(pkChoice) then
+              DeselectItem(pkChoice)
+            else
+              SelectItem(pkChoice);
+            SetFlag(pkSecFlags, pkRedrawOne); {!!.01}
+          end;
+
+        ccBlkToggle :             {Toggle all items}
+          begin
+            if GetSelectedCount {pkSelectSet.BitsSet} > 0 then {!!.12}
+              for N := 1 to pkItems do
+                DeselectItem(N)
+            else
+              for N := 1 to pkItems do
+                SelectItem(N);
+            SetFlag(pkSecFlags, pkRedrawPage);   {!!.01}
+          end;
+
+        ccBlkBegin :              {Mark start of block}
+          pkBlkStart := pkChoice;
+
+        ccBlkEnd :                {Mark end of block}
+          if pkBlkStart <> 0 then begin
+            if pkChoice >= pkBlkStart then begin
+              for N := pkBlkStart to pkChoice do
+                SelectItem(N);
+              SetFlag(pkSecFlags, pkRedrawPage); {!!.01}
+            end;
+            pkBlkStart := 0;
+          end;
+
+        ccRestore :               {Clear all selections}
+          begin
+            for N := 1 to pkItems do
+              DeselectItem(N);
+            SetFlag(pkSecFlags, pkRedrawPage); {!!.01}
+          end;
+
+        {$IFDEF UseMouse}
+        ccMouseSel,               {Select with mouse, mouse left button up}
+        ccMouseDown,              {Mouse left button down} {!!.03}
+        ccMouseAuto  :            {Mouse moved with left down or autorepeat} {!!.03}
+          if FlagIsSet(pkSecFlags, pkEvaluating) or OKToChangeChoice then begin {!!.13}
+            pkResetSearchStr;
+            MultipleChoiceCommand := pkProcessMouseCommand(Cmd, True);
+          end;
+        {$ENDIF}
+
+        ccHelp :                  {Help}
+          begin
+            if FlagIsSet(pkFlags, pkUseItemForTopic) then
+              {Pass the current item number as the help topic}
+              HelpTopic := pkChoice
+            else
+              {Pass the standard window code as the topic}
+              HelpTopic := wHelpIndex;
+            {Assure that current topic is highlighted on return from help}
+            SavePkFlags := pkFlags;
+            SetFlag(pkFlags, pkDrawActive);
+            RequestHelp(HelpTopic);
+            pkFlags := SavePkFlags;
+          end;
+
+        ccSelect :                {Select}
+          if not IsSemiProtected(pkChoice) then {!!.03}
+            MultipleChoiceCommand := True;
+
+        ccQuit,                   {Exit}
+        ccUser0..$FFFF :          {User exit commands}
+          MultipleChoiceCommand := True;
+
+      else
+        if (Cmd <= 255) and (GetExitCommandPtr <> nil) then
+          {Possibly a special exit command defined by a derived object}
+          if (Cmd in GetExitCommandPtr^) then
+            MultipleChoiceCommand := True
+          else
+            pkResetSearchStr;
+
+          {Examples of special exit commands --
+            OPHELP: ccPrevTopic
+            OPENTRY: ccTab, ccBackTab, ccNextField, ccWordLeft, ccWordRight,
+                     ccPrevField, ccNextRec, ccPrevRec, ccFirstFld, ccLastFld,
+                     ccNested, ccDone }
+      end;
+    end;
+  end;
+
+  procedure SingleChoice(P : PickListPtr);
+    {-Initialize for single choice pick list}
+  begin
+    with P^ do begin
+      ClearFlag(pkFlags, pkMultiChoice);
+      pkCommand := SingleChoiceCommand;
+    end;
+  end;
+
+  procedure MultipleChoice(P : PickListPtr);
+    {-Initialize for multiple choice pick list}
+  begin
+    with P^ do begin
+      SetFlag(pkFlags, pkMultiChoice);
+      pkCommand := MultipleChoiceCommand;
+    end;
+  end;
+
+  function PickList.pkCheckWrap(Cmd : Word) : Word;
+    {-See if Cmd will cause highlight to wrap. Return ccNone if so}
+  var
+    pFirst : Word;
+    pChoice : Word;
+    bChoice : Word;
+    iChoice : Word;
+    pRow : Byte;
+    pCol : Byte;
+    pCmd : Word;
+    Finished : Boolean;
+    GetCmd : Boolean;
+  begin
+    {Save previous values}
+    pChoice := pkChoice;
+    pFirst := pkFirst;
+    pRow := pkRow;
+    pCol := pkCol;
+    pCmd := Cmd;
+
+    Finished := False;
+    GetCmd := True;
+    repeat
+      Finished := SingleChoiceCommand(Cmd, @Self);
+      if not Finished then
+        {Determine what to do about protected items}
+        pkCheckProtected(GetCmd, bChoice, iChoice);
+    until Finished or GetCmd;
+
+    case Cmd of
+      ccUp :
+        if pkRow > pRow then
+          pCmd := ccNone;
+      ccDown :
+        if pkRow < pRow then
+          pCmd := ccNone;
+      ccLeft :
+        if pkCol > pCol then
+          pCmd := ccNone;
+      ccRight :
+        if pkCol < pCol then
+          pCmd := ccNone;
+    end;
+
+    {Restore the original settings}
+    pkChoice := pChoice;
+    pkFirst := pFirst;
+    pkRow := pRow;
+    pkCol := pCol;
+
+    {Return the command to execute}
+    pkCheckWrap := pCmd;
+  end;
+
+  procedure PickList.EvaluateCmd(var Cmd : Word;
+                                 var NextChoice : Word;
+                                 var NextFirst : Word);
+    {-Compute next item based on specified Cmd}
+  var
+    pFirst : Word;
+    pChoice : Word;
+    bChoice : Word;
+    iChoice : Word;
+    pRow : Byte;
+    pCol : Byte;
+    Finished : Boolean;
+    GetCmd : Boolean;
+  begin
+    {Set up for current width, height, video mode}
+    pkInitPick;
+
+    {Save previous values}
+    pChoice := pkChoice;
+    pFirst := pkFirst;
+    pRow := pkRow;
+    pCol := pkCol;
+    SetFlag(pkSecFlags, pkEvaluating);
+
+    Finished := False;
+    GetCmd := True;
+    repeat
+      Finished := SingleChoiceCommand(Cmd, @Self);
+      if not Finished then
+        {Determine what to do about protected items}
+        pkCheckProtected(GetCmd, bChoice, iChoice);
+    until Finished or GetCmd;
+
+    {Return the choice}
+    NextChoice := pkChoice;
+    NextFirst := pkFirst;
+
+    {Restore the original settings}
+    ClearFlag(pkSecFlags, pkEvaluating);
+    pkChoice := pChoice;
+    pkFirst := pFirst;
+    pkRow := pRow;
+    pkCol := pCol;
+  end;
+
+  procedure PickList.pkClearMoreRec(var MRec : MoreRec);
+    {-Clear a MoreRec}
+  begin
+    FillChar(MRec, SizeOf(MoreRec), 0);
+    MRec.HdrNum := 255;
+  end;
+
+  function PickList.pkInitMoreRec(var MRec : MoreRec; var Fr : Frame;
+                                  var PromptStr : String80;
+                                  Posn : HeaderPosType;
+                                  var UpStr, DnStr, SepStr : String10;
+                                  UpPos, DnPos, SepPos : Byte;
+                                  Fill : Char) : Word;
+    {-Allocate and initialize a "more" header}
+  var
+    HPtr : HeaderPtr;
+  begin
+    if MRec.HdrNum <> 255 then begin
+      {Just disable previous header so other header numbers aren't disturbed}
+      Fr.DisableHeader(MRec.HdrNum, True); {!!.01}
+      pkDoneMoreRec(MRec);
+    end;
+
+    {Prepare in case of error}
+    pkClearMoreRec(MRec);
+
+    with MRec do begin
+      {Range check the position values}
+      pkInitMoreRec := epNonFatal+ecBadParam;
+      if Length(UpStr) <> 0 then
+        if (UpPos = 0) or (UpPos+Length(UpStr)-1 > Length(PromptStr)) then
+          Exit;
+      if Length(DnStr) <> 0 then
+        if (DnPos = 0) or (DnPos+Length(DnStr)-1 > Length(PromptStr)) then
+          Exit;
+      if Length(SepStr) <> 0 then
+        if (SepPos = 0) or (SepPos+Length(SepStr)-1 > Length(PromptStr)) then
+          Exit;
+
+      {Allocate space for the strings}
+      pkInitMoreRec := epNonFatal+ecOutOfMemory;
+      if not GetMemCheck(MoreStrP, Length(PromptStr)+1) then
+        Exit;
+      MoreStrP^ := PromptStr;
+      if not GetMemCheck(UpStrP, Length(UpStr)+1) then
+        Exit;
+      UpStrP^ := UpStr;
+      if not GetMemCheck(DnStrP, Length(DnStr)+1) then
+        Exit;
+      DnStrP^ := DnStr;
+      if not GetMemCheck(SepStrP, Length(SepStr)+1) then
+        Exit;
+      SepStrP^ := SepStr;
+
+      {Store the positions and fill character}
+      UpP := UpPos;
+      DnP := DnPos;
+      SepP := SepPos;
+      FillCh := Fill;
+
+      {Add the header}
+      with Fr do begin
+        {Leave the header empty until called for}
+        AddHeader('', Posn);
+        if frRes <> 0 then
+          Exit;
+        HdrNum := GetLastHeaderIndex;
+      end;
+    end;
+    pkInitMoreRec := 0;
+  end;
+
+  procedure PickList.pkDoneMoreRec(var MRec : MoreRec);
+    {-Dispose of a MoreRec}
+  begin
+    with MRec do begin
+      if MoreStrP <> nil then                                          {!!.20}
+        FreeMemCheck(MoreStrP, Length(MoreStrP^)+1);
+      if UpStrP <> nil then                                            {!!.20}
+        FreeMemCheck(UpStrP, Length(UpStrP^)+1);
+      if DnStrP <> nil then                                            {!!.20}
+        FreeMemCheck(DnStrP, Length(DnStrP^)+1);
+      if SepStrP <> nil then                                           {!!.20}
+        FreeMemCheck(SepStrP, Length(SepStrP^)+1);
+    end;
+  end;
+
+  procedure PickList.pkUpdateMoreRec(var MRec : MoreRec;
+                                     MoreUp, MoreDown, HaveMore : Boolean);
+    {-Update more marker}
+  var
+    LenUp : Byte;
+    LenDn : Byte;
+    LenSep : Byte;
+    oUp : String10;
+    oDn : String10;
+    nUp : String10;
+    nDn : String10;
+    nSp : String10; {!!.22}
+  begin
+    if HaveMore then
+      with MRec do
+        if rwValidMainHeader(HdrNum) then begin {!!.01}
+          LenUp := Length(UpStrP^);
+          LenDn := Length(DnStrP^);
+
+          oUp := Copy(MoreStrP^, UpP, LenUp);
+          oDn := Copy(MoreStrP^, DnP, LenDn);
+
+          if MoreUp then
+            nUp := UpStrP^
+          else
+            nUp := CharStr(FillCh, LenUp);
+
+          if MoreDown then
+            nDn := DnStrP^
+          else
+            nDn := CharStr(FillCh, LenDn);
+
+          if (nUp <> oUp) or (nDn <> oDn) then begin
+            {Header will change}
+            {!!.22 following code reorganized to allow overlapping substrings}
+            LenSep := Length(SepStrP^);
+            if MoreUp and MoreDown then
+              nSp := SepStrP^
+            else
+              nSp := CharStr(FillCh, LenSep);
+
+            {Move the new strings into place}
+            Move(nSp[1], MoreStrP^[SepP], LenSep);
+            Move(nUp[1], MoreStrP^[UpP], LenUp);
+            Move(nDn[1], MoreStrP^[DnP], LenDn);
+
+            {In case the strings overlap, assure the highest priority is last}
+            if MoreUp and MoreDown then
+              Move(nSp[1], MoreStrP^[SepP], LenSep)
+            else if MoreUp then
+              Move(nUp[1], MoreStrP^[UpP], LenUp)
+            else if MoreDown then
+              Move(nDn[1], MoreStrP^[DnP], LenDn);
+
+            ChangeHeader(HdrNum, MoreStrP^);
+          end;
+        end;
+  end;
+
+  procedure PickList.pkResetMoreRec(var MRec : MoreRec; HaveMore : Boolean);
+    {-Fill the more string with fill characters}
+  begin
+    with MRec do
+      if rwValidMainHeader(HdrNum) then {!!.01}
+        if HaveMore then begin
+          FillChar(MoreStrP^[UpP], Length(UpStrP^), FillCh);
+          FillChar(MoreStrP^[DnP], Length(DnStrP^), FillCh);
+        end else
+          ChangeHeader(HdrNum, '');
+  end;
+
+{$IFDEF UseStreams}
+
+  function LoadStr(var P : StringPtr; var S : IdStream) : Word;
+    {-Load and allocate a string from a stream}
+  var
+    InStr : String;
+  begin
+    InStr := S.ReadString;
+    if S.PeekStatus <> 0 then begin
+      LoadStr := S.PeekStatus;
+      Exit;
+    end;
+    if not GetMemCheck(P, Length(InStr)+1) then begin
+      LoadStr := epFatal+ecOutOfMemory;
+      Exit;
+    end;
+    P^ := InStr;
+    LoadStr := 0;
+  end;
+
+  function PickList.pkLoadMoreRec(var MRec : MoreRec; var Fr : Frame;
+                                  var S : IdStream) : Word;
+    {-Load a MoreRec from a stream}
+  var
+    Status : Word;
+  begin
+    pkClearMoreRec(MRec);
+    with MRec do begin
+      {Read the header number to detect if anything else is appropriate}
+      S.Read(HdrNum, SizeOf(Byte));
+      Status := S.PeekStatus;
+      if Status <> 0 then begin
+        pkLoadMoreRec := Status;
+        Exit;
+      end;
+      if HdrNum <> 255 then begin
+        {Read non-string portions}
+        S.ReadRange(UpP, UpStrP);
+
+        {Read the strings}
+        Status := LoadStr(UpStrP, S);
+        if Status <> 0 then begin
+          pkLoadMoreRec := Status;
+          Exit;
+        end;
+        Status := LoadStr(DnStrP, S);
+        if Status <> 0 then begin
+          pkLoadMoreRec := Status;
+          Exit;
+        end;
+        Status := LoadStr(SepStrP, S);
+        if Status <> 0 then begin
+          pkLoadMoreRec := Status;
+          Exit;
+        end;
+        Status := LoadStr(MoreStrP, S);
+        if Status <> 0 then begin
+          pkLoadMoreRec := Status;
+          Exit;
+        end;
+      end;
+    end;
+    pkLoadMoreRec := 0;
+  end;
+
+  procedure PickList.pkStoreMoreRec(var MRec : MoreRec; var S : IdStream);
+    {-Store a MoreRec to a stream}
+  begin
+    with MRec do begin
+      {Write the header number to later detect if the rest needs reading}
+      S.Write(HdrNum, SizeOf(Byte));
+
+      if HdrNum <> 255 then begin
+        {Write non-string portions}
+        S.WriteRange(UpP, UpStrP);
+
+        {Write the strings}
+        S.WriteString(UpStrP^);
+        S.WriteString(DnStrP^);
+        S.WriteString(SepStrP^);
+        S.WriteString(MoreStrP^);
+      end;
+    end;
+  end;
+
+{$ENDIF}
+
+  {$IFDEF UseAdjustableWindows}
+  procedure PickList.OptimizeSize;
+    {-Resize window to surround items}
+  var
+    DX : Integer;
+    DY : Integer;
+    TDX : Integer;
+    TDY : Integer;
+    H : Byte;
+    W : Byte;
+    TH : Byte;
+    TW : Byte;
+    fXL : Byte;
+    fXH : Byte;
+    fYL : Byte;
+    fYH : Byte;
+  begin
+    {Don't waste time if window can't be resized anyway}
+    if IsZoomed or not LongFlagIsSet(wFlags, wResizeable) then
+      Exit;
+
+    {Protect against zero items}
+    if pkItems = 0 then
+      Exit;
+
+    {Get current extent of window}
+    Extent(fXL, fYL, fXH, fYH, FlagIsSet(pkFlags, pkOptFullExtent));
+
+    {Update pick parameters for width and height}
+    pkInitPickSize1;
+
+    {Aim for the target width}
+    TW := pkXH-pkXL+1;
+    TDX := Integer(pkReqdWidth)-TW;
+    while TDX <= -Integer(pkReqdWidth) do
+     inc(TDX, pkReqdWidth);
+    {Window can be one narrower when dividers in use} {!!.13}
+    if pkDividers then                                {!!.13}
+      dec(TDX);                                       {!!.13}
+    {Convert DX to a delta from actual width}
+    W := Width;
+    DX := TW+TDX-W;
+
+    if DX > 0 then begin
+      {Don't let width grow beyond allowable}
+      if W+DX > wMaxW then                   {Active window size}
+        DX := Integer(wMaxW)-W;
+      if fXH+DX > wMaxXH then                {Extent maximum position}
+        DX := Integer(wMaxXH)-fXH;
+      with wFrame do
+        if frXH-frXL+1+DX > frMaxW then      {Frame maximum size}
+          DX := Integer(frMaxW)-frXH+frXL-1;
+    end;
+    if DX < 0 then begin
+      {Don't let the width shrink below allowable}
+      if W+DX < wMinW then                   {Active window size}
+        DX := Integer(wMinW)-W;
+      with wFrame do
+        if frXH-frXL+1+DX < frMinW then      {Frame minimum size}
+          DX := Integer(frMinW)-frXH+frXL-1;
+    end;
+
+    {Update pick parameters for width and height again}
+    pkWidth := W+DX;
+    pkInitPickSize1;
+
+    {Aim for the target height}
+    TH := pkYH-pkYL+1;
+    TDY := Integer(pkItemRows)-TH;
+    {Convert DY to a delta from actual height}
+    H := Height;
+    DY := TH+TDY-H;
+
+    if DY > 0 then begin
+      {Don't let height grow beyond allowable}
+      if H+DY > wMaxH then                   {Active window size}
+        DY := Integer(wMaxH)-H;
+      if fYH+DY > wMaxYH then                {Extent maximum position}
+        DY := Integer(wMaxYH)-fYH;
+      with wFrame do
+        if frYH-frYL+1+DY > frMaxH then      {Frame maximum size}
+          DY := Integer(frMaxH)-frYH+frYL-1;
+    end;
+    if DY < 0 then begin
+      {Don't let the height shrink below allowable}
+      if H+DY < wMinH then                   {Active window size}
+        DY := Integer(wMinH)-H;
+      with wFrame do
+        if frYH-frYL+1+DY < frMinH then      {Frame minimum size}
+          DY := Integer(frMinH)-frYH+frYL-1;
+    end;
+
+    {Update pick parameters for width and height one last time}
+    pkHeight := H+DY;
+    pkInitPickSize1;   {Not orientation-specific}
+    pkReinit(@Self);   {Orientation-specific}
+    pkInitPickSize2;   {Not orientation-specific, counts on pkReinit results}
+
+    {Finally, resize and update the window}
+    ResizeWindow(DX, DY);
+  end;
+  {$ENDIF}
+
+  procedure PickList.EnableDividers(Top, Bar, Bot : Char); {!!.13}
+    {-Enable column dividers}
+  begin
+    pkDividers := True;
+    pkTopJoinCh := Top;
+    pkBarCh := Bar;
+    pkBotJoinCh := Bot;
+  end;
+
+  procedure PickList.DisableDividers; {!!.13}
+    {-Disable column dividers}
+  begin
+    pkDividers := False;
+  end;
+
+  procedure PickList.pkUpdatePick(pFirst, pChoice : Word; pRow, pCol : Byte);
+    {-Update pick list display while ProcessSelf is active}
+  begin
+    if FlagIsSet(pkSecFlags, pkRedrawPage) or (pFirst <> pkFirst) then begin {!!.01}
+      {Window base changed}
+      if not pkScrolled(pChoice, pFirst, pRow, pCol, @Self) then
+        pkDrawPage(True);
+      if pkMoreRec.HdrNum <> 255 then
+        pkUpdateMoreRec(pkMoreRec, (pkFirst > 1),
+                        (pkFirst < pkMaxFirst), (pkItemRows > pkHeight));
+      {$IFDEF UseScrollBars}
+      pkUpdScrBar(@Self);
+      {$ENDIF}
+      ClearFlag(pkSecFlags, pkRedrawPage); {!!.01}
+    end else if (pRow <> pkRow) or (pCol <> pkCol) then begin
+      {Unhighlight the previous item and highlight the new one}
+      pkDrawItem(pkChoice, pkRow, pkCol, True);
+      pkDrawItem(pChoice, pRow, pCol, False);
+      {$IFDEF UseScrollBars}
+      pkUpdScrBar(@Self);
+      {$ENDIF}
+    end else if FlagIsSet(pkSecFlags, pkRedrawOne) then begin {!!.01}
+      pkDrawItem(pkChoice, pkRow, pkCol, True);
+      ClearFlag(pkSecFlags, pkRedrawOne); {!!.01}
+    end;
+  end;
+
+  procedure PickList.ProcessSelf; {!!.01}
+    {-Process pick commands leading to a choice}
+  label
+    ExitPoint;
+  var
+    pFirst : Word;
+    pChoice : Word;
+    bChoice : Word;
+    iChoice : Word;
+    pRow : Byte;
+    pCol : Byte;
+    GetCmd : Boolean;
+    Finished : Boolean;
+  begin
+    if pkItems > 0 then begin     {!!.01}
+      if FlagIsSet(pkFlags, pkMultiChoice) then begin
+        {Allocate bit set (if not already done) to mark selected items}
+        AllocateSelectSet(pkItems);
+        if ClassifyError(cwGetLastError) = etFatal then {!!.01}
+          Exit;
+      end;
+      {Set up for current width, height, video mode}
+      pkInitPick;
+    end;
+
+    {Mark that we're in the Process method (saves time in UpdateContents)}
+    SetFlag(pkSecFlags, pkPickActive);
+
+    if FlagIsSet(pkFlags, pkSetDefault) then
+      {Save the initial choice number for reference by string procedure}
+      pkInitChoice := pkChoice;
+
+    {Draw initial screen if not already done}
+    Draw;
+    if RawError <> 0 then begin {!!.01}
+      {The error has already been reported to the error handler}
+      {GotError(epNonFatal+ecWinNotCurrent, emNullError);} {!!.01}
+      goto ExitPoint;
+    end;
+
+    {Remainder won't work with no items} {!!.01}
+    if pkItems = 0 then begin
+      GotError(epWarning+ecNoPickItems, emNoPickItems);
+      goto ExitPoint;
+    end;
+
+    Finished := False;
+    GetCmd := True;
+
+    {Update current item and more header}
+    pFirst := pkFirst;
+    {Following lines are more efficient than previous approach} {!!.02}
+    pRow := pkRow;
+    pCol := pkCol;
+    if not FlagIsSet(pkFlags, pkDrawActive) then begin
+      pkDrawItem(pkChoice, pkRow, pkCol, True);
+      if pkMoreRec.HdrNum <> 255 then
+        pkUpdateMoreRec(pkMoreRec, (pkFirst > 1),
+                        (pkFirst < pkMaxFirst), (pkItemRows > pkHeight));
+    end;
+    {^^^^^^^^^^} {!!.02}
+
+    repeat
+      if GetCmd then begin
+        {$IFDEF UseMouse}
+        HideMouse;
+        {$ENDIF}
+
+        {Update item display before getting next command}
+        pkUpdatePick(pFirst, pChoice, pRow, pCol);
+
+        {Save previous values}
+        pFirst := pkFirst;
+        pChoice := pkChoice;
+        pRow := pkRow;
+        pCol := pkCol;
+
+        {Call user-defined routine prior to each user-generated pick command}
+        PreMove;
+
+        {$IFDEF UseMouse}
+        if cwCmdPtr^.MouseEnabled then
+          ShowMouse;
+        {$ENDIF}
+
+        {Get next command from keyboard or mouse}
+        GetNextCommand;
+      end;
+
+      {Process the command}
+      Finished := pkCommand(cwCmd, @Self);
+
+      if not Finished then
+        {Determine what to do about protected items}
+        pkCheckProtected(GetCmd, bChoice, iChoice);
+    until Finished or (cwCmd = ccError);
+
+      {vvvvvvvvvvvvvvvvvvvvvv} {!!.03}
+    if (wParentPtr = nil) and not FlagIsSet(pkFlags, pkDrawActive) then begin
+      {Leave pick window with nothing selected}
+      {$IFDEF UseMouse}
+      HideMouse;
+      {$ENDIF}
+      pkDrawItem(pkChoice, pkRow, pkCol, False);
+      pkResetSearchStr;
+      pkResetMoreRec(pkMoreRec, False);
+    end;
+
+ExitPoint:
+    ClearFlag(pkSecFlags, pkPickActive);
+  end;
+
+  destructor PickList.Done;
+    {-Dispose of picklist}
+  begin
+    if FlagIsSet(pkFlags, pkBitSetAlloc) then
+      pkSelectSet.Done;
+    pkDoneMoreRec(pkMoreRec);
+    {call ancestor's destructor}
+    CommandWindow.Done;
+  end;
+
+  procedure PickList.SetChoice(Choice, FirstChoice : Word);
+    {-Set the initial choice to something besides <1,1>}
+  begin
+    {Protect against zero items}
+    if (Choice = 0) or (Choice > pkItems) then
+      Exit;
+    if IsProtected(Choice) then
+      Exit;
+    {Set up for current width, height, video mode}
+    pkInitPick;
+    {Initialize instance for specified choice}
+    pkSetCurrent(Choice, FirstChoice, @Self);
+  end;
+
+  procedure PickList.SetInitialChoice(Choice : Word);
+    {-Set initial choice without scrolling if possible}
+  begin
+    SetChoice(Choice, pkFirst);
+  end;
+
+  procedure PickList.SetDefaultChoice(Choice : Word);
+    {-Set the default choice number returned by GetDefaultChoice}
+  begin
+    pkInitChoice := Choice;
+  end;
+
+  function PickList.GetDefaultChoice : Word;
+    {-Return initial choice number}
+  begin
+    GetDefaultChoice := pkInitChoice;
+  end;
+
+  function PickList.GetLastChoice : Word;
+    {-Return last selected item number}
+  begin
+    if FlagIsSet(pkSecFlags, pkFakingOneItem) then {!!.03}
+      GetLastChoice := 0                           {!!.03}
+    else                                           {!!.03}
+      GetLastChoice := pkChoice;
+  end;
+
+  function PickList.GetItemString(Item : Word) : string;
+    {-Return specified item string in search format}
+  var
+    IType : pkItemType;
+    S : String;
+  begin
+    IType := pkNormal;
+    CompleteItemString(Item, pkSearch, IType, S);
+    GetItemString := S;
+  end;
+
+  function PickList.GetLastChoiceString : string;
+    {-Return last choice in string (search) format}
+  begin
+    if FlagIsSet(pkSecFlags, pkFakingOneItem) then {!!.03}
+      GetLastChoiceString := ''                    {!!.03}
+    else                                           {!!.03}
+      GetLastChoiceString := GetItemString(pkChoice);
+  end;
+
+  procedure PickList.WhereSelect(var X, Y : Byte);
+    {-Return window-relative coordinates of selected item}
+  begin
+    X := 1+pkItemWidth*(pkCol-1);
+    Y := pkRow;
+  end;
+
+  procedure PickList.WhereSelectAbs(var X, Y : Byte);
+    {-Return absolute coordinates of selected item}
+  begin
+    X := wXL+pkItemWidth*(pkCol-1);
+    Y := wYL+pkRow-1;
+  end;
+
+  function PickList.GetOrientation : Byte;
+    {-Return the orientation code}
+  begin
+    GetOrientation := pkOrient;
+  end;
+
+  function PickList.GetItemCols : Byte;
+    {-Return number of visible item columns}
+  begin
+    GetItemCols := pkCols;
+  end;
+
+  function PickList.GetNumItems : Word;
+    {-Return number of pick items}
+  begin
+    if FlagIsSet(pkSecFlags, pkFakingOneItem) then {!!.14}
+      GetNumItems := 0                             {!!.14}
+    else                                           {!!.14}
+      GetNumItems := pkItems;
+  end;
+
+  procedure PickList.pkOptionsOn(OptionFlags : Word);
+    {-Activate multiple options}
+  begin
+    pkFlags := pkFlags or (OptionFlags and not BadPickOptions);
+    if FlagIsSet(pkFlags, pkProcessZero) then {!!.03}
+      if pkItems = 0 then begin               {!!.12}
+        pkItems := 1;                         {!!.12}
+        SetFlag(pkSecFlags, pkFakingOneItem); {!!.12}
+      end;                                    {!!.12}
+      {pkSetItemCount(pkItems);}              {!!.03} {!!.12}
+  end;
+
+  procedure PickList.pkOptionsOff(OptionFlags : Word);
+    {-Deactivate multiple options}
+  begin
+    pkFlags := pkFlags and not (OptionFlags and not BadPickOptions);
+    if not FlagIsSet(pkFlags, pkProcessZero) then          {!!.03}
+      if FlagIsSet(pkSecFlags, pkFakingOneItem) then begin {!!.03}
+        pkItems := 0;                                      {!!.03}
+        ClearFlag(pkSecFlags, pkFakingOneItem);            {!!.03}
+      end;                                                 {!!.03}
+  end;
+
+  function PickList.pkOptionsAreOn(OptionFlags : Word) : Boolean;
+    {-Return True if all specified options are on}
+  begin
+    pkOptionsAreOn := (pkFlags and OptionFlags = OptionFlags);
+  end;
+
+  procedure PickList.SetPadSize(LeftPad, RightPad : Byte);
+    {-Set number of spaces for left padding of filenames}
+  begin
+    pkLeftPad := LeftPad;
+    pkRightPad := RightPad;
+    if (LeftPad = 0) and (RightPad = 0) then            {!!.03}
+      ClearFlag(pkSecFlags, pkPadStrings)               {!!.03}
+    else                                                {!!.03}
+      SetFlag(pkSecFlags, pkPadStrings);                {!!.03}
+  end;
+
+  procedure PickList.SetRowLimits(MinRows, MaxRows : Word);
+    {-Set values for min and max rows}
+  begin
+    pkMinRows := MinRows;
+    pkMaxRows := MaxRows;
+  end;
+
+  procedure PickList.SetMoveProc(MP : pkGenlProc);
+    {-Set user move procedure}
+  begin
+    pkMove := MP;
+  end;
+
+  procedure PickList.SetSearchMode(SF : pkSearchFunc);
+    {-Set a different search mode}
+  begin
+    pkSearcher := SF;
+  end;
+
+  procedure PickList.SetSearchStart(SStart : Byte);
+    {-Set start offset for string searching}
+  begin
+    pkSearchStart := SStart;
+  end;
+
+  procedure PickList.ChangeNumItems(NumItems : Word);
+    {-Change the number of items to display}
+  begin
+    pkSetItemCount(NumItems);            {!!.03}
+    if (pkItems <> 0) and IsCurrent then {!!.03}
+      pkInitPick;                        {!!.03}
+  end;
+
+  procedure PickList.ChangeItemWidth(ItemWidth : Byte);
+    {-Change the item width}
+  begin
+    pkReqdWidth := ItemWidth;
+  end;
+
+  procedure PickList.ChangeStringProc(StringProc : pkStringProc);
+    {-Change the string function}
+  begin
+    pkString := StringProc;
+  end;
+
+  procedure PickList.ChangeOrientation(Orientation : pkGenlProc);
+    {-Change the orientation}
+  begin
+    Orientation(@Self);
+  end;
+
+  procedure PickList.ChangeCommandHandler(CommandHandler : pkGenlProc);
+    {-Change between single and multiple choice}
+  begin
+    pkCommandInit := CommandHandler;
+    CommandHandler(@Self);
+  end;
+
+  procedure PickList.pkSetPickAttr(ItemType : pkItemType; Selected : Boolean;
+                                   Color, Mono : Byte);
+    {-Set one group of colors without color mapping}
+  begin
+    FillChar(pkColors[False][ItemType, Selected], SizeOf(FlexAttrs), Mono);
+    FillChar(pkColors[True][ItemType, Selected], SizeOf(FlexAttrs), Color);
+  end;
+
+  procedure PickList.SetPickAttr(ItemType : pkItemType; Selected : Boolean;
+                                 Color, Mono : Byte);
+    {-Set one group of colors}
+  begin
+    FillChar(pkColors[False][ItemType, Selected], SizeOf(FlexAttrs),
+             MapMono(Color, Mono));
+    FillChar(pkColors[True][ItemType, Selected], SizeOf(FlexAttrs), Color);
+  end;
+
+  procedure PickList.SetPickFlex(ItemType : pkItemType; Selected : Boolean;
+                                 var Color, Mono : FlexAttrs);
+    {-Set one group of colors for flexwriting}
+  var
+    I : Integer;
+  begin
+    {Map colors in the flex set}
+    for I := 0 to 3 do
+      Mono[I] := MapMono(Color[I], Mono[I]);
+    pkColors[False][ItemType, Selected] := Mono;
+    pkColors[True][ItemType, Selected] := Color;
+    {Enable flex writing}
+    SetFlag(pkFlags, pkFlexWrite);
+  end;
+
+  procedure PickList.AllocateSelectSet(MaxItems : Word);
+    {-Allocate the select set for the maximum items}
+  begin
+    if FlagIsSet(pkFlags, pkBitSetAlloc) then begin
+      if MaxItems <= pkSelectSet.MaxBits then
+        {Enough bits already allocated}
+        Exit;
+      {Deallocate existing set}
+      pkSelectSet.Done;
+      ClearFlag(pkFlags, pkBitSetAlloc);
+    end;
+    if not pkSelectSet.Init(MaxItems) then begin
+      GotError(epFatal+ecOutOfMemory, emInsufficientMemory);
+      Exit;
+    end;
+    SetFlag(pkFlags, pkBitSetAlloc);
+  end;
+
+  procedure PickList.SetSelectMarker(Left, Right : String);
+    {-Define strings to mark selected items}
+  begin
+    pkLeftSel := Left;
+    pkRightSel := Right;
+    if (Length(Left) = 0) and (Length(Right) = 0) then  {!!.03}
+      ClearFlag(pkSecFlags, pkSelStrings)               {!!.03}
+    else                                                {!!.03}
+      SetFlag(pkSecFlags, pkSelStrings);                {!!.03}
+  end;
+
+  procedure PickList.ClearSelected;
+    {-Clear selected items}
+  var
+    N : Word;
+  begin
+    if FlagIsSet(pkFlags, pkBitSetAlloc) then
+      for N := 1 to pkItems do
+        DeselectItem(N); {!!.02}
+  end;
+
+  procedure PickList.MarkAllSelected;
+    {-Mark all items selected}
+  var
+    N : Word;
+  begin
+    if FlagIsSet(pkFlags, pkBitSetAlloc) then
+      for N := 1 to pkItems do
+        SelectItem(N);
+  end;
+
+  procedure PickList.SelectItem(Item : Word);
+    {-Select an item}
+  begin
+    if FlagIsSet(pkFlags, pkBitSetAlloc) then
+      if Item > 0 then
+        if not (IsProtected(Item) or IsSemiProtected(Item)) then {!!.11}
+          pkSelectSet.SetBit(Item);
+  end;
+
+  procedure PickList.DeselectItem(Item : Word);
+    {-Deselect an item}
+  begin
+    if FlagIsSet(pkFlags, pkBitSetAlloc) then
+      if Item > 0 then
+        pkSelectSet.ClearBit(Item);
+  end;
+
+  function PickList.ItemIsSelected(Item : Word) : Boolean;
+    {-Return True if item N is selected}
+  begin
+    if FlagIsSet(pkFlags, pkBitSetAlloc) and (Item > 0) and
+        pkSelectSet.BitIsSet(Item) then
+      ItemIsSelected := True
+    else
+      ItemIsSelected := False;
+  end;
+
+  function PickList.GetSelectedCount : Word;
+    {-Return number of files selected}
+  var
+    N : Word;
+    Cnt : Word;
+  begin
+    if FlagIsSet(pkFlags, pkBitSetAlloc) then begin
+      {!!.12} {Count just items in range 1..pkItems}
+      Cnt := 0;
+      for N := 1 to pkItems do
+        if pkSelectSet.BitIsSet(N) then
+          inc(Cnt);
+      GetSelectedCount := Cnt;
+    end else
+      GetSelectedCount := 0;
+  end;
+
+  procedure PickList.InitSequence(var Item : Word);
+    {-Prepare to get first selected item}
+  begin
+    if GetSelectedCount > 0 then begin
+      Item := 0;
+      NextSelected(Item);
+    end else
+      Item := pkItems+1;
+  end;
+
+  function PickList.HaveSelected(Item : Word) : Boolean;
+    {-Return True if there is a selected item}
+  begin
+    HaveSelected := (Item <= pkItems);
+  end;
+
+  procedure PickList.NextSelected(var Item : Word);
+    {-Position Item at the next one selected}
+  begin
+    if Item <= pkItems then
+      repeat
+        inc(Item);
+      until (Item > pkItems) or pkSelectSet.BitIsSet(Item);
+  end;
+
+  function PickList.NumSelectableItems : Word;
+    {-Return number of items that are not protected}
+  var
+    Count : Word;
+    Item : Word;
+  begin
+    Count := 0;
+    for Item := 1 to pkItems do
+      if not IsProtected(Item) then
+        inc(Count);
+    NumSelectableItems := Count;
+  end;
+

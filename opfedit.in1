@@ -1,0 +1,701 @@
+{*********************************************************}
+{*                   OPFEDIT.IN1 1.30                    *}
+{*      Copyright (c) TurboPower Software 1988,1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  procedure SimpleStringEditor(var Field; Row, Col : Word; FA, CA : Byte;
+                               PasswordChar : Char; PosCode : Byte;
+                               ReadOnly : Boolean; var CC, ChWord : Word;
+                               var InsertMode : Boolean; ErrorRoutine : ErrorProc;
+                               UnitCode : Byte; var CP : CommandProcessor);
+  var
+    EF : EntryField absolute Field;
+    Ch : Char absolute ChWord;
+    St, SaveEditSt : string;
+    StPtr : StringPtr;
+    StLen : Byte absolute St;
+    ErrCode : Word;
+    ErrorMsg : StringPtr;
+    CursorSL : Word;
+    StCol : Byte;
+    I, Sp : Byte;        {!!.20}
+    FirstChar : Boolean;
+    SaveBreak : Boolean;
+    Finished : Boolean;
+    {StOffset : Byte;}   {!!.20}
+    EditLen : Byte;
+    MaxBoxLen : Byte;
+    SaveInsertMode : Boolean;
+    SaveNumLock : Boolean;
+    IsNested : Boolean;
+    DummyFlags : PictureFlags;
+
+    procedure Redraw(MoveCursor : Boolean);
+      {-Position cursor and redraw string}
+    begin
+      with EF do begin
+        if Sp = 0 then
+          Sp := 1
+        else if (StLen < efMaxLen) and (Sp > StLen) then
+          Sp := Succ(StLen)
+        else if Sp > efMaxLen then
+          if LongFlagIsSet(sfOptions, efHouseCursorAtEnd) then
+            Sp := Succ(efMaxLen)
+          else
+            Sp := efMaxLen;
+        if Sp > EditLen+efHOffset then            {!!.20}
+          efHOffset := Sp-EditLen                 {!!.20}
+        else if Sp < Succ(efHOffset) then         {!!.20}
+          efHOffset := Pred(Sp);                  {!!.20}
+        Draw(St, Row, Col, FA, CA, efHOffset, PasswordChar, DummyFlags); {!!.20}
+        if MoveCursor then
+          GoToXYAbs(Col+Pred(SP)-efHOffset, Row); {!!.20}
+        sfFCPos := SP-efHOffset;                  {!!.20}
+      end;
+    end;
+
+    procedure CheckAutoAdvance;
+      {-See if we need to auto-advance to next/previous field}
+    begin
+      if not Finished then
+        with EF do
+          if (SP < 1) and LongFlagIsSet(sfOptions, efAutoAdvCurBegin) then
+            Finished := True
+          else if (SP > efMaxLen) then
+            if (CC = ccChar) and LongFlagIsSet(sfOptions, efAutoAdvCharEnd) then begin
+              CC := ccAutoAdvance;
+              Finished := True;
+            end
+            else if (CC <> ccChar) and LongFlagIsSet(sfOptions, efAutoAdvCurEnd) then
+              Finished := True;
+    end;
+
+    procedure InsertChar;
+      {-Insert Ch at St[SP]}
+    begin
+      if not LongFlagIsSet(EF.sfOptions, efInsertPushes) then
+        if StLen = EF.efMaxLen then begin
+          if LongFlagIsSet(EF.sfOptions, efBeepOnError) then
+            RingBell;
+          Exit;
+        end;
+
+      Insert(Ch, St, Sp);
+      if StLen > EF.efMaxLen then
+        StLen := EF.efMaxLen;
+      Inc(Sp);
+    end;
+
+    procedure WordLeft;
+      {-Cursor left one word}
+    begin
+      if Sp > 1 then begin
+        Dec(Sp);
+        while (Sp >= 1) and ((Sp > StLen) or (St[Sp] = ' ')) do
+          Dec(Sp);
+        while (Sp >= 1) and (St[Sp] <> ' ') do
+          Dec(Sp);
+        Inc(Sp);
+      end
+      else if LongFlagIsSet(EF.sfOptions, efAutoAdvCurBegin) then begin
+        SP := 0;
+        CheckAutoAdvance;
+      end;
+    end;
+
+    procedure WordRight;
+      {-Cursor right one word}
+    begin
+      if Sp <= StLen then begin
+        Inc(Sp);
+        while (Sp <= StLen) and (St[Sp] <> ' ') do
+          Inc(Sp);
+        while (Sp <= StLen) and (St[Sp] = ' ') do
+          Inc(Sp);
+      end
+      else
+        Sp := Succ(EF.efMaxLen);
+      if LongFlagIsSet(EF.sfOptions, efAutoAdvCurEnd) and not
+         LongFlagIsSet(EF.sfFlags, ifNotNext) then
+           CheckAutoAdvance;
+    end;
+
+    procedure DeleteWord;
+      {-Delete word at cursor}
+    var
+      DelEnd : Byte;
+    begin
+      if Sp <= StLen then begin
+        {start deleting at the cursor}
+        DelEnd := Sp;
+
+        {delete all of the current word, if any}
+        if St[Sp] <> ' ' then
+          while (St[DelEnd] <> ' ') and (DelEnd <= StLen) do
+            Inc(DelEnd);
+
+        {delete any spaces prior to the next word, if any}
+        while (St[DelEnd] = ' ') and (DelEnd <= StLen) do
+          Inc(DelEnd);
+
+        Delete(St, Sp, DelEnd-Sp);
+      end;
+    end;
+
+    function CharIsOK : Boolean;
+      {-Return true if Ch can be added to the string}
+    var
+      PrevCh : Char;
+    begin
+      if LongFlagIsSet(EF.sfOptions, efForceUpper) then
+        Ch := Upcase(Ch)
+      else if LongFlagIsSet(EF.sfOptions, efForceLower) then
+        Ch := Locase(Ch);
+      if Sp = 1 then
+        PrevCh := ' '
+      else if FirstChar and LongFlagIsSet(EF.sfOptions, efClearFirstChar) then {!!.03}
+        PrevCh := ' '                                                          {!!.03}
+      else                                                                     {!!.03}
+        PrevCh := St[Sp-1];
+      CharIsOK := CharOK(EF.efPicture^[1], Ch, PrevCh, True);
+    end;
+
+  begin
+    with EF do begin
+      {we're editing}
+      SetLongFlag(sfFlags, ifEditing);
+      StPtr := @St;
+
+      {save copy of efEditSt^}
+      SaveEditSt := efEditSt^;
+
+      if efMaxLen > 254 then
+        efMaxLen := 254;
+      if LongFlagIsSet(sfOptions, efHouseCursorAtEnd) then
+        MaxBoxLen := efMaxLen+1
+      else
+        MaxBoxLen := efMaxLen;
+
+      if (sfFWidth = efMaxLen) or (sfFWidth >= MaxBoxLen) then
+        EditLen := MaxBoxLen
+      else
+        EditLen := sfFWidth;
+
+      {fill dummy picture flags}
+      FillChar(DummyFlags, SizeOf(DummyFlags), 1);
+
+      {Store cursor shape}
+      CursorSL := CursorTypeSL;
+
+      {save NumLock state and force it on}
+      if LongFlagIsSet(sfOptions, efAutoNumLock) then begin
+        {$IFDEF VIRTUALPASCAL}
+        SaveNumLock := GetKeyboardState( kbd_Numlock );
+        SetKeyboardState( kbd_Numlock, True );
+        {$ELSE}
+        SaveNumLock := FlagIsSet(KeyboardFlags^, NumLockBit);          {!!.20}
+        SetFlag(KeyboardFlags^, NumLockBit);                           {!!.20}
+        {$ENDIF}
+      end;
+
+      {Save break checking state}
+      SaveBreak := CheckBreak;
+      CheckBreak := False;
+
+      {Get the default string}
+      St := efEditSt^;
+      if StLen > efMaxLen then
+        StLen := efMaxLen;
+
+      {set insert mode}
+      if LongFlagIsSet(sfOptions, efForceMode) then begin
+        SaveInsertMode := InsertMode;
+        InsertMode := LongFlagIsSet(sfOptions, efForceOvertype);
+      end
+      else
+        InsertMode := not InsertMode;
+      ToggleInsertMode(InsertMode);
+
+      if PosCode <> 4 then                           {!!.20}
+        efHOffset := 0;                              {!!.20}
+      IsNested := LongFlagIsSet(sfFlags, ifNested);
+
+      {position the cursor}
+      case PosCode of
+         {!!.03}
+        0, 2 :                    {normal}
+          if LongFlagIsSet(sfOptions, efCursorToEnd) then
+            Sp := Succ(StLen)
+          else
+            Sp := 1;
+        1 :                 {force end of string}
+          SP := Succ(StLen);
+        (*       {!!.03}
+        2 :                 {force start of string}
+          SP := 1;
+        *)       {!!.03}
+        3 :
+          begin
+            SP := Succ(StLen);
+            WordLeft;
+          end;
+        4 :
+          if sfFWidth = efMaxLen then begin          {!!.20}
+            efHOffset := 0;                          {!!.20}
+            Sp := sfFCPos;
+          end                                        {!!.20}
+          else
+            Sp := sfFCPos+efHOffset;                 {!!.20}
+      end;
+
+      {clear modified flag}
+      ClearLongFlag(sfFlags, ifModified);
+
+      {Loop reading keys}
+      Finished := False;
+      FirstChar := True;
+      repeat
+        {Position cursor and redraw string}
+        Redraw(True);
+
+        {get next command}
+        ExchangeLongInts(LongInt(StPtr), LongInt(efEditSt));
+        CC := CP.GetCommand(ChWord);
+        ExchangeLongInts(LongInt(StPtr), LongInt(efEditSt));
+
+        {don't allow ccIncChoice, ccDecChoice, or ccToggle}
+        case CC of
+          ccToggle,            {!!.03}
+          ccIncChoice, ccDecChoice :
+            if Lo(ChWord) = 0 then
+              CC := ccNone
+            else
+              CC := ccChar;
+        end;
+
+        if ReadOnly or IsNested then begin
+          if (CC <= 255) and not(CC in ReadOnlyCommands) then
+            CC := ccNone;
+        end
+        else if (CC <= 255) and not(CC in StringCommands) then
+          CC := ccNone;
+
+        {deal with control characters if desired}
+        if CC = ccCtrlChar then
+          {don't allow control chars if attributes same and mapping on}
+          if (CA = FA) and LongFlagIsSet(sfOptions, efMapCtrls) then
+            CC := ccNone
+          else begin
+            SetCursorType(CtrlCharCursor);
+            ChWord := CP.cpGetKey;
+            CC := ccChar;
+            if InsertMode then
+              SetCursorType(InsertCursor)
+            else
+              SetCursorType(OvertypeCursor);
+          end;
+
+        if FirstChar then
+          FirstChar := feClearFirstFunc(CC, ChWord);
+        case CC of
+          ccNone :
+            if LongFlagIsSet(sfOptions, efBeepOnError) then
+              RingBell;
+
+          ccChar :
+            if CharIsOK then begin
+              {clear the input string if appropriate}
+              if FirstChar and LongFlagIsSet(sfOptions, efClearFirstChar) then begin
+                FirstChar := False;
+                efHOffset := 0;           {!!.20}
+                StLen := 0;
+                Sp := 1;
+              end;
+
+              if InsertMode then
+                InsertChar
+              {overtype mode}
+              else if Sp <= efMaxLen then begin
+                St[Sp] := Ch;
+                if Sp > StLen then
+                  StLen := Sp;
+                Inc(Sp);
+              end;
+              CheckAutoAdvance;
+            end
+            else begin
+              FirstChar := False;
+              if LongFlagIsSet(sfOptions, efBeepOnError) then
+                RingBell;
+            end;
+
+          ccSelect {, ccNextField} : {!!.03}
+            begin
+              if IsNested then
+                CC := ccNested;
+              Finished := True;
+            end;
+
+          {$IFDEF UseMouse}
+          ccMouseAuto, ccMouseDown, ccMouseSel : {!!.20} {this section is new}
+            if IsNested or LongFlagIsSet(sfOptions, efMultChoice+efClickExit) then
+              Finished := True
+            else begin
+              I := efMousePos(Row, Col);
+              if I = 0 then
+                Finished := True
+              else if CC <> ccMouseAuto then begin
+                SP := I;
+                if SP > StLen+1 then
+                  SP := StLen+1;
+              end;
+            end;
+          {$ENDIF}
+
+          {ccMouseAuto,}           {!!.11} {!!.20}
+          ccNextField, ccAltKey, {ccMouseDown,} {!!.03} {!!.20}
+          ccAutoAdvance, ccTab, ccBackTab, ccPrevField, ccUp, ccDown,
+          ccNextRec, ccPrevRec, ccFirstFld, {ccMouseSel,} ccLastFld, ccPageUp, {!!.20}
+          ccPageDn, ccNested, ccDone, ccUser0..ccUser65335 :
+            Finished := True;
+
+          ccRestore, ccQuit :
+            begin
+              St := efEditSt^;
+              if LongFlagIsSet(sfOptions, efCursorToEnd) then
+                Sp := Succ(StLen)
+              else
+                Sp := 1;
+              if StLen > efMaxLen then
+                StLen := efMaxLen;
+              Finished := (CC = ccQuit);
+            end;
+
+          ccHome :
+            Sp := 1;
+
+          ccEnd :
+            Sp := Succ(StLen);
+
+          ccDelEol :
+            St := Copy(St, 1, Pred(Sp));
+
+          ccDelBol :
+            begin
+              Delete(St, 1, Pred(Sp));
+              Sp := 1;
+            end;
+
+          ccDelLine :
+            begin
+              StLen := 0;
+              Sp := 1;
+            end;
+
+          ccLeft :
+            begin
+              if Sp > 1 then
+                Dec(Sp)
+              else if LongFlagIsSet(sfOptions, efAutoAdvCurBegin) then
+                SP := 0;
+              CheckAutoAdvance;
+            end;
+
+          ccRight :
+            begin
+              if (SP <= StLen) then
+                Inc(Sp)
+              else if (LongFlagIsSet(sfOptions, efAutoAdvCurEnd) and
+                not LongFlagIsSet(sfFlags, ifNotNext)) then
+                  Sp := Succ(efMaxLen);
+              CheckAutoAdvance;
+            end;
+
+          ccWordLeft :
+            WordLeft;
+
+          ccWordRight :
+            WordRight;
+
+          ccDel :
+            if Sp <= StLen then
+              Delete(St, Sp, 1);
+
+          ccBack :
+            if Sp > 1 then begin
+              Dec(Sp);
+              Delete(St, Sp, 1);
+              if efHOffset > 0 then                  {!!.20}
+                {String horizontally scrolled}
+                if efHOffset+EditLen >= StLen then   {!!.20}
+                  {The rightmost portion of the string is displayed, so scroll}
+                  Dec(efHOffset);                    {!!.20}
+            end;
+
+          ccDelWord :
+            DeleteWord;
+
+          ccIns :
+            ToggleInsertMode(InsertMode);
+
+          ccHelp :
+            CP.cpGetHelp(UnitCode, nil, sfHelpIndex);
+        end;
+
+        {make sure it's OK to go to next/previous field}
+        if Finished then
+          Finished := efOKtoAdvance(CC);
+
+        if Finished then begin
+          {make sure screen is up to date}
+          Redraw(False);
+
+          if (CC <> ccQuit) and not ReadOnly then begin
+            {exchange the two strings}
+            SwapStrings(St, efEditSt^);
+
+            {is the entry valid?}
+            ErrorMsg := @emNullError;
+            if not Validate(ErrCode, ErrorMsg) then begin
+              Finished := False;
+              FirstChar := True;
+
+              {exchange the two strings again}
+              SwapStrings(St, efEditSt^);
+
+              Inc(ErrCode, epWarning);
+              ErrorRoutine(UnitCode, ErrCode, ErrorMsg^);
+            end;
+          end;
+        end;
+
+      until Finished;
+
+      {set modified flag}
+      if (CC <> ccQuit) and (SaveEditSt <> efEditSt^) then
+        SetLongFlag(sfFlags, ifModified);
+
+      {restore insert mode if it was forced one way or the other}
+      if LongFlagIsSet(sfOptions, efForceMode) then
+        InsertMode := SaveInsertMode;
+
+      {restore break checking status}
+      CheckBreak := SaveBreak;
+
+      {restore cursor shape}
+      SetCursorSize(Hi(CursorSL), Lo(CursorSL));
+
+      if LongFlagIsSet(sfOptions, efAutoNumLock) then
+        {restore previous NumLock state}
+        if SaveNumLock then
+          {$IFDEF VIRTUALPASCAL}
+          SetKeyboardState( kbd_Numlock, True )
+          {$ELSE}
+          SetFlag(KeyboardFlags^, NumLockBit)                         {!!.20}
+          {$ENDIF}
+        else
+          {$IFDEF VIRTUALPASCAL}
+          SetKeyboardState( kbd_Numlock, False );
+          {$ELSE}
+          ClearFlag(KeyboardFlags^, NumLockBit);                      {!!.20}
+          {$ENDIF}
+    end;
+
+    {we're not editing}
+    ClearLongFlag(EF.sfFlags, ifEditing);
+  end;
+
+  procedure SimpleCharEditor(var Field; Row, Col : Word; FA, CA : Byte;
+                             PasswordChar : Char; PosCode : Byte;
+                             ReadOnly : Boolean; var CC, ChWord : Word;
+                             var InsertMode : Boolean; ErrorRoutine : ErrorProc;
+                             UnitCode : Byte; var CP : CommandProcessor);
+    {-Simpler character editor}
+  var
+    EF : EntryField absolute Field;
+    Ch : Char absolute ChWord;
+    CursorSL, I : Word;
+    SaveBreak : Boolean;
+    Finished : Boolean;
+    ErrCode : Word;
+    ErrorMsg : StringPtr;
+    FirstTime : Boolean;
+    NewCh, SaveCh : Char;
+    DummyFlags : PictureFlags;
+
+    procedure Redraw(Suppress : Boolean);
+      {-Position cursor and redraw string}
+    var
+      S1 : string[1];
+    begin
+      with EF do begin
+        if (not Suppress) and LongFlagIsSet(EF.sfOptions, efShowReadChar) then begin
+          S1[0] := #1;
+          S1[1] := NewCh;
+          Draw(S1, Row, Col, FA, CA, 0, PasswordChar, DummyFlags);
+        end;
+        GoToXYAbs(Col, Row);
+      end;
+    end;
+
+    function CharIsOK : Boolean;
+      {-Return true if Ch can be added to the string}
+    begin
+      if (Ch = #0) and LongFlagIsSet(EF.sfOptions, efMapExtended) then
+        Ch := Char(Hi(ChWord) or $80)
+      else if LongFlagIsSet(EF.sfOptions, efForceUpper) then
+        Ch := Upcase(Ch)
+      else if LongFlagIsSet(EF.sfOptions, efForceLower) then
+        Ch := Locase(Ch);
+      CharIsOK := CharOK(EF.efPicture^[1], Ch, #255, True);
+    end;
+
+  begin
+    {we're editing}
+    SetLongFlag(EF.sfFlags, ifEditing);
+
+    {store cursor shape}
+    CursorSL := CursorTypeSL;
+
+    {clear unwanted flags}
+    ClearLongFlag(EF.sfOptions, efHouseCursorAtEnd);
+    if LongFlagIsSet(EF.sfFlags, ifBoolean) then
+      ClearLongFlag(EF.sfOptions, efMapExtended);
+
+    {initialize}
+    NewCh := Char(EF.efEditSt^[1]);
+    SaveCh := NewCh;
+
+    {save break checking state}
+    SaveBreak := CheckBreak;
+    CheckBreak := False;
+
+    {fill dummy picture flags}
+    FillChar(DummyFlags, SizeOf(DummyFlags), 1);
+
+    {set cursor shape}
+    if LongFlagIsSet(EF.sfOptions, efHideCursor) then
+      HiddenCursor
+    else begin
+      InsertMode := not InsertMode;
+      ToggleInsertMode(InsertMode);
+    end;
+
+    {clear modified flag}
+    ClearLongFlag(EF.sfFlags, ifModified);
+
+    {loop reading keys}
+    Finished := False;
+    FirstTime := (CC <> ccNone);
+
+    {position cursor and redraw}
+    Redraw(LongFlagIsSet(EF.sfFlags, ifSuppressFirst));
+
+    repeat
+      {get next command and validate it}
+      if FirstTime then
+        FirstTime := False
+      else
+        CC := CP.GetCommand(ChWord);
+
+      if ReadOnly then begin
+        if (CC <= 255) and not(CC in ReadOnlyCommands) then
+          CC := ccNone;
+      end
+      else if (CC <= 255) and not(CC in StringCommands) then
+        CC := ccNone;
+
+      {allow editing of the existing string}
+      case CC of
+        ccChar :
+          if CharIsOK then begin
+            NewCh := Ch;
+            if LongFlagIsSet(EF.sfOptions, efAutoAdvCharEnd) then
+              CC := ccAutoAdvance {ccSelect};   {!!.12}
+            Finished := True;
+          end
+          else if LongFlagIsSet(EF.sfOptions, efBeepOnError) then
+            RingBell;
+
+        ccMouseAuto,           {!!.11}
+        ccAltKey, ccMouseDown, {!!.03}
+        ccTab, ccBackTab, ccSelect, ccNextField, ccAutoAdvance, ccLeft,
+        ccWordLeft, ccRight, ccWordRight, ccPrevField, ccUp, ccDown,
+        ccNextRec, ccPrevRec, ccFirstFld, ccMouseSel, ccLastFld, ccPageUp,
+        ccPageDn, ccNested, ccDone, ccUser0..ccUser65335 :
+          if LongFlagIsSet(EF.sfOptions, efDefaultAccepted) then
+            Finished := True
+          else if Ch <> #0 then begin
+            CC := ccChar;
+            FirstTime := True;
+          end
+          else if LongFlagIsSet(EF.sfOptions, efBeepOnError) then
+            RingBell;
+
+        ccQuit :
+          if LongFlagIsSet(EF.sfOptions, efAllowEscape) then
+            Finished := True
+          else if Ch <> #0 then begin
+            CC := ccChar;
+            FirstTime := True;
+          end
+          else if LongFlagIsSet(EF.sfOptions, efBeepOnError) then
+            RingBell;
+
+        ccHelp :
+          CP.cpGetHelp(UnitCode, nil, EF.sfHelpIndex);
+
+        else
+          if (Ch <> #0) or LongFlagIsSet(EF.sfOptions, efMapExtended) then begin {!!.11}
+            if not ReadOnly then begin
+              CC := ccChar;
+              FirstTime := True;
+            end;
+          end
+          else if LongFlagIsSet(EF.sfOptions, efBeepOnError) then
+            RingBell;
+      end;
+
+      {make sure it's OK to go to next/previous field}
+      if Finished then
+        Finished := EF.efOKtoAdvance(CC);
+
+      {validate the entry if done}
+      if Finished then begin
+        {make sure the screen is up to date}
+        Redraw(False);
+
+        if (CC <> ccQuit) and not ReadOnly then begin
+          {load character for validation purposes}
+          EF.efEditSt^[1] := NewCh;
+
+          ErrorMsg := @emNullError;
+          if not EF.Validate(ErrCode, ErrorMsg) then begin
+            {not done yet--swap back}
+            Finished := False;
+            EF.efEditSt^[1] := SaveCh; {!!.01}
+
+            {display error message from validation routine}
+            Inc(ErrCode, epWarning);
+            ErrorRoutine(UnitCode, ErrCode, ErrorMsg^);
+          end;
+        end;
+      end;
+
+    until Finished;
+
+    {set modified flag}                   {!!.01}
+    if (CC <> ccQuit) and (SaveCh <> EF.efEditSt^[1]) then
+      SetLongFlag(EF.sfFlags, ifModified);
+
+    {restore break checking status}
+    CheckBreak := SaveBreak;
+
+    {restore cursor shape}
+    SetCursorSize(Hi(CursorSL), Lo(CursorSL));
+
+    {we're not editing}
+    ClearLongFlag(EF.sfFlags, ifEditing);
+  end;
+

@@ -1,0 +1,190 @@
+{*********************************************************}
+{*                  DESKMAIN.ICD 1.30                    *}
+{*    Copyright (c) TurboPower Software 1989, 1992.      *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+{.F-}
+
+  {------------ configuration options -----------}
+type
+  DirSortType     = (dstName, dstExt, dstDate, dstSize, dstDos); {!!.03}
+  ComPortType     = (Com1, Com2);
+  BaudRateType    = (br300, br1200, br2400);
+
+const
+  {ID string to mark beginning of configuration data}
+  DeskPopID : string[24] = 'deskpop config data 1.01'; {!!.01}
+
+  {TSR-related options}
+  HotKey1         : word = $0A0F; {Alt + LeftShift, Tab}
+  HotKey1Str      : string[32] = 'Alt+LeftShift+Tab';
+  HotKey2         : word = $0520; {Ctrl + RightShift, D}
+  HotKey3         : word = $0619; {Ctrl + LeftShift, P}   {!!.03}
+  HotKey3Str      : string[32] = 'Ctrl+LeftShift+P';      {!!.03}
+  SwapPathName    : string[64] = 'C:\';
+  SwapName1       : string[12] = 'DESKPOP1.$$$';
+  SwapName2       : string[12] = 'DESKPOP2.$$$';
+  UseEmsIfAvail   : Boolean = True;
+  ShowSwapMsg     : Boolean = True;
+
+  {display options}
+  DefMouseSupport : Boolean = True;  {enable mouse support if mouse installed}
+  DefColorMap     : ColorChoice = UseDefault; {force color or mono?}
+
+  {browser}
+  BrowsePages     : Byte = 4;        {# of pages for browse window}
+  BrowseExpandTabs : Boolean = True; {expand tabs}
+  BrowseStripHigh : Boolean = False; {strip high bits}
+  BrowseHexMode   : Boolean = False; {hex/ascii}
+  BrowseDefExt    : ExtStr = '';     {default extension}
+
+  {editor}
+  EditBufferSize  : word = 65521;    {size of edit buffer}
+  EditAutoIndent  : Boolean = True;  {auto-indent}
+  EditWordWrap    : Boolean = True;  {word wrap}
+  EditDeleteJoins : Boolean = False; {delete joins lines}
+  EditIndentIsPara : Boolean = False; {indent starts paragraph}
+  EditReadPartial : Boolean = False; {read partial files}
+  EditMakeBackups : Boolean = True;  {make backup files}
+  EditSmartTabs   : Boolean = True;  {smart tabs}
+  EditWrapAtLeft  : Boolean = False; {wrap at left}
+  EditTabDelta    : Byte = 8;        {fixed tab size}
+  EditDefExt      : ExtStr = '';     {default extension}
+
+  {directory window}
+  DirBufferSize   : word = 16384;    {size of directory window buffer}
+  DirWinConfirm   : Boolean = True;  {confirm deletions, etc.?}
+  DirWinFormatAll : Boolean = False; {use the "all" format?}
+  CurDirSortType  : DirSortType = dstName; {sort method}
+
+  {phone book}
+  HaveModem       : Boolean = True;
+  DefComPort      : ComPortType = Com1;
+  DefBaudRate     : BaudRateType = br1200;
+  DialString      : string[15] = 'ATDT';
+  HangUpString    : string[10] = 'ATH0';
+  DefPhoneExt     : ExtStr = 'PB';
+  PhoneBookName   : PathStr = '';
+
+  {special exit commands}
+  ccToggleMode    = ccUser21;
+  ccNewMask       = ccUser22;
+  ccDeleteItem    = ccUser23;
+  ccInsertItem    = ccUser24;
+  ccCopyFiles     = ccUser25;
+  ccMoveFiles     = ccUser26;
+  ccDeleteFiles   = ccUser27;
+  ccRenameFile    = ccUser28;
+  ccLoadEditor    = ccUser29;
+  ccLoadBrowser   = ccUser30;
+  ccDialPhone     = ccUser31;
+  ccHangUpModem   = ccUser32;
+
+  {.F-}
+  {Keystroke to command mapping}
+  DirKeyMax       = 190;
+  DirKeySet       : array[0..DirKeyMax] of Byte = (
+  {length keys         command type      key sequence}
+  3,      $00, $12,    ccLoadEditor,     {AltE}
+  3,      $00, $30,    ccLoadBrowser,    {AltB}
+  3,      $00, $3B,    ccHelp,           {F1}
+  3,      $00, $3D,    ccNewMask,        {F3}
+  3,      $00, $41,    ccBlkBegin,       {F7}
+  3,      $00, $42,    ccBlkEnd,         {F8}
+  3,      $00, $47,    ccHome,           {Home}
+  3,      $00, $48,    ccUp,             {Up}
+  3,      $00, $49,    ccPageUp,         {PgUp}
+  3,      $00, $4B,    ccLeft,           {Left}
+  3,      $00, $4D,    ccRight,          {Right}
+  3,      $00, $4F,    ccEnd,            {End}
+  3,      $00, $50,    ccDown,           {Down}
+  3,      $00, $51,    ccPageDn,         {PgDn}
+  3,      $00, $53,    ccDel,            {Del}
+  2,      $03,         ccPageDn,         {^C}
+  2,      $04,         ccRight,          {^D}
+  2,      $05,         ccUp,             {^E}
+  2,      $0A,         ccBlkToggle,      {^J, ^Enter}
+  2,      $0D,         ccSelect,         {^M, Enter}
+  2,      $12,         ccPageUp,         {^R}
+  2,      $13,         ccLeft,           {^S}
+  2,      $17,         ccUp,             {^W}
+  2,      $18,         ccDown,           {^X}
+  2,      $19,         ccDeleteItem,     {^Y}
+  2,      $1A,         ccDown,           {^Z}
+  2,      $1B,         ccQuit,           {Esc}
+  2,      $20,         ccToggleMode,     {' '}
+  2,      $2B,         ccToggle,         {'+'}
+  2,      $2D,         ccDel,            {'-'}
+  3,      $0B, $02,    ccBlkBegin,       {^K^B}
+  3,      $0B, $03,    ccCopyFiles,      {^K^C}
+  3,      $0B, $0B,    ccBlkEnd,         {^K^K}
+  3,      $0B, $08,    ccRestore,        {^K^H}
+  3,      $0B, $0E,    ccRenameFile,     {^K^N}
+  3,      $0B, $16,    ccMoveFiles,      {^K^V}
+  3,      $0B, $19,    ccDeleteFiles,    {^K^Y}
+  3,      $11, $03,    ccEnd,            {^Q^C}
+  3,      $11, $12,    ccHome,           {^Q^R}
+  {$IFDEF UseMouse}
+  3,      $00, $EF,    ccMouseSel,       {Click left}
+  3,      $00, $EE,    ccQuit,           {Click right}
+  3,      $00, $ED,    ccHelp,           {Click both}
+  {$ELSE}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,          {150}
+  0, 0,                                  {160}
+  {$ENDIF}
+        0, 0, 0, 0, 0, 0, 0, 0,          {160}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,          {170}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,          {180}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0           {190}
+  );
+
+  {Keystroke to command mapping}
+  PhoneKeyMax   = 150;
+  PhoneKeySet   : array[0..PhoneKeyMax] of Byte = (
+  {length keys         command type      key sequence}
+  3,      $00, $20,    ccDialPhone,      {AltD}
+  3,      $00, $23,    ccHangUpModem,    {AltH}
+  3,      $00, $3B,    ccHelp,           {F1}
+  3,      $00, $3D,    ccNewMask,        {F3}
+  3,      $00, $47,    ccHome,           {Home}
+  3,      $00, $48,    ccUp,             {Up}
+  3,      $00, $49,    ccPageUp,         {PgUp}
+  3,      $00, $4B,    ccLeft,           {Left}
+  3,      $00, $4D,    ccRight,          {Right}
+  3,      $00, $4F,    ccEnd,            {End}
+  3,      $00, $50,    ccDown,           {Down}
+  3,      $00, $51,    ccPageDn,         {PgDn}
+  2,      $03,         ccPageDn,         {^C}
+  2,      $04,         ccRight,          {^D}
+  2,      $05,         ccUp,             {^E}
+  2,      $0D,         ccSelect,         {^M, Enter}
+  2,      $0E,         ccInsertItem,     {^N}
+  2,      $12,         ccPageUp,         {^R}
+  2,      $13,         ccLeft,           {^S}
+  2,      $17,         ccUp,             {^W}
+  2,      $18,         ccDown,           {^X}
+  2,      $19,         ccDeleteItem,     {^Y}
+  2,      $1A,         ccDown,           {^Z}
+  2,      $1B,         ccQuit,           {Esc}
+  3,      $11, $12,    ccHome,           {^QR}
+  3,      $11, $03,    ccEnd,            {^QC}
+  {$IFDEF UseMouse}
+  3,      $00, $EF,    ccMouseSel,       {Click left}
+  3,      $00, $EE,    ccQuit,           {Click right}
+  3,      $00, $ED,    ccHelp,           {Click both}
+  {$ELSE}
+     0, 0, 0, 0, 0, 0, 0, 0, 0,          {100}
+  0, 0, 0,                               {110}
+  {$ENDIF}
+           0, 0, 0, 0, 0, 0, 0,          {110}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,          {120}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,          {130}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,          {140}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0           {150}
+  );
+
+{.F+}
+
+const
+  DeskMainCfgEnd  : Byte = 0;

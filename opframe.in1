@@ -1,0 +1,1518 @@
+{*********************************************************}
+{*                   OPFRAME.IN1 1.30                    *}
+{*     Copyright (c) TurboPower Software 1987, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+{------------------- Low level routines ------------------}
+
+  procedure DoLower(var L : Byte; Max : Byte);
+    {-Lower L to no more than Max}
+  begin
+    if L > Max then
+      L := Max;
+  end;
+
+  procedure DoRaise(var H : Byte; Min : Byte);
+    {-Raise H to no less than Min}
+  begin
+    if H < Min then
+      H := Min;
+  end;
+
+  procedure VSaveWindow(X1, Y1, X2, Y2 : Byte; BufPtr : ScreenBufferPtr);
+    {-Save window contents}
+  var
+    WordsPerRow : Word;
+    SrcPos : Word;
+    DestPos : Word;
+    Row : Word;
+    WordsToMove : Word; {!!.11}
+    Rows : Word;        {!!.11}
+  begin
+    if (X1 > OpCrt.VirtualWidth) or (Y1 > OpCrt.VirtualHeight) then {!!.11}
+      Exit;                                                         {!!.11}
+
+    {Compute number of words to move per row}
+    WordsPerRow := X2-X1+1;
+    WordsToMove := MinWord(OpCrt.VirtualWidth, X2)-X1+1;     {!!.11}
+    Rows := MinWord(OpCrt.VirtualHeight, Y2)-Y1+1;           {!!.11}
+
+    {Save current contents to the screen buffer}
+    SrcPos := Word(2)*(OpCrt.VirtualWidth*(Y1-1)+(X1-1));
+    DestPos := 0;
+    for Row := 1 to Rows do begin  {!!.11}
+      {$IFDEF VIRTUALPASCAL}
+      MoveScreen(Mem[OpCrt.VirtualSegment+SrcPos], BufPtr^[DestPos], WordsToMove); {!!.11}
+      {$ELSE}
+      MoveScreen(Mem[OpCrt.VirtualSegment:SrcPos], BufPtr^[DestPos], WordsToMove); {!!.11}
+      {$ENDIF}
+      Inc(SrcPos, Word(2)*OpCrt.VirtualWidth);
+      Inc(DestPos, Word(2)*WordsPerRow);
+    end;
+  end;
+
+  procedure VRestoreWindow(X1, Y1, X2, Y2 : Byte; BufPtr : ScreenBufferPtr);
+    {-Restore window contents}
+  var
+    WordsPerRow : Word;
+    SrcPos : Word;
+    DestPos : Word;
+    Row : Word;
+    WordsToMove : Word; {!!.11}
+    Rows : Word;        {!!.11}
+  begin
+    if (X1 > OpCrt.VirtualWidth) or (Y1 > OpCrt.VirtualHeight) then {!!.11}
+      Exit;                                                         {!!.11}
+
+    {Compute number of words to move per row}
+    WordsPerRow := X2-X1+1;
+    WordsToMove := MinWord(OpCrt.VirtualWidth, X2)-X1+1;     {!!.11}
+    Rows := MinWord(OpCrt.VirtualHeight, Y2)-Y1+1;           {!!.11}
+
+    {Save current contents to the screen buffer}
+    SrcPos := Word(2)*(OpCrt.VirtualWidth*(Y1-1)+(X1-1));
+    DestPos := 0;
+    for Row := 1 to Rows do begin {!!.11}
+      {$IFDEF VIRTUALPASCAL}
+      MoveScreen(BufPtr^[DestPos], Mem[OpCrt.VirtualSegment+SrcPos], WordsToMove); {!!.11}
+      {$ELSE}
+      MoveScreen(BufPtr^[DestPos], Mem[OpCrt.VirtualSegment:SrcPos], WordsToMove); {!!.11}
+      {$ENDIF}
+      Inc(SrcPos, Word(2)*OpCrt.VirtualWidth);
+      Inc(DestPos, Word(2)*WordsPerRow);
+    end;
+  end;
+
+  {-------------------------------------------------------}
+
+  constructor AbstractFrame.Init(X1, Y1, X2, Y2 : Word);
+    {-Initialize coordinates}
+  begin
+    if not Root.Init then
+      Fail;
+    frXL := X1;
+    frYL := Y1;
+    frXH := X2;
+    frYH := Y2;
+    {$IFDEF UseAdjustableWindows}
+    frMinW := 1;
+    frMinH := 1;
+    frMaxW := $FFFF;
+    frMaxH := $FFFF;
+    {$ENDIF}
+    frMinXL := 1;
+    frMinYL := 1;
+    frMaxXH := $FFFF;
+    frMaxYH := $FFFF;
+  end;
+
+  destructor AbstractFrame.Done;
+    {-Deallocate frame}
+  begin
+    Root.Done;
+  end;
+
+  procedure AbstractFrame.SetFrameAttr(Color, Mono : Byte);
+    {-Set attributes for frame border}
+  begin
+    {Does nothing unless overridden}
+  end;
+
+  {$IFDEF UseAdjustableWindows}
+  procedure AbstractFrame.SetSizeLimits(MinW, MinH, MaxW, MaxH : Word);
+    {-Set limits for sizing of frame}
+  begin
+    frMinW := MinW;
+    frMinH := MinH;
+    frMaxW := MaxW;
+    frMaxH := MaxH;
+  end;
+  {$ENDIF}
+
+  procedure AbstractFrame.SetClipLimits(MinXL, MinYL, MaxXH, MaxYH : Word);
+    {-Set limits for drawing frame (shadows get clipped)}
+  begin
+    frMinXL := MinXL;
+    frMinYL := MinYL;
+    frMaxXH := MaxXH;
+    frMaxYH := MaxYH;
+  end;
+
+  procedure AbstractFrame.Coordinates(var X1, Y1, X2, Y2 : Word);
+    {-Return the coordinates of the frame}
+  begin
+    X1 := frXL;
+    Y1 := frYL;
+    X2 := frXH;
+    Y2 := frYH;
+  end;
+
+  procedure AbstractFrame.WithinFrameCoords(var X1, Y1, X2, Y2 : Word);
+    {-Return the coordinates of region within, not including, the border}
+  begin
+    X1 := frXL+1;
+    Y1 := frYL+1;
+    X2 := frXH-1;
+    Y2 := frYH-1;
+  end;
+
+  procedure AbstractFrame.Error(Code : Word);
+    {-Report that an error occurred}
+  begin
+    RunError(Code);
+  end;
+
+  function AbstractFrame.GetLastError : Word;
+    {-Return and clear the last error code, 0 if none}
+  begin
+    GetLastError := 0;
+  end;
+
+  function AbstractFrame.PeekLastError : Word;
+    {-Return the last error code, 0 if none}
+  begin
+    PeekLastError := 0;
+  end;
+
+  procedure AbstractFrame.ClearErrors;
+    {-Clear all pending errors}
+  begin
+    while GetLastError <> 0 do ;
+  end;
+
+  procedure AbstractFrame.Draw;
+    {-Draw the frame, clipping within the specified window}
+  begin
+  end;
+
+  {$IFDEF UseAdjustableWindows}
+  procedure AbstractFrame.AdjustFrame(X1, Y1, X2, Y2 : Word);
+    {-Set new coordinates}
+  begin
+    frXL := X1;
+    frYL := Y1;
+    frXH := X2;
+    frYH := Y2;
+  end;
+  {$ENDIF}
+
+{$IFDEF UseStreams}
+
+  constructor AbstractFrame.Load(var S : IdStream);
+    {-Load from stream}
+  begin
+    Abstract;
+  end;
+
+  procedure AbstractFrame.Store(var S : IdStream);
+    {-Store to stream}
+  begin
+    Abstract;
+  end;
+
+{$ENDIF}
+
+  {-------------------------------------------------------}
+
+  procedure ScreenRect.srZeroOut;
+    {-Clear the fields of a ScreenRect}
+  begin
+    srContents := False;
+    srAllocated := False;
+    srRes := 0;
+    srBufPtr := nil;
+  end;
+
+  constructor ScreenRect.Alloc(X1, Y1, X2, Y2 : Byte);
+    {-Initialize coordinates and allocate a screen buffer}
+  begin
+    srZeroOut;
+
+    if (X1 = 0) or (Y1 = 0) or (X2 = 0) or (Y2 = 0) or {!!.02}
+       (X1 > X2) or (Y1 > Y2) then begin               {!!.02}
+      InitStatus := epFatal+ecWinCoordsBad;            {!!.02}
+      Fail;                                            {!!.02}
+    end;                                               {!!.02}
+
+    srXL := X1;
+    srXH := X2;
+    srYL := Y1;
+    srYH := Y2;
+    if not Root.Init then
+      Fail;
+
+    if not GetMemCheck(srBufPtr, BufSize) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+
+    srAllocated := True;
+  end;
+
+  constructor ScreenRect.Init(X1, Y1, X2, Y2 : Byte; BufPtr : Pointer);
+    {-Initialize coordinates and assign buffer pointer}
+  begin
+    srZeroOut;
+
+    if (X1 = 0) or (Y1 = 0) or (X2 = 0) or (Y2 = 0) or {!!.02}
+       (X1 > X2) or (Y1 > Y2) then begin               {!!.02}
+      InitStatus := epFatal+ecWinCoordsBad;            {!!.02}
+      Fail;                                            {!!.02}
+    end;                                               {!!.02}
+
+    srXL := X1;
+    srXH := X2;
+    srYL := Y1;
+    srYH := Y2;
+    srBufPtr := BufPtr;
+    if not Root.Init then
+      Fail;
+  end;
+
+  destructor ScreenRect.Done;
+    {-Deallocate buffer}
+  begin
+    if srAllocated then begin
+      FreeMemCheck(srBufPtr, BufSize);
+      srAllocated := False;
+    end else
+      srBufPtr := nil;
+    Root.Done;
+  end;
+
+  function ScreenRect.BufSize : Word;
+    {-Return required size of buffer in bytes}
+  begin
+    BufSize := Word(2)*(srXH-srXL+1)*(srYH-srYL+1);
+  end;
+
+  procedure ScreenRect.CopyFromScreen;
+    {-Copy from screen to buffer}
+  {$IFDEF UseMouse}
+  var
+    MOn : Boolean;
+  {$ENDIF}
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+    VSaveWindow(srXL, srYL, srXH, srYH, srBufPtr);
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+  end;
+
+  procedure ScreenRect.CopyToScreen;
+    {-Copy buffer to screen}
+  {$IFDEF UseMouse}
+  var
+    MOn : Boolean;
+  {$ENDIF}
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+    VRestoreWindow(srXL, srYL, srXH, srYH, srBufPtr);
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+  end;
+
+  procedure ScreenRect.CopyPartToScreen(X1, Y1, X2, Y2 : Byte);
+    {-Copy part of the buffer to the screen}
+  var
+    fBPR : Word;
+    cBPR : Word;
+    fOfs : Word;
+    cOfs : Word;
+    R : Byte;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    {Assure the coordinates are valid}
+    if (X1 < srXL) or (X2 > srXH) or (Y1 < srYL) or (Y2 > srYH) then begin
+      srRes := epNonFatal+ecWinCoordsBad;
+      Exit;
+    end;
+
+    {Get the bytes per row in full window and in chunk}
+    fBPR := Word(2)*(srXH-srXL+1);
+    cBPR := X2-X1+1;
+    {Get the first addresses in the Covers buffer and on-screen}
+    fOfs := fBPR*(Y1-srYL)+Word(2)*(X1-srXL);
+    cOfs := Word(2)*(OpCrt.VirtualWidth*(Y1-1)+(X1-1));
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+    {Restore row by row}
+    for R := Y1 to Y2 do begin
+      {$IFDEF VIRTUALPASCAL}
+      MoveScreen(srBufPtr^[fOfs], MemW[OpCrt.VirtualSegment+cOfs], cBPR);
+      {$ELSE}
+      MoveScreen(srBufPtr^[fOfs], MemW[OpCrt.VirtualSegment:cOfs], cBPR);
+      {$ENDIF}
+      Inc(fOfs, fBPR);
+      Inc(cOfs, Word(2)*OpCrt.VirtualWidth);
+    end;
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+  end;
+
+  function ScreenRect.srResult : Word;
+    {-Return most recent status code}
+  begin
+    srResult := srRes;
+    srRes := 0;
+  end;
+
+  procedure ScreenRect.Clear(FChar : Char; FAttr : Byte);
+    {-Clear with character and attribute}
+  var
+    FW : Word;
+  begin
+    FW := Swap(Word(FAttr)) or Word(FChar);
+    FillWord(srBufPtr^, BufSize shr 1, FW);
+  end;
+
+  procedure ScreenRect.Adjust(X1, Y1, X2, Y2 : Byte);
+    {-Adjust buffer to new one at coordinates X1, Y1, X2, Y2}
+  var
+    oBufSize : Word;
+    oBufPtr : ScreenBufferPtr;
+    oXL : Byte;
+    oYL : Byte;
+    oXH : Byte;
+    oYH : Byte;
+  begin
+    {Save old fields}
+    oBufPtr := srBufPtr;
+    oBufSize := BufSize;
+    oXL := srXL;
+    oYL := srYL;
+    oXH := srXH;
+    oYH := srYH;
+
+    {Set new boundaries}
+    srXL := X1;
+    srYL := Y1;
+    srXH := X2;
+    srYH := Y2;
+
+    {Allocate new buffer if the size is different}
+    if oBufSize <> BufSize then begin
+      {Deallocate old buffer}
+      if srAllocated then
+        FreememCheck(oBufPtr, oBufSize);
+      {Get new buffer}
+      if not GetMemCheck(srBufPtr, BufSize) then begin   {!!.03}
+        {Try to get back to where we were}               {!!.03}
+        srXL := oXL;                                     {!!.03}
+        srYL := oYL;                                     {!!.03}
+        srXH := oXH;                                     {!!.03}
+        srYH := oYH;                                     {!!.03}
+        srRes := epNonFatal+ecOutOfMemory;               {!!.03}
+        if srAllocated then begin                        {!!.03}
+          if not GetMemCheck(srBufPtr, oBufSize) then    {!!.03}
+            srRes := epFatal+ecOutOfMemory;              {!!.03}
+        end else                                         {!!.03}
+          srBufPtr := oBufPtr;                           {!!.03}
+      end else                                           {!!.03}
+        srAllocated := True;                             {!!.03}
+    end;
+  end;
+
+  procedure ScreenRect.Transfer(X1, Y1, X2, Y2 : Byte;
+                                FChar : Char; FAttr : Byte);
+    {-Change the size of the buffer and copy old contents into new}
+  var
+    oXL : Byte;
+    oYL : Byte;
+    oXH : Byte;
+    oYH : Byte;
+    oWid : Word;
+    nWid : Word;
+    oBufSize : Word;
+    Wid : Word;
+    R : Word;
+    oOfs : Word;
+    nOfs : Word;
+    oBufPtr : ScreenBufferPtr;
+  begin
+    {Save old fields}
+    oXL := srXL;
+    oYL := srYL;
+    oXH := srXH;
+    oYH := srYH;
+    oBufPtr := srBufPtr;
+    oBufSize := BufSize;
+
+    {Adjust boundaries}
+    srXL := X1;
+    srYL := Y1;
+    srXH := X2;
+    srYH := Y2;
+
+    if (X2-X1 <> oXH-oXL) or (Y2-Y1 <> oYH-oYL) then begin
+      {Not just a shift in position}
+
+      {Allocate new buffer}
+      if not GetMemCheck(srBufPtr, BufSize) then begin
+        {Restore to previous state}
+        srXL := oXL;                       {!!.03}
+        srYL := oYL;                       {!!.03}
+        srXH := oXH;                       {!!.03}
+        srYH := oYH;                       {!!.03}
+        srBufPtr := oBufPtr;               {!!.03}
+        srRes := epNonFatal+ecOutOfMemory; {!!.03}
+        Exit;
+      end;
+
+      {Fill if new rect is bigger in either dimension}
+      if (X2-X1 > oXH-oXL) or (Y2-Y1 > oYH-oYL) then
+        Clear(FChar, FAttr);
+
+      {Copy old contents to new}
+      oWid := Word(2)*(oXH-oXL+1);
+      nWid := Word(2)*(srXH-srXL+1);
+      Wid := MinWord(oWid, nWid);
+      oOfs := 0;
+      nOfs := 0;
+      for R := 1 to MinWord(oYH-oYL+1, srYH-srYL+1) do begin
+        move(oBufPtr^[oOfs], srBufPtr^[nOfs], Wid);
+        inc(oOfs, oWid);
+        inc(nOfs, nWid);
+      end;
+
+      {Deallocate old buffer}
+      if srAllocated then
+        FreememCheck(oBufPtr, oBufSize);
+      srAllocated := True;
+    end;
+  end;
+
+  procedure ScreenRect.StoreContents(IsOn : Boolean);
+    {-Specify whether Store and Load handle contents of screen rect}
+  begin
+    srContents := IsOn;
+  end;
+
+  function ScreenRect.HaveContents : Boolean;
+    {-Return True if contents were loaded by Load}
+  begin
+    HaveContents := srContents;
+  end;
+
+  procedure ScreenRect.Coordinates(var X1, Y1, X2, Y2 : Byte);
+    {-Return coordinates of screen rect}
+  begin
+    X1 := srXL;
+    Y1 := srYL;
+    X2 := srXH;
+    Y2 := srYH;
+  end;
+
+{$IFDEF UseStreams}
+
+  const
+    FlagByte : Byte = $FF;    {Marks a run-length packed group}
+
+  procedure ScreenRect.srUnPack1(var S : IdStream; OPos : Word);
+    {-Unpack either the characters or the attributes}
+  var
+    C : Word;
+    Count : Word;
+    Size : Word;
+    LB : Byte;
+  begin
+    Size := BufSize;
+    while OPos < Size do begin
+      S.Read(LB, SizeOf(Byte));
+      if S.PeekStatus <> 0 then
+        Exit;
+      if LB = FlagByte then begin
+        S.Read(LB, SizeOf(Byte));    {Character to repeat}
+        S.Read(Count, SizeOf(Word)); {Number of repetitions}
+        for C := 1 to Count do begin
+          srBufPtr^[Opos] := LB;
+          inc(Opos, 2);
+        end;
+      end else begin
+        {Non-repeating character}
+        srBufPtr^[Opos] := LB;
+        inc(Opos, 2);
+      end;
+    end;
+  end;
+
+  procedure ScreenRect.srUnpack(var S : IdStream);
+    {-Read screen rect from stream in packed format}
+  begin
+    srUnpack1(S, 0); {Unpack the characters}
+    srUnpack1(S, 1); {Unpack the attributes}
+  end;
+
+  constructor ScreenRect.Load(var S : IdStream);
+    {-Load a list from a stream}
+  begin
+    srZeroOut;
+    if not Root.Init then
+      Fail;
+    S.ReadRange(srXL, srAllocated);
+    srBufPtr := S.ReadPointer;
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+    if srBufPtr = nil then begin
+      if not GetMemCheck(srBufPtr, BufSize) then begin
+        Done;
+        InitStatus := epFatal+ecOutOfMemory;
+        Fail;
+      end;
+      srAllocated := True;
+    end;
+    if srContents then
+      {Read the contents of the screen rect from disk}
+      srUnpack(S);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure ScreenRect.srPack1(var S : IdStream; IPos : Word);
+    {-Pack either the characters or the attributes}
+  var
+    C : Word;
+    Count : Word;
+    Size : Word;
+    LB : Byte;
+    TB : Byte;
+    Match : Boolean;                {!!.22}
+  begin
+    LB := srBufPtr^[IPos];
+    Count := 0;
+    Size := BufSize;
+
+    repeat
+      if (IPos < Size) then begin   {!!.22}
+        TB := srBufPtr^[IPos];      {!!.22}
+        Match := (TB = LB);         {!!.22}
+      end else                      {!!.22}
+        Match := False;             {!!.22}
+      if Match then                 {!!.22}
+        {This byte matches last}
+        inc(Count)
+      else begin
+        {A break in the run}
+        if LB = FlagByte then begin
+          {Can't pack a window containing FlagByte ($FF)}
+          S.Error(epNonFatal+ecInvalidData);
+          Exit;
+        end;
+        if Count > 4 then begin
+          {Enough in a row to pack}
+          S.Write(FlagByte, SizeOf(Byte));
+          S.Write(LB, SizeOf(Byte));
+          S.Write(Count, SizeOf(Word));
+        end else
+          {Not enough to warrant packing}
+          for C := 1 to Count do
+            S.Write(LB, SizeOf(Byte));
+        Count := 1;
+        if IPos >= Size then
+          Exit;
+      end;
+
+      {Save last byte and move to next character or attribute}
+      LB := TB;
+      inc(IPos, 2);
+    until False;
+  end;
+
+  procedure ScreenRect.srPack(var S : IdStream);
+    {-Write screen rect to stream in packed format}
+  begin
+    srPack1(S, 0); {Pack the characters}
+    if (S.PeekStatus <> 0) or (srRes <> 0) then
+      Exit;
+    srPack1(S, 1); {Pack the attributes}
+  end;
+
+  procedure ScreenRect.Store(var S : IdStream);
+    {-Store a list in a stream}
+  var
+    P : ScreenBufferPtr;
+  begin
+    S.WriteRange(srXL, srAllocated);
+    if srAllocated or not S.PointerRegistered(srBufPtr) then
+      {Will allocate buffer when stream is read}
+      P := nil
+    else
+      {Will use preallocated buffer when stream is read}
+      P := srBufPtr;
+    S.WritePointer(P);
+    if srContents then
+      {Write the contents of the screen rect to disk}
+      srPack(S);
+  end;
+
+{$ENDIF}
+
+  {-------------------------------------------------------}
+
+  constructor HeaderNode.Init(Name : String; AttrColor, AttrMono : Byte;
+                              DX, DY : Integer;
+                              hType : HeaderPosType;
+                              hPosn : FrameCharType);
+    {-Allocate and link node into DoubleList}
+  begin
+    heName := nil;
+    if not DoubleListNode.Init then
+      Fail;
+
+    {Allocate space for header name and store it}
+    heMaxLen := Length(Name);
+    if not GetMemCheck(heName, heMaxLen+1) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+    heName^ := Name;
+
+    heAttrColor := AttrColor;
+    heAttrMono := AttrMono;
+    heFlags := 0;
+    heDX := DX;
+    heDY := DY;
+    heType := hType;
+    hePosn := hPosn;
+  end;
+
+  destructor HeaderNode.Done;
+    {-Deallocate header node}
+  begin
+    {Dispose of the string}
+    FreeMemCheck(heName, heMaxLen+1);
+    {Call parent's destructor}
+    DoubleListNode.Done;
+  end;
+
+  function HeaderNode.Modify(Name : String; DX, DY : Integer) : Boolean;
+    {-Change name and position of existing header}
+  begin
+    if heMaxLen < Length(Name) then begin
+      FreeMemCheck(heName, heMaxLen+1);
+      heMaxLen := Length(Name);
+      if not GetMemCheck(heName, heMaxLen+1) then begin
+        Modify := False;
+        Exit;
+      end;
+    end;
+    heName^ := Name;
+    heDX := DX;
+    heDY := DY;
+    Modify := True;
+  end;
+
+  procedure HeaderNode.ChangeAttr(Color, Mono : Byte);
+    {-Change attribute of an existing header}
+  begin
+    heAttrColor := Color;
+    heAttrMono := MapMono(Color, Mono);
+  end;
+
+  procedure HeaderNode.Update(XL, YL, XH, YH : Byte;
+                              Framed : Boolean); {!!.01}
+    {-Reset internal coordinates based on given frame coordinates}
+  var
+    MinX : Byte;
+
+    function Center(Len, Min, Width : Byte) : Integer;
+      {-Return X offset of centered string}
+    var
+      DX : Integer;
+    begin
+      DX := 1+(Integer(Width)-Len) div 2;
+      if DX < Min then
+        DX := Min;
+      Center := DX;
+    end;
+
+    function Right(Len, Min, Width : Byte) : Integer;
+      {-Return X offset of right-justified string}
+    var
+      DX : Integer;
+    begin
+      DX := Integer(Width)-Len-1;
+      if DX < Min then
+        DX := Min;
+      Right := DX;
+    end;
+
+  begin
+    case heType of
+      heCustom :
+        {Not automatically adjusted}
+        Exit;
+      heSpan :
+        {Handled differently, at Frame level}
+        Exit;
+
+      heTL, heTC, heTR :
+        heDY := 0;
+      heBL, heBC, heBR :
+        heDY := YH-YL;
+    end;
+
+    if Framed then
+      MinX := 1
+    else
+      MinX := 0;
+
+    case heType of
+      heTL, heBL :
+        heDX := MinX;
+      heTC, heBC :
+        heDX := Center(Length(heName^), MinX, XH-XL+1-2*MinX);
+      heTR, heBR :
+        heDX := Right(Length(heName^), MinX, XH-XL+1);
+    end;
+  end;
+
+  procedure HeaderNode.Coordinates(XL, YL, XH, YH : Byte;
+                                   var heXL, heYL, heXH, heYH : Byte);
+    {-Return the absolute coordinates of a rectangle surrounding header}
+  var
+    X : Integer;
+    Y : Integer;
+  begin
+    case hePosn of
+      frTL, frTT, frBB, frLL, frRR :
+        begin
+          X := XL;
+          Y := YL;
+        end;
+      frBL :
+        begin
+          X := XL;
+          Y := YH;
+        end;
+      frTR :
+        begin
+          X := XH;
+          Y := YL;
+        end;
+      frBR :
+        begin
+          X := XH;
+          Y := YH;
+        end;
+    end;
+    heXL := X+heDX;
+    heYL := Y+heDY;
+    if (heType = heSpan) and ((hePosn = frLL) or (hePosn = frRR)) then begin {!!.20}
+      heXH := heXL;                                                     {!!.20}
+      heYH := heYL+Length(heName^)-1;                                   {!!.20}
+    end else begin                                                      {!!.20}
+      heXH := heXL+Length(heName^)-1;                                   {!!.20}
+      heYH := heYL;                                                     {!!.20}
+    end;                                                                {!!.20}
+  end;
+
+  procedure HeaderNode.Disable(IsOn : Boolean);
+    {-Disable or reenable display of header}
+  begin
+    if IsOn then
+      SetByteFlag(heFlags, heDisabled)
+    else
+      ClearByteFlag(heFlags, heDisabled);
+  end;
+
+  function HeaderNode.Disabled : Boolean;
+    {-Return True if header is disabled}
+  begin
+    Disabled := ByteFlagIsSet(heFlags, heDisabled);
+  end;
+
+  procedure HeaderNode.Draw(XL, YL, XH, YH : Byte; Framed : Boolean);
+    {-Draw one header node}
+  var
+    X : Integer;
+    Y : Integer;
+    MaxLen : Integer;
+    Attr : Byte;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    if Disabled then
+      Exit;
+    case hePosn of
+      frTL, frTT, frBB, frLL, frRR :
+        begin
+          X := XL;
+          Y := YL;
+        end;
+      frBL :
+        begin
+          X := XL;
+          Y := YH;
+        end;
+      frTR :
+        begin
+          X := XH;
+          Y := YL;
+        end;
+      frBR :
+        begin
+          X := XH;
+          Y := YH;
+        end;
+    end;
+    inc(Y, heDY);
+    inc(X, heDX);
+    if (Y < 1) or (X < 1) then
+      Exit;
+
+    Attr := ColorMono(heAttrColor, heAttrMono);
+
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+
+    if heType = heSpan then begin
+      case hePosn of
+        frTT, frBB : FastWrite(heName^, Y, X, Attr);
+        frLL, frRR : FastVert(heName^, Y, X, Attr);
+      end;
+    end else begin
+      if (heType <> heCustom) and {!!.03}
+      (Y >= YL) and (Y <= YH) and (X >= XL) and (X < XH) then begin
+        {Header starts within frame, clip if required}
+        MaxLen := XH-X;
+        if not Framed then
+          inc(MaxLen);
+      end else
+        {Keep header from overrunning screen}
+        MaxLen := ScreenWidth+1-X;
+      if MaxLen > 0 then
+        FastWrite(Copy(heName^, 1, MaxLen), Y, X, Attr);
+    end;
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor HeaderNode.Load(var S : IdStream);
+    {-Load from stream}
+  var
+    Name : String;
+  begin
+    heName := nil;
+    if not DoubleListNode.Init then
+      Fail;
+
+    {Read information from the stream}
+    Name := S.ReadString;
+    S.ReadRange(heMaxLen, heFlags);
+    S.Read(heFlags, SizeOf(Byte));
+    S.ReadRange(heDX, heDummy);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {Allocate space for header name and store it}
+    if not GetMemCheck(heName, heMaxLen+1) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+    if Length(Name) > heMaxLen then
+      Name[0] := Char(heMaxLen);
+    heName^ := Name;
+  end;
+
+  procedure HeaderNode.Store(var S : IdStream);
+    {-Store to stream}
+  begin
+    S.WriteString(heName^);
+    S.WriteRange(heMaxLen, heDummy);
+  end;
+
+{$ENDIF}
+
+  {-------------------------------------------------------}
+
+  {$IFDEF UseShadows}
+
+  constructor ShadowNode.Init(ShadChar : Char;
+                              AttrColor, AttrMono : Byte;
+                              Posn : FrameEdgeType;
+                              DX, DY : Integer;
+                              Width, Height : Byte);
+    {-Initialize shadow node}
+  begin
+    shBufPtr := nil;
+    if not DoubleListNode.Init then
+      Fail;
+
+    {Allocate space for covers buffer}
+    if not GetMemCheck(shBufPtr, Word(2)*Width*Height) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+
+    shChar := ShadChar;
+    shAttrColor := AttrColor;
+    shAttrMono := AttrMono;
+    shPosn := Posn;
+    shDX := DX;
+    shDY := DY;
+    shWidth := Width;
+    shHeight := Height;
+  end;
+
+  destructor ShadowNode.Done;
+    {-Deallocate shadow node}
+  begin
+    {Dispose of the covers buffer}
+    FreeMemCheck(shBufPtr, Word(2)*shWidth*shHeight);
+    {Call parent's destructor}
+    DoubleListNode.Done;
+  end;
+
+  procedure ShadowNode.Coordinates(XL, YL, XH, YH : Byte;
+                                   minXL, minYL, maxXH, maxYH : Byte;
+                                   var shXL, shYL, shXH, shYH : Byte);
+    {-Return the absolute coordinates of the shadow, clipping as needed}
+  var
+    tXL : Integer;
+    tYL : Integer;
+  begin
+    case shPosn of
+      frTT, frLL :
+        begin
+          tXL := XL;
+          tYL := YL;
+        end;
+      frRR :
+        begin
+          tXL := XH;
+          tYL := YL;
+        end;
+      frBB :
+        begin
+          tXL := XL;
+          tYL := YH;
+        end;
+    end;
+    inc(tXL, shDX);
+    inc(tYL, shDY);
+    shXH := tXL+shWidth-1;
+    shYH := tYL+shHeight-1;
+    if tXL < minXL then
+      shXL := minXL
+    else
+      shXL := tXL;
+    if tYL < minYL then
+      shYL := minYL
+    else
+      shYL := tYL;
+    if shXH > maxXH then
+      shXH := maxXH;
+    if shYH > maxYH then
+      shYH := maxYH;
+  end;
+
+  procedure ShadowNode.Draw(XL, YL, XH, YH : Byte;
+                            minXL, minYL, maxXH, maxYH : Byte);
+    {-Draw one shadow node}
+  var
+    shXL : Byte;
+    shYL : Byte;
+    shXH : Byte;
+    shYH : Byte;
+    Row : Byte;
+    Attr : Byte;
+    Width : Byte;
+    S : String;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    {Get the absolute coordinates of the rectangle}
+    Coordinates(XL, YL, XH, YH,
+                minXL, minYL, maxXH, maxYH,
+                shXL, shYL, shXH, shYH);
+    if (shXH >= shXL) and (shYH >= shYL) then begin
+      {$IFDEF UseMouse}
+      HideMousePrim(MOn);
+      {$ENDIF}
+      {Save existing screen under shadow}
+      VSaveWindow(shXL, shYL, shXH, shYH, shBufPtr);
+      Attr := ColorMono(shAttrColor, shAttrMono);
+      Width := shXH-shXL+1;
+      {Draw shadow}
+      if shChar = SeeThruChar then
+        {Special case -- just change attribute}
+        for Row := shYL to shYH do
+          OpCrt.ChangeAttribute(Width, Row, shXL, Attr)
+      else begin
+        {Overwrite with character}
+        S := CharStr(shChar, Width);
+        for Row := shYL to shYH do
+          OpCrt.FastWrite(S, Row, shXL, Attr);
+      end;
+      {$IFDEF UseMouse}
+      ShowMousePrim(MOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure ShadowNode.Erase(XL, YL, XH, YH : Byte;
+                             minXL, minYL, maxXH, maxYH : Byte);
+    {-Erase one shadow node}
+  var
+    shXL : Byte;
+    shYL : Byte;
+    shXH : Byte;
+    shYH : Byte;
+    Row : Byte;
+    Attr : Byte;
+    S : String;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    {Get the absolute coordinates of the rectangle}
+    Coordinates(XL, YL, XH, YH,
+                minXL, minYL, maxXH, maxYH,
+                shXL, shYL, shXH, shYH);
+    if (shXH >= shXL) and (shYH >= shYL) then begin
+      {$IFDEF UseMouse}
+      HideMousePrim(MOn);
+      {$ENDIF}
+      {Restore existing screen}
+      VRestoreWindow(shXL, shYL, shXH, shYH, shBufPtr);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MOn);
+      {$ENDIF}
+    end;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor ShadowNode.Load(var S : IdStream);
+    {-Load from stream}
+  begin
+    shBufPtr := nil;
+    if not DoubleListNode.Init then
+      Fail;
+
+    {Read from stream}
+    S.ReadRange(shChar, shBufPtr);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {Allocate space for covers buffer}
+    if not GetMemCheck(shBufPtr, Word(2)*shWidth*shHeight) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+  end;
+
+  procedure ShadowNode.Store(var S : IdStream);
+    {-Store to stream}
+  begin
+    S.WriteRange(shChar, shBufPtr);
+  end;
+
+{$ENDIF}
+
+  {$ENDIF}
+
+  {-------------------------------------------------------}
+
+  {$IFDEF UseHotSpots}
+
+  constructor HotNode.Init(hType : HeaderPosType;
+                           Posn : FrameCharType;
+                           DX, DY : Integer;
+                           Width, Height : Byte;
+                           User : Byte);
+    {-Initialize hot node}
+  begin
+    if not DoubleListNode.Init then
+      Fail;
+    hnType := hType;
+    hnPosn := Posn;
+    hnDX := DX;
+    hnDY := DY;
+    hnWidth := Width;
+    hnHeight := Height;
+    hnUser := User;
+  end;
+
+  destructor HotNode.Done;
+    {-Deallocate shadow node}
+  begin
+    {Call parent's destructor}
+    DoubleListNode.Done;
+  end;
+
+  procedure HotNode.Modify(DX, DY : Integer;
+                           Width, Height : Byte);
+    {-Change size or position of hot spot}
+  begin
+    hnDX := DX;
+    hnDY := DY;
+    hnWidth := Width;
+    hnHeight := Height;
+  end;
+
+  function HotNode.Within(X, Y, X1, Y1, X2, Y2 : Byte; var User : Byte) : Boolean;
+    {-Return True and User code if [X, Y] is within the hot spot}
+  var
+    hXL : Integer;
+    hXH : Integer;
+    hYL : Integer;
+    hYH : Integer;
+    Inside : Boolean;
+  begin
+    case hnPosn of
+      frTL, frTT, frLL :
+        begin
+          hXL := X1;
+          hYL := Y1;
+        end;
+      frBL, frBB :
+        begin
+          hXL := X1;
+          hYL := Y2;
+        end;
+      frTR, frRR :
+        begin
+          hXL := X2;
+          hYL := Y1;
+        end;
+      frBR :
+        begin
+          hXL := X2;
+          hYL := Y2;
+        end;
+    end;
+    inc(hXL, hnDX);
+    inc(hYL, hnDY);
+    hXH := hXL+hnWidth-1;
+    hYH := hYL+hnHeight-1;
+
+    Inside := (X >= hXL) and (X <= hXH) and (Y >= hYL) and (Y <= hYH);
+    if Inside then
+      User := hnUser;
+    Within := Inside;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor HotNode.Load(var S : IdStream);
+    {-Load from stream}
+  begin
+    if not DoubleListNode.Init then
+      Fail;
+
+    {Read from stream}
+    S.Read(hnUser, Ofs(hnPosn)-Ofs(hnUser)+SizeOf(FrameCharType));
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure HotNode.Store(var S : IdStream);
+    {-Store to stream}
+  begin
+    S.Write(hnUser, Ofs(hnPosn)-Ofs(hnUser)+SizeOf(FrameCharType));
+  end;
+
+{$ENDIF}
+
+  {$ENDIF}
+
+  {-------------------------------------------------------}
+
+  {$IFDEF UseScrollBars}
+
+  constructor ScrollBar.Init(Vertical : Boolean;
+                             FixPos, MinPos, MaxPos : Byte;
+                             MinUser, MaxUser : LongInt;
+                             SliChar, BarChar, DecChar, IncChar : Char;
+                             var Colors : ColorSet);
+    {-Initialize a scroll bar}
+  begin
+    if not Root.Init then
+      Fail;
+    {Assure space for two arrows and optional slider}
+    if MaxPos <= MinPos then begin
+      Done;
+      InitStatus := epFatal+ecWinCoordsBad;
+      Fail;
+    end;
+
+    {Assign all the data fields}
+    sbFlags := 0;
+    if Vertical then
+      SetByteFlag(sbFlags, sbVertical);
+    sbFixPos := FixPos;
+    sbMinPos := MinPos;
+    sbMaxPos := MaxPos;
+    sbCurPos := MinPos;
+    sbMinUser := MinUser;
+    sbMaxUser := MaxUser;
+    sbCurUser := MinUser;
+    sbSliChar := SliChar;
+    sbBarChar := BarChar;
+    sbDecChar := DecChar;
+    sbIncChar := IncChar;
+    with Colors do begin
+      sbSliColor := SliderColor;
+      sbSliMono := SliderMono;
+      sbBarColor := ScrollBarColor;
+      sbBarMono := ScrollBarMono;
+      sbArrowColor := HotSpotColor;
+      sbArrowMono := HotSpotMono;
+    end;
+  end;
+
+  destructor ScrollBar.Done;
+    {-Dispose of scroll bar}
+  begin
+    Root.Done;
+  end;
+
+  procedure ScrollBar.Draw;
+    {-Draw the scroll bar the first time, without slider}
+  var
+    A : Byte;
+    B : Byte;
+    S : string;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    if sbMaxPos <= sbMinPos then
+      Exit;
+    if sbMaxPos > sbMinPos+1 then
+      S := CharStr(sbBarChar, sbMaxPos-sbMinPos-1)
+    else
+      S := '';
+    A := ColorMono(sbBarColor, sbBarMono);
+    B := ColorMono(sbArrowColor, sbArrowMono);
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+
+    if ByteFlagIsSet(sbFlags, sbVertical) then begin
+      OpCrt.FastVert(S, sbMinPos+1, sbFixPos, A);
+      OpCrt.FastWrite(sbDecChar, sbMinPos, sbFixPos, B);
+      OpCrt.FastWrite(sbIncChar, sbMaxPos, sbFixPos, B);
+    end else begin
+      OpCrt.FastWrite(S, sbFixPos, sbMinPos+1, A);
+      OpCrt.FastWrite(sbDecChar, sbFixPos, sbMinPos, B);
+      OpCrt.FastWrite(sbIncChar, sbFixPos, sbMaxPos, B);
+    end;
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+
+    {Slider isn't visible now}
+    ClearSlider;
+  end;
+
+  procedure ScrollBar.SetUserValue(UserVal : LongInt);
+    {-Initialize the user value without drawing it}
+  begin
+    sbCurUser := UserVal;
+    sbCurPos := SliderPosition(UserVal);
+    SetByteFlag(sbFlags, sbUserInit);
+  end;
+
+  function ScrollBar.UserValue(SliderPos : Byte) : LongInt;
+    {-Convert slider position (sbMinPos+1..sbMaxPos-1) to User value}
+  var
+    Min : Byte;
+    Max : Byte;
+  begin
+    Min := sbMinPos+1;
+    Max := sbMaxPos-1;
+    if Max <= Min then begin
+      UserValue := sbMinUser;
+      Exit;
+    end;
+    if SliderPos < Min then
+      SliderPos := Min
+    else if SliderPos > Max then
+      SliderPos := Max;
+    UserValue := sbMinUser+((sbMaxUser-sbMinUser)*(SliderPos-Min)) div (Max-Min);
+  end;
+
+  function ScrollBar.SliderPosition(UserVal : LongInt) : Byte;
+    {-Convert User value to slider position}
+  var
+    Min : Byte;
+    Max : Byte;
+  begin
+    Min := sbMinPos+1;
+    Max := sbMaxPos-1;
+    if sbMaxUser <= sbMinUser then begin
+      SliderPosition := Min;
+      Exit;
+    end;
+    if UserVal < sbMinUser then
+      UserVal := sbMinUser
+    else if UserVal > sbMaxUser then
+      UserVal := sbMaxUser;
+    SliderPosition := Min+((UserVal-sbMinUser)*(Max-Min)) div (sbMaxUser-sbMinUser);
+  end;
+
+  procedure ScrollBar.sbAdjust(dFixPos, dMinPos, dMaxPos : Integer);
+    {-Change the screen size of a scroll bar. Assumes slider not visible}
+  begin
+    Inc(sbFixPos, dFixPos);
+    Inc(sbMinPos, dMinPos);
+    Inc(sbMaxPos, dMaxPos);
+    sbCurPos := SliderPosition(sbCurUser);
+  end;
+
+  procedure ScrollBar.ChangeUserRange(MinUser, MaxUser : LongInt;
+                                      UpdateScreen : Boolean);
+    {-Change the user range. Erases slider if UpdateScreen is True}
+  begin
+    if UpdateScreen then
+      if (MinUser <> sbMinUser) or (MaxUser <> sbMaxUser) then
+        if SliderVisible then
+          EraseSlider;
+    sbMinUser := MinUser;
+    sbMaxUser := MaxUser;
+    sbCurPos := SliderPosition(sbCurUser);
+  end;
+
+  function ScrollBar.SliderVisible : Boolean;
+    {-Return True if the slider is visible}
+  begin
+    SliderVisible := ByteFlagIsSet(sbFlags, sbVisible);
+  end;
+
+  function ScrollBar.SliderInitialized : Boolean;
+    {-Return True if the user value is initialized}
+  begin
+    SliderInitialized := ByteFlagIsSet(sbFlags, sbUserInit);
+  end;
+
+  procedure ScrollBar.ClearSlider;
+    {-Mark the slider as not visible}
+  begin
+    ClearByteFlag(sbFlags, sbVisible);
+  end;
+
+  procedure ScrollBar.EraseSlider;
+    {-Erase the current slider}
+  var
+    A : Byte;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    if SliderVisible then begin
+      A := ColorMono(sbBarColor, sbBarMono);
+      {$IFDEF UseMouse}
+      HideMousePrim(MOn);
+      {$ENDIF}
+      if ByteFlagIsSet(sbFlags, sbVertical) then
+        FastWrite(sbBarChar, sbCurPos, sbFixPos, A)
+      else
+        FastWrite(sbBarChar, sbFixPos, sbCurPos, A);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MOn);
+      {$ENDIF}
+      ClearSlider;
+    end;
+  end;
+
+  procedure ScrollBar.DrawSlider(UserVal : LongInt);
+    {-Draw the slider}
+  var
+    SliPos : Byte;
+    A : Byte;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    SliPos := SliderPosition(UserVal);
+    if (SliPos <> sbCurPos) or not SliderVisible then begin
+      {$IFDEF UseMouse}
+      HideMousePrim(MOn);
+      {$ENDIF}
+      if SliderVisible then
+        if SliPos <> sbCurPos then
+          EraseSlider;
+      if SliPos <> 0 then begin
+        A := ColorMono(sbSliColor, sbSliMono);
+        if ByteFlagIsSet(sbFlags, sbVertical) then
+          FastWrite(sbSliChar, SliPos, sbFixPos, A)
+        else
+          FastWrite(sbSliChar, sbFixPos, SliPos, A);
+      end;
+      {$IFDEF UseMouse}
+      ShowMousePrim(MOn);
+      {$ENDIF}
+    end;
+    sbCurPos := SliPos;
+    sbCurUser := UserVal;
+    SetByteFlag(sbFlags, sbVisible+sbUserInit);
+  end;
+
+  procedure ScrollBar.DrawCurrentSlider;
+    {-Draw the current slider}
+  begin
+    DrawSlider(sbCurUser);
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor ScrollBar.Load(var S : IdStream);
+    {-Load from stream}
+  begin
+    {Call parent's constructor}
+    if not Root.Init then
+      Fail;
+
+    {Read from stream}
+    S.Read(sbFlags, Ofs(sbArrowMono)-Ofs(sbFlags)+SizeOf(Byte));
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure ScrollBar.Store(var S : IdStream);
+    {-Store to stream}
+  begin
+    S.Write(sbFlags, Ofs(sbArrowMono)-Ofs(sbFlags)+SizeOf(Byte));
+  end;
+
+{$ENDIF}
+
+  {$ENDIF}

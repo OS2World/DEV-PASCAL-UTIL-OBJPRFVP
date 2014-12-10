@@ -1,0 +1,588 @@
+  {*********************************************************}
+  {*                    OPDIR.IN1 1.30                     *}
+  {*     Copyright (c) TurboPower Software 1987,1992.      *}
+  {*                 All rights reserved.                  *}
+  {*********************************************************}
+
+  {-------------- file and directory manipulation ---------------}
+
+  function CompletePath(Path : PathStr) : PathStr;
+    {-Convert a relative directory name into a complete one}
+  var
+    DrCh : Char;
+    ColPos : Byte;
+    DrNum : Byte;
+    I : Word;
+    SaveDir : PathStr;
+    CurDir : PathStr;
+  begin
+    GetDir(0, CurDir);
+    ColPos := pos(':', Path);
+    if ColPos = 2 then begin
+      {Get current directory on specified drive}
+      DrCh := Upcase(Path[1]);
+      if DrCh >= 'A' then
+        GetDir(Byte(DrCh)-Byte('A')+1, SaveDir)
+      else
+        ColPos := 0;
+    end;
+    ChDir(Path);
+    DosError := IoResult;
+    if DosError = 0 then begin
+      GetDir(0, Path);
+      if ColPos = 2 then begin
+        {Restore current directory on other drive}
+        ChDir(SaveDir);
+        {Watch out! ChDir may set IoResult}
+        I := IoResult;
+      end;
+    end else                                 {!!.11}
+      {Return empty path for an invalid one} {!!.11}
+      Path := '';                            {!!.11}
+    ChDir(CurDir);
+    CompletePath := AddBackSlash(Path);
+  end;
+(* alternate implementation may be smaller
+  var
+    Tmp : PathStr;
+  begin
+    DosError := 0;
+    Tmp := FExpand(AddBackSlash(Path)+'*.*');
+    if DosError <> 0 then
+      CompletePath := ''
+    else
+      CompletePath := AddBackSlash(JustPathName(Tmp));
+  end;
+*)
+
+  function HasWildCards(FName : PathStr) : Boolean;
+    {-Return True if FName contains wildcards}
+  begin
+    HasWildCards := (pos('?', FName) <> 0) or (pos('*', FName) <> 0);
+  end;
+
+  function DosSize(Size : LongInt; ClusterSize : Word) : LongInt;
+    {-Return size of file rounded up to next cluster}
+  begin
+    DosSize := ClusterSize*((Size+ClusterSize-1) div ClusterSize);
+  end;
+
+  {---------------- Sort routines ------------------}
+
+  {$S+} {Catch stack overflow with a runtime error}
+  procedure DirList.diQuickSort(L, R : Word);
+    {-General recursive quicksort}
+  var
+    I : Word;
+    J : Word;
+    ISet : Boolean; {!!.01}
+  begin
+    I := L;
+    J := R;
+    {Save pivot}
+    Pivot := diDPtr^[(L+R) shr 1];
+    repeat
+      while diLess(diDPtr^[I], Pivot) do
+        Inc(I);
+      while diLess(Pivot, diDPtr^[J]) do
+        Dec(J);
+      if I <= J then begin
+        {Swap elements I and J}
+        ExchangeStructs(diDPtr^[I], diDPtr^[J], SizeOf(DirRec));
+        if FlagIsSet(pkFlags, pkBitSetAlloc) then {!!.01}
+          with pkSelectSet do begin               {!!.01}
+            ISet := BitIsSet(I);                  {!!.01}
+            ControlBit(I, BitIsSet(J));           {!!.01}
+            ControlBit(J, ISet);                  {!!.01}
+          end;                                    {!!.01}
+        Inc(I);
+        Dec(J);
+      end;
+    until I > J;
+    if L < J then
+      diQuickSort(L, J);
+    if I < R then
+      diQuickSort(I, R);
+  end;
+  {$S-}
+
+  procedure SortNone(DirPtr : DirListPtr);
+    {-No sort}
+  begin
+  end;
+
+  function LessName(var X, Y : DirRec) : Boolean;
+    {-Sort ordering -- alphabetically by name then extension}
+  var
+    Xdrive : Boolean;
+    Ydrive : Boolean;
+  begin
+    Xdrive := (X.Attr = diDriveAttr);
+    Ydrive := (Y.Attr = diDriveAttr);
+    if Xdrive = Ydrive then
+      LessName := (X.Name < Y.Name)
+    else
+      LessName := Xdrive;
+  end;
+
+  procedure SortName(DirPtr : DirListPtr);
+    {-Sort alphabetically by name, then by extension}
+  begin
+    with DirPtr^ do begin
+      diLess := LessName;
+      diQuickSort(1, pkItems);
+    end;
+  end;
+
+  function LessDirName(var X, Y : DirRec) : Boolean;
+    {-Sort directories first, then alphabetically by name and extension}
+  var
+    Xdir : Boolean;
+    Ydir : Boolean;
+    Xdrive : Boolean;
+    Ydrive : Boolean;
+  begin
+    Xdrive := (X.Attr = diDriveAttr);
+    Ydrive := (Y.Attr = diDriveAttr);
+    if Xdrive = Ydrive then begin
+      Xdir := ByteFlagIsSet(X.Attr, Directory);
+      Ydir := ByteFlagIsSet(Y.Attr, Directory);
+      if Xdir = YDir then
+        LessDirName := LessName(X, Y)
+      else
+        LessDirName := Xdir;
+    end else
+      LessDirName := Xdrive;
+  end;
+
+  procedure SortDirName(DirPtr : DirListPtr);
+    {-Sort directories first, then alphabetically by name and extension}
+  begin
+    with DirPtr^ do begin
+      diLess := LessDirName;
+      diQuickSort(1, pkItems);
+    end;
+  end;
+
+  function LessSize(var X, Y : DirRec) : Boolean;
+    {-Sort by size, then by name and extension}
+  begin
+    if X.Size < Y.Size then
+      LessSize := True
+    else if X.Size > Y.Size then
+      LessSize := False
+    else
+      LessSize := LessName(X, Y);
+  end;
+
+  procedure SortSize(DirPtr : DirListPtr);
+    {-Sort by size, then by name and extension}
+  begin
+    with DirPtr^ do begin
+      diLess := LessSize;
+      diQuickSort(1, pkItems);
+    end;
+  end;
+
+  function LessTime(var X, Y : DirRec) : Boolean;
+    {-Sort by date, then by name and extension}
+  var
+    XAbs : LongInt;
+    YAbs : LongInt;
+  begin
+    XAbs := X.Time xor $80000000;
+    YAbs := Y.Time xor $80000000;
+    if XAbs < YAbs then
+      LessTime := True
+    else if XAbs > YAbs then
+      LessTime := False
+    else
+      LessTime := LessName(X, Y);
+  end;
+
+  procedure SortTime(DirPtr : DirListPtr);
+    {-Sort by date, then by name and extension}
+  begin
+    with DirPtr^ do begin
+      diLess := LessTime;
+      diQuickSort(1, pkItems);
+    end;
+  end;
+
+  function LessNameDirDrive(var X, Y : DirRec) : Boolean; {!!.03}
+    {-Sort files first, then directories, then drives}
+  var
+    Xdir : Boolean;
+    Ydir : Boolean;
+    Xdrive : Boolean;
+    Ydrive : Boolean;
+  begin
+    Xdrive := (X.Attr = diDriveAttr);
+    Ydrive := (Y.Attr = diDriveAttr);
+    if Xdrive = Ydrive then begin
+      Xdir := ByteFlagIsSet(X.Attr, Directory);
+      Ydir := ByteFlagIsSet(Y.Attr, Directory);
+      if Xdir = YDir then
+        LessNameDirDrive := LessName(X, Y)
+      else
+        LessNameDirDrive := Ydir;
+    end else
+      LessNameDirDrive := Ydrive;
+  end;
+
+  procedure SortNameDirDrive(DirPtr : DirListPtr);      {!!.03}
+    {-Sort files first, then directories, then drives}
+  begin
+    with DirPtr^ do begin
+      diLess := LessNameDirDrive;
+      diQuickSort(1, pkItems);
+    end;
+  end;
+
+  {--------------- Reject routines ----------------}
+
+  function RejectNone(var D : DirRec; DirPtr : DirListPtr) : Boolean;
+    {-Don't reject any files except '.' and Volume label}
+  begin
+    RejectNone := (D.Name = '.') or ByteFlagIsSet(D.Attr, VolumeID) or
+                  {Reject parent directory of root directory,}           {!!.03}
+                  {which shows up for SUBSTed drives}                    {!!.03}
+                  ((D.Name = '..') and                                   {!!.03}
+                   (DirPtr^.diCurDir[Length(DirPtr^.diCurDir)-1] = ':'));{!!.03}
+  end;
+
+  function RejectExtensions(var D : DirRec; DirPtr : DirListPtr) : Boolean;
+    {-Reject files with extensions in RejectSet}
+  begin
+    if RejectNone(D, DirPtr) then
+      RejectExtensions := True
+    else with DirPtr^ do
+      if diRejectCnt = 0 then
+        RejectExtensions := False
+      else
+        RejectExtensions := diRejectSet.Member(JustExtension(D.Name));
+  end;
+
+  function RejectFiles(var D : DirRec; DirPtr : DirListPtr) : Boolean;
+    {-Reject all but subdirectories}
+  begin
+    if RejectNone(D, DirPtr) then
+      RejectFiles := True
+    else
+      RejectFiles := not ByteFlagIsSet(D.Attr, Directory);
+  end;
+
+  {--------------- Format routines ----------------}
+
+  function DirList.diRecPtr(Item : Word) : DispRecPtr;
+    {-Return pointer to formatted name string}
+  var
+    P : Pointer;
+  begin
+    P := diSPtr;
+    Inc(OS(P).O, (diMaxFmatLen+2)*(Item-1));
+    diRecPtr := P;
+  end;
+
+  procedure AppendString(var S : string; Append : string);
+    {-Append a string to S. No overflow checking}
+  begin
+    move(Append[1], S[Byte(S[0])+1], Byte(Append[0]));
+    inc(Byte(S[0]), Byte(Append[0]));
+  end;
+
+  procedure AppendChar(var S : string; Ch : Char);
+    {-Append a character to S. No overflow checking}
+  begin
+    inc(S[0]);
+    S[Byte(S[0])] := Ch;
+  end;
+
+  procedure NameFormat(var D : DirRec; var pkCat : Byte;
+                       var S : String; DirPtr : DirListPtr);
+    {-Simple default format for directory lists}
+  begin
+    with DirPtr^, D do begin
+      S := Name;
+      if Attr = diDriveAttr then begin
+        S := diLeftDrive+S+diRightDrive;
+        pkCat := diDirCat;
+      end else if ByteFlagIsSet(Attr, Directory) then begin
+        AppendString(S, '\');
+        pkCat := diDirCat;
+      end else
+        pkCat := pkNormal;
+    end;
+  end;
+
+  procedure NameSizeKFormat(var D : DirRec; var pkCat : Byte;
+                            var S : String; DirPtr : DirListPtr);
+    {-Show name and size in Kilobytes}
+  const
+    kStr : array[Boolean] of char = ('k', 'K');
+  var
+    SizeK : LongInt;
+    SizeStr : String[7];
+  begin
+    with DirPtr^, D do
+      if Attr = diDriveAttr then begin
+        S := diLeftDrive+Name+diRightDrive;
+        S := PadCh(S, wBackChar, 13);
+        pkCat := diDirCat;
+      end else begin
+        S := PadCh(Name, wBackChar, 13);
+        if ByteFlagIsSet(Attr, Directory) then begin
+          AppendString(S, diDirStr);
+          pkCat := diDirCat;
+        end else begin
+          SizeK := (Size+1023) div 1024;
+          SizeStr := Long2Str(SizeK)+kStr[FlagIsSet(diFlags, diFilesUpcase)];
+          SizeStr := LeftPadCh(SizeStr, wBackChar, 6);
+          AppendString(S, SizeStr);
+          pkCat := pkNormal;
+        end;
+      end;
+  end;
+
+  procedure NameSizeFormat(var D : DirRec; var pkCat : Byte;
+                           var S : String; DirPtr : DirListPtr);
+    {-Show name and size in bytes}
+  var
+    SizeStr : String[9];
+  begin
+    with DirPtr^, D do
+      if Attr = diDriveAttr then begin
+        S := diLeftDrive+Name+diRightDrive;
+        S := PadCh(S, wBackChar, 13);
+        pkCat := diDirCat;
+      end else begin
+        S := PadCh(Name, wBackChar, 13);
+        if ByteFlagIsSet(Attr, Directory) then begin
+          AppendString(S, diDirStr);
+          pkCat := diDirCat;
+        end else begin
+          SizeStr := Long2Str(Size);
+          SizeStr := LeftPadCh(SizeStr, wBackChar, 9);
+          AppendString(S, SizeStr);
+          pkCat := pkNormal;
+        end;
+      end;
+  end;
+
+  {$IFDEF UseDates}
+  procedure AppendDateTime(var D : DirRec; var S : String; DirPtr : DirListPtr);
+    {-Format the date/time and append to S}
+  var
+    DT : DateTime;
+  begin
+    with DirPtr^, D do
+      if Time <> 0 then begin
+        UnpackTime(Time, DT);
+        with DT do begin
+          if Length(diDatePict) <> 0 then begin
+            AppendString(S, wBackChar);
+            AppendString(S, DateToDateString(diDatePict,
+                                             DMYtoDate(Day, Month, Year)));
+          end;
+          if Length(diTimePict) <> 0 then begin
+            AppendString(S, wBackChar);
+            AppendString(S, TimeToTimeString(diTimePict,
+                                             HMStoTime(Hour, Min, Sec)));
+          end;
+        end;
+      end;
+  end;
+
+  procedure NameTimeFormat(var D : DirRec; var pkCat : Byte;
+                           var S : String; DirPtr : DirListPtr);
+    {-Show name and date/time}
+  begin
+    NameFormat(D, pkCat, S, DirPtr);
+    if D.Attr <> diDriveAttr then begin     {!!.01}
+      S := PadCh(S, DirPtr^.wBackChar, 13); {!!.01}
+      AppendDateTime(D, S, DirPtr);
+    end;                                    {!!.01}
+  end;
+
+  procedure NameSizeKTimeFormat(var D : DirRec; var pkCat : Byte;
+                                var S : String; DirPtr : DirListPtr);
+    {-Show name, size(K), time}
+  begin
+    NameSizeKFormat(D, pkCat, S, DirPtr);
+    if D.Attr <> diDriveAttr then
+      AppendDateTime(D, S, DirPtr);
+  end;
+
+  procedure NameSizeTimeFormat(var D : DirRec; var pkCat : Byte;
+                               var S : String; DirPtr : DirListPtr);
+    {-Show name, size, time}
+  begin
+    NameSizeFormat(D, pkCat, S, DirPtr);
+    if D.Attr <> diDriveAttr then
+      AppendDateTime(D, S, DirPtr);
+  end;
+
+  procedure AllFormat(var D : DirRec; var pkCat : Byte;
+                      var S : String; DirPtr : DirListPtr);
+    {-Show name, size, time, attr}
+  begin
+    NameSizeTimeFormat(D, pkCat, S, DirPtr);
+    if D.Attr <> diDriveAttr then
+      with DirPtr^, D do begin
+        AppendString(S, wBackChar);
+        if ByteFlagIsSet(Attr, ReadOnly) then
+          AppendString(S, diReadOnlyChar);
+        if ByteFlagIsSet(Attr, Hidden) then
+          AppendString(S, diHiddenChar);
+        if ByteFlagIsSet(Attr, SysFile) then
+          AppendString(S, diSystemChar);
+        if ByteFlagIsSet(Attr, Archive) then
+          AppendString(S, diArchiveChar);
+      end;
+  end;
+  {$ENDIF}
+
+  procedure DirStringProc(Item : Word; Mode : pkMode;
+                          var ItemType : pkItemType;
+                          var S : String; PickPtr : PickListPtr);
+    {-Return filename string for pick list}
+  begin
+    with DirListPtr(PickPtr)^, diRecPtr(Item)^  do begin
+      ItemType := Cat;
+      if Mode <> pkGetType then
+        S := Disp;
+    end;
+  end;
+
+  procedure MultiStringProc(Item : Word; Mode : pkMode;
+                            var ItemType : pkItemType;
+                            var S : String; PickPtr : PickListPtr);
+    {-Return filename string for pick list}
+  begin
+    with DirListPtr(PickPtr)^, diRecPtr(Item)^  do begin
+      ItemType := Cat;
+      if Mode <> pkGetType then
+        S := Disp;
+    end;
+  end;
+
+  procedure DirList.diSetItemWidth;
+    {-Set item width to hold current directory format}
+  begin
+    diItemWidth := diMaxFmatLen+pkLeftPad+pkRightPad+
+                   Length(pkLeftSel)+Length(pkRightSel);
+    ChangeItemWidth(diItemWidth);
+  end;
+
+  procedure DirList.diNewFormat;
+    {-Prepare for a new format}
+  begin
+    diPartitionHeapSpace;
+    SetFlag(diFlags, diReformat+diResize);
+  end;
+
+  procedure DirList.SetNameFormat;
+    {-Set up for default nnnnnnnn.xxx format}
+  begin
+    diFormat := NameFormat;
+    diMaxFmatLen := 13;
+    {SetXxxxFormat routines should always end like this}
+    diNewFormat;
+  end;
+
+  procedure DirList.SetNameSizeFormat(DirStr : String);
+    {-Set up for nnnnnnn.xxx ssssssss format}
+  begin
+    diFormat := NameSizeFormat;
+    diDirStr := Copy(LeftPadCh(DirStr, wBackChar, 9), 1, 9);
+    diMaxFmatLen := 22;
+    {SetXxxxFormat routines should always end like this}
+    diNewFormat;
+  end;
+
+  procedure DirList.SetNameSizeKFormat(DirStr : String);
+    {-Initialize for nnnnnnn.xxx ssssssk format}
+  begin
+    diFormat := NameSizeKFormat;
+    diDirStr := Copy(LeftPadCh(DirStr, wBackChar, 6), 1, 6);
+    diMaxFmatLen := 19;
+    {SetXxxxFormat routines should always end like this}
+    diNewFormat;
+  end;
+
+  {$IFDEF UseDates}
+  procedure DirList.SetNameTimeFormat(DatePicture, TimePicture : String);
+    {-Initialize for name date time format}
+  begin
+    diFormat := NameTimeFormat;
+    diMaxFmatLen := 13;
+    diDatePict := DatePicture;
+    diTimePict := TimePicture;
+    if Length(DatePicture) <> 0 then
+      inc(diMaxFmatLen, Length(DatePicture)+1);
+    if Length(TimePicture) <> 0 then
+      inc(diMaxFmatLen, Length(TimePicture)+1);
+    {SetXxxxFormat routines should always end like this}
+    diNewFormat;
+  end;
+
+  procedure DirList.SetNameSizeTimeFormat(DirStr, DatePicture,
+                                          TimePicture : String);
+    {-Initialize for name size date time format}
+  begin
+    diFormat := NameSizeTimeFormat;
+    diDirStr := Copy(LeftPadCh(DirStr, wBackChar, 9), 1, 9);
+    diMaxFmatLen := 22;
+    diDatePict := DatePicture;
+    diTimePict := TimePicture;
+    if Length(DatePicture) <> 0 then
+      inc(diMaxFmatLen, Length(DatePicture)+1);
+    if Length(TimePicture) <> 0 then
+      inc(diMaxFmatLen, Length(TimePicture)+1);
+    {SetXxxxFormat routines should always end like this}
+    diNewFormat;
+  end;
+
+  procedure DirList.SetNameSizeKTimeFormat(DirStr,
+                                           DatePicture, TimePicture : String);
+    {-Initialize for name size date time format}
+  begin
+    diFormat := NameSizeKTimeFormat;
+    diDirStr := Copy(LeftPadCh(DirStr, wBackChar, 6), 1, 6);
+    diMaxFmatLen := 19;
+    diDatePict := DatePicture;
+    diTimePict := TimePicture;
+    if Length(DatePicture) <> 0 then
+      inc(diMaxFmatLen, Length(DatePicture)+1);
+    if Length(TimePicture) <> 0 then
+      inc(diMaxFmatLen, Length(TimePicture)+1);
+    {SetXxxxFormat routines should always end like this}
+    diNewFormat;
+  end;
+
+  procedure DirList.SetAllFormat(DirStr, DatePicture, TimePicture : String);
+    {-Initialize for name size date time attr format}
+  begin
+    diFormat := AllFormat;
+    diDirStr := Copy(LeftPadCh(DirStr, wBackChar, 9), 1, 9);
+    diMaxFmatLen := 23+Length(diReadOnlyChar)+Length(diHiddenChar)+
+                    Length(diSystemChar)+Length(diArchiveChar);
+    diDatePict := DatePicture;
+    diTimePict := TimePicture;
+    if Length(DatePicture) <> 0 then
+      inc(diMaxFmatLen, Length(DatePicture)+1);
+    if Length(TimePicture) <> 0 then
+      inc(diMaxFmatLen, Length(TimePicture)+1);
+    {SetXxxxFormat routines should always end like this}
+    diNewFormat;
+  end;
+  {$ENDIF}
+
+  procedure DirList.SetUserFormat(MaxFmatLen : Byte; FF : diFormatProc);
+    {-Set up for a user-defined format function}
+  begin
+    diFormat := FF;
+    diMaxFmatLen := MaxFmatLen;
+    {SetXxxxFormat routines should always end like this}
+    diNewFormat;
+  end;

@@ -1,0 +1,1790 @@
+{*********************************************************}
+{*                  DESKMAIN.IN1 1.30                    *}
+{*    Copyright (c) TurboPower Software 1989, 1992.      *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {------- generic local menu, miscellaneous --------}
+
+  procedure StatusLocalMenu;
+    {-Display the status line for a local menu}
+  const
+    StatusMsg =
+      '<Enter> Select  <F10> Main menu  <Esc>, <F9> Exit menu';
+  begin
+    Message(StatusMsg, True);
+  end;
+
+  procedure ShowStatusString(S : string; Col, Width : Byte);
+    {-Display a string on the status line}
+  {$IFDEF UseMouse}
+  var
+    SaveMouse : Boolean;
+  {$ENDIF}
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(SaveMouse);
+    {$ENDIF}
+
+    FastWrite(Pad(S, Width), StatusRow, Col, ColorMono(StatusColor, StatusMono));
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SaveMouse);
+    {$ENDIF}
+  end;
+
+  procedure ShowStatusNumber(L : LongInt; Col, Width : Byte);
+    {-Display a number on the status line}
+  begin
+    ShowStatusString(Long2Str(L), Col, Width);
+  end;
+
+  procedure MergeString(Src : string; var Dest : string; Col : Byte);
+    {-Merge Src into Dest at Dest[Col]}
+  begin
+    Move(Src[1], Dest[Col], Length(Src));
+  end;
+
+  procedure MergeOptionsSt(Options : String; var ValidOptions : CharSet;
+                           var St : string; Col : Byte);
+    {-Merge an option string into a menu string}
+  var
+    I : Word;
+  begin
+    St[Col] := '[';
+    Inc(Col);
+    for I := 1 to Length(Options) do
+      if UpCaseMac(Options[I]) in ValidOptions then begin
+        St[Col] := UpCaseMac(Options[I]);
+        Inc(Col);
+      end;
+    St[Col] := ']';
+    Inc(Col);
+    for I := Col to Length(St) do
+      St[I] := ' ';
+  end;
+
+  function SearchOptionIsSet(var OptionSt : string; OCh : Char) : Boolean;
+    {-Return True if a given search option is set}
+  begin
+    SearchOptionIsSet := Pos(OCh, StUpcase(OptionSt)) <> 0;
+  end;
+
+  procedure ToggleSearchOption(var OptionSt : string; OCh : Char;
+                               var ValidOptions : CharSet);
+    {-Toggle a search option}
+  var
+    I : Word;
+
+    procedure RemoveDupes(Ch : Char; I : Word);
+    var
+      J : Word;
+    begin
+      for J := I+1 to Length(OptionSt) do
+        if UpCase(OptionSt[J]) = Ch then
+          Delete(OptionSt, J, 1);
+    end;
+
+  begin
+    {remove meaningless characters from OptionSt}
+    for I := 1 to Length(OptionSt) do
+      if not (UpCase(OptionSt[I]) in ValidOptions) then
+        Delete(OptionSt, I, 1);
+
+    {remove any duplicate characters}
+    for I := 1 to Length(OptionSt) do
+      RemoveDupes(UpCase(OptionSt[I]), I);
+
+    if SearchOptionIsSet(OptionSt, OCh) then
+      {remove the character from the string}
+      Delete(OptionSt, Pos(OCh, StUpcase(OptionSt)), 1)
+    else
+      {add the character to the string}
+      OptionSt := OptionSt+OCh;
+  end;
+
+  procedure MergeSearchSt(SearchSt : string; var St : string; Wid, Col : Byte);
+    {-Merge a search string into a menu string}
+  const
+    Ellipses : array[1..3] of Char = '...';
+  var
+    I : Word;
+    SSLen : Byte absolute SearchSt;
+  begin
+    if SSLen > Wid then begin
+      SSLen := Wid;
+      Move(Ellipses, SearchSt[Wid-2], 3);
+    end;
+    SearchSt := '['+SearchSt+']';
+    Move(SearchSt[1], St[Col], SSLen);
+    for I := Col+SSLen to Length(St) do
+      St[I] := ' ';
+  end;
+
+  function GetMarkerNumber(Jumping : Boolean; var MN : Byte) : Boolean;
+    {-Get a marker number from the user}
+  const
+    JumpSet : array[Boolean] of string[7] = ('Set', 'Jump to');
+  var
+    S : string[2];
+    I : Word;
+  begin
+    GetMarkerNumber := False;
+    S := '';
+    if not EditProc(0, JumpSet[Jumping]+' marker [0-9]: ', False, True, 1, S) then
+      Exit;
+    if (S <> '') and Str2Word(S, I) and (I <= 9) then begin
+      MN := I;
+      GetMarkerNumber := True;
+    end;
+  end;
+
+  function InitLocalMenu(var CW : CommandWindow; var Choice : Word) : Boolean;
+    {-Initialize the basic local menu}
+  begin
+    InitLocalMenu := False;
+
+    with LocalMenu do begin
+      {initialize the menu}
+      if not InitCustom(2, 2, 9, 5, TpUiMenuColors, DefWindowOptions, Vertical) then
+        Exit;
+
+      {add menu items}
+      AddItem('Close',            01, 1, 01);
+      AddItem('Move',             02, 1, 02);
+      AddItem('Resize',           03, 1, 03);
+      AddItem('Zoom',             04, 1, 04);
+      ItemsDone;
+
+      {is window zoomable/resizeable?}
+      if not CW.wOptionsAreOn(wResizeable) then begin
+        {don't allow resize or zoom}
+        ProtectItem(3);
+        ProtectItem(4);
+      end;
+
+      {install error handler}
+      SetErrorProc(TpUiErrorProc);
+
+      {move the window}
+      MoveWindow(CW.wFrame.frXL, CW.wFrame.frYL);
+
+      {check for errors}
+      if ClassifyError(RawError) = etFatal then begin {!!.12}
+        Done;
+        Exit;
+      end;
+
+      {display the menu}
+      DefaultPath(Choice);
+      Draw;
+
+      {check for errors}
+      if ClassifyError(RawError) = etFatal then {!!.12}
+        Done
+      else
+        InitLocalMenu := True;
+    end;
+  end;
+
+  function GetLocalMenuCmd(var CW : CommandWindow; var Choice : Word) : Byte;
+    {-Get next menu choice; initialize and draw menu if necessary}
+  begin
+    {is the menu already on screen?}
+    if (wStack.TopWindow <> @LocalMenu) then
+      {initialize and display it}
+      if not InitLocalMenu(CW, Choice) then begin
+        InsufficientMemory;
+        GetLocalMenuCmd := ccError;
+        Exit;
+      end;
+
+    with LocalMenu do begin
+      {get the next menu command}
+      Process;
+      Choice := MenuChoice;
+      GetLocalMenuCmd := GetLastCommand;
+    end;
+  end;
+
+  procedure EraseLocalMenu;
+    {-Erase LocalMenu}
+  begin
+    LocalMenu.Erase;
+    LocalMenu.Done;
+  end;
+
+  {------------ display help ------------}
+
+  procedure HelpWinStatusProc(BP : BrowserPtr);
+    {-Display the status line for the file browser window}
+  const
+    StatusMsg =
+      '    Use cursor keys to browse, <Esc> to close help window ³ ';
+  begin
+    with HelpWin do begin
+      ShowStatusString(StatusMsg, 1, Length(StatusMsg));
+      if brWorkingFlag <> 0 then
+        ShowStatusString('Working...', 61, 20)
+      else begin
+        ShowStatusString('Line ', 61, 5);
+        ShowStatusNumber(brCurLine, 66, 6);
+        ShowStatusString('Col ', 72, 4);
+        ShowStatusNumber(brColOfs+1, 76, 5);
+      end;
+    end;
+  end;
+
+  procedure DisplayHelpFile;
+    {-Display the help file}
+  const
+    InHelpProc : Boolean = False;
+    MaxLen     = SizeOf(PathStr)-1;
+    TitleSize  = Length(HelpTitle)+12;
+  var
+    HelpName : PathStr;
+    AllDone  : Boolean;
+    P        : Pointer;
+    CursorXY, CursorSL : Word;
+  begin
+    {prevent reentrant calls}
+    if InHelpProc then
+      Exit;
+
+    {determine the name of the help file}
+    HelpName := JustFileName(ParamStr(0));
+    if HelpName = '' then
+      HelpName := 'DESKPOP.HLP'
+    else
+      HelpName := ForceExtension(HelpName, 'HLP');
+    if not ExistOnPath(HelpName, HelpName) then begin
+      ErrorMessage('Help file not found', True);
+      Exit;
+    end;
+
+    with HelpWin do begin
+      {initialize the browser}
+      if not Init(4, 4, 76, 21, LongInt(BrowsePages) * OnePage) then begin
+        InsufficientMemory;
+        Exit;
+      end;
+
+      {install default error handler}
+      SetErrorProc(TpUiErrorProc);
+
+      {try to open it}
+      OpenFile(HelpName);
+      if ClassifyError(RawError) = etFatal then begin {!!.12}
+        Done;
+        Exit;
+      end;
+
+      {force hex mode and high bit stripping off}  {!!.01}
+      brOptionsOff(brHexMode+brStripHigh);         {!!.01}
+
+      {initialize procedure pointers}
+      SetEditProc(EditProc);
+      SetStatusProc(HelpWinStatusProc);
+
+      {add headers, scroll bars, etc.}
+      CustomizeWindow(HelpWin, '', 0);
+      wFrame.AddHeader(HelpTitle+JustFileName(HelpName)+' ', heTC);
+
+      {customize colors}
+      SetTextAttr(BrowseTextColor, BrowseTextMono);
+
+      if ClassifyError(RawError) = etFatal then begin {!!.12}
+        Done;
+        Exit;
+      end;
+
+      InHelpProc := True;
+      AllDone := False;
+
+      {save the status line}
+      if not SaveStatusLine(P, CursorXY, CursorSL) then
+        RingBell
+      else begin
+        repeat
+          {browse through help file}
+          Process;
+
+          {get the command}
+          case GetLastCommand of
+            ccError,
+            ccQuit :
+              AllDone := True;
+          end;
+        until AllDone;
+
+        {close the help window}
+        Erase;
+        Done;
+
+        {restore status line}
+        RestoreStatusLine(P, CursorXY, CursorSL);
+      end;
+
+      InHelpProc := False;
+    end;
+  end;
+
+  procedure OurHelpProc(UnitCode : Byte; IdPtr : Pointer; HelpIndex : Word);
+  begin
+    DisplayHelpFile;
+  end;
+
+  {--------- routines for directory lists -----------}
+
+var
+  DirCommands     : CommandProcessor;
+  DirMenu         : Menu;
+  DiskLeft        : LongInt;
+  FilesInDir      : Word;
+  TotalFilesSize  : LongInt;
+const
+  DirMenuChoice   : Word = 1;
+  DefFileAttr     : Byte = Archive;
+
+  procedure DirMenuCustom(var Name : String; Key : LongInt;
+                          Selected, Highlighted : Boolean;
+                          WPtr : RawWindowPtr);
+    {-String customization routine for DirMenu}
+  const
+    NameAllSt : array[Boolean] of array[1..4] of Char = ('Name', 'All ');
+    SortSt : array[DirSortType] of array[1..6] of Char = (
+      'Name  ', 'Ext   ', 'Date  ', 'Size  ', 'MS-DOS');  {!!.03}
+
+    procedure MergeYesNo(YN : Boolean; Col : Byte);
+    begin
+      Move(YesNoSt[YN], Name[Col], 3);
+    end;
+
+  begin
+    case Word(Key) of
+      11 : MergeYesNo(ByteFlagIsSet(DefFileAttr, Archive), 12);
+      12 : MergeYesNo(ByteFlagIsSet(DefFileAttr, Hidden), 12);
+      13 : MergeYesNo(ByteFlagIsSet(DefFileAttr, ReadOnly), 12);
+      14 : MergeYesNo(ByteFlagIsSet(DefFileAttr, SysFile), 12);
+      23 : MergeYesNo(DirWinConfirm, 10);
+      24 : Move(NameAllSt[DirWinFormatAll], Name[10], 4);
+      25 : Move(SortSt[CurDirSortType], Name[10], 6);
+    end;
+  end;
+
+  function InitDirMenu : Boolean;
+    {-Initialize the directory window's local menu}
+  var
+    I : Word;
+  begin
+    InitDirMenu := False;
+
+    with DirMenu do begin
+      {initialize the menu}
+      if not InitCustom(2, 2, 12, 9, TpUiMenuColors, DefWindowOptions, Vertical) then
+        Exit;
+
+      {add menu items}
+      AddItem('Close',            01, 1, 01);
+      AddItem('Move',             02, 1, 02);
+      AddItem('Resize',           03, 1, 03);
+      AddItem('Zoom',             04, 1, 04);
+      AddSeparator('Ã', 'Ä', '´', 05);
+      AddItem('Directory',        06, 1, 05);
+        AddFramedSubMenu(4, 9, 11, 11, Vertical, DefWindowFrame);
+        AddItem('Change',         01, 1, 06);
+        AddItem('Make',           02, 1, 07);
+        AddItem('Remove',         03, 1, 08);
+        ItemsDone;
+      AddItem('Files',            07, 1, 09);
+        AddFramedSubMenu(4, 10, 15, 16, Vertical, DefWindowFrame);
+        AddItem('Attributes',     01, 1, 10);
+          AddFramedSubMenu(6, 12, 20, 17, Vertical, DefWindowFrame);
+          AddItem('Archive   Yes', 01, 1, 11);
+          AddItem('Hidden    Yes', 02, 1, 12);
+          AddItem('Read-only Yes', 03, 1, 13);
+          AddItem('System    Yes', 04, 1, 14);
+          AddSeparator('Ã', 'Ä', '´', 05);
+          AddItem('Go',           06, 1, 15);
+          ItemsDone;
+        AddItem('Browse',         02, 1, 16);
+        AddItem('Copy',           03, 1, 17);
+        AddItem('Delete',         04, 1, 18);
+        AddItem('Edit',           05, 1, 19);
+        AddItem('Move',           06, 1, 20);
+        AddItem('Rename',         07, 1, 21);
+        ItemsDone;
+      AddItem('Options',          08, 1, 22);
+        AddFramedSubMenu(4, 11, 19, 13, Vertical, DefWindowFrame);
+        AddItem('Confirm Yes',    01, 1, 23);
+        AddItem('Format  Name',   02, 1, 24);
+        AddItem('Sort    MS-DOS', 03, 1, 25);
+        ItemsDone;
+      ItemsDone;
+
+      {install error handler}
+      SetErrorProc(TpUiErrorProc);
+
+      {install string customization routine}
+      SetCustomStringProc(DirMenuCustom);
+
+      {move the window}
+      MoveWindow(DirWin.wFrame.frXL, DirWin.wFrame.frYL);
+
+      {check for errors}
+      if ClassifyError(RawError) = etFatal then begin {!!.12}
+        Done;
+        Exit;
+      end;
+
+      {display the menu}
+      DefaultPath(DirMenuChoice);
+      Draw;
+
+      {check for errors}
+      if ClassifyError(RawError) = etFatal then {!!.12}
+        Done
+      else
+        InitDirMenu := True;
+    end;
+  end;
+
+  function GetDirMenuCmd : Byte;
+    {-Get next menu choice; initialize and draw menu if necessary}
+  begin
+    {is the window already being displayed?}
+    if (wStack.TopWindow <> @DirMenu) then
+      {initialize and display it}
+      if not InitDirMenu then begin
+        InsufficientMemory;
+        GetDirMenuCmd := ccError;
+        Exit;
+      end;
+
+    with DirMenu do begin
+      {get the next choice}
+      Process;
+      DirMenuChoice := MenuChoice;
+      GetDirMenuCmd := GetLastCommand;
+    end;
+  end;
+
+  procedure EraseDirMenu;
+    {-Erase DirMenu}
+  begin
+    if DirMenu.IsActive then begin
+      DirMenu.Erase;
+      DirMenu.Done;
+    end;
+  end;
+
+  procedure DirRecalc;
+    {-Recalculate info for status line}
+  var
+    I, CA, TC, BPS, SPC : Word;
+  begin
+    TotalFilesSize := 0;
+    FilesInDir := 0;
+    with DirWin do
+      for I := 1 to diCurFiles do
+        with diDPtr^[I] do begin
+          Inc(TotalFilesSize, Size);
+          if not ByteFlagIsSet(Attr, Directory) then
+            Inc(FilesInDir);
+        end;
+    if GetDiskInfo(Byte(DirWin.diCurDir[1])-64, CA, TC, BPS, SPC) then
+      DiskLeft := LongInt(CA)*(LongInt(SPC)*BPS);
+  end;
+
+  function LongIntForm(S : String; L : LongInt) : string;
+    {-Shell routine for Form--formats longints}
+  var
+    SLen : Byte absolute S;
+  begin
+    S := Form(S+'.', L);
+    Dec(SLen);
+    LongIntForm := Trim(S);
+  end;
+
+  procedure StatusDir;
+    {-Display the status line for the directory window}
+  const
+    StatusMsg =
+      {         1         2         3         4         5         6         7         }
+      {1234567890123456789012345678901234567890123456789012345678901234567890123456789}
+      ' <F3> New mask  <F9> Menu ³ Disk:              Files:         Size:            ';
+      { <F3> New mask  <F9> Menu ³ Disk: 123,456,789  Files: 01,234  Size: 123,456,789}
+  var
+    S : string[80];
+  begin
+    S := StatusMsg;
+    MergeString(LongIntForm('###,###,###', DiskLeft), S, 35);
+    MergeString(LongIntForm('##,###', FilesInDir), S, 55);
+    MergeString(LongIntForm('###,###,###', TotalFilesSize), S, 69);
+    Message(S, False);
+  end;
+
+  procedure ResetDirStatus;
+    {-Update status line}
+  begin
+    DirRecalc;
+    StatusDir;
+  end;
+
+  procedure DirMoveProc(P : PickListPtr);
+    {-Called each time the cursor is moved within the directory window}
+  begin
+    with DirListPtr(P)^, wFrame, udMap(wUserData) do
+      {is there a new header?}
+      if diOptionsAreOn(diUserNewHdr) then begin
+        {update the length of the hot spot}
+        ChangeHotHeader(
+          udmTitleHotSpot, Length(frFindHeader(diMaskHdr)^.heName^));
+
+        {update status line}
+        ResetDirStatus;
+
+        {clear the flag so we won't do this again}
+        diOptionsOff(diUserNewHdr);
+      end;
+  end;
+
+  procedure UpdateDirWin;
+    {-Redraw the directory window while the local menu is on the screen}
+  begin
+    with DirWin do begin
+      ActivateWrite;
+      Draw;
+      DeactivateWrite;
+    end;
+  end;
+
+  function LessDirExt(var X, Y : DirRec) : Boolean;  {!!.03}
+    {-Sort ordering -- alphabetically by extension, then by name}
+  var
+    Xdir : Boolean;
+    Ydir : Boolean;
+    Xdrive : Boolean;
+    Ydrive : Boolean;
+  begin
+    Xdrive := (X.Attr = diDriveAttr);
+    Ydrive := (Y.Attr = diDriveAttr);
+    if Xdrive <> Ydrive then
+      LessDirExt := Xdrive
+    else if XDrive then
+      LessDirExt := (X.Name < Y.Name)
+    else begin
+      Xdir := ByteFlagIsSet(X.Attr, Directory);
+      Ydir := ByteFlagIsSet(Y.Attr, Directory);
+      if Xdir <> YDir then
+        LessDirExt := Xdir
+      else if XDir then
+        LessDirExt := (X.Name < Y.Name)
+      else case CompString(JustExtension(X.Name), JustExtension(Y.Name)) of
+        Less    : LessDirExt := True;
+        Greater : LessDirExt := False;
+        Equal   : LessDirExt := (X.Name < Y.Name);
+      end;
+    end;
+  end;
+
+  procedure SortDirExt(DirPtr : DirListPtr);            {!!.03}
+    {-Sort directories first, then alphabetically by extension and name}
+  begin
+    with DirPtr^ do begin
+      diLess := LessDirExt;
+      diQuickSort(1, pkItems);
+    end;
+  end;
+
+  procedure SetSortType(Redraw : Boolean);
+    {-Set the sort order for DirWin based on CurDirSortType}
+  begin
+    if Ord(CurDirSortType) > Ord(dstDos) then
+      CurDirSortType := dstName;
+    with DirWin do begin
+      {change the sort order}
+      case CurDirSortType of
+        dstName : SetSortOrder(SortDirName);
+        dstExt  : SetSortOrder(SortDirExt);  {!!.03}
+        dstDate : SetSortOrder(SortTime);
+        dstSize : SetSortOrder(SortSize);
+        dstDos  : SetSortOrder(SortNone);
+      end;
+
+      if Redraw then
+        {update the underlying window}
+        UpdateDirWin;
+    end;
+  end;
+
+  procedure SetDirFormat(Redraw : Boolean);
+    {-Switch display formats}
+  begin
+    with DirWin do begin
+      if not DirWinFormatAll then begin
+        {select the name-only format}
+        SetNameFormat;
+        ChangeOrientation(PickSnaking);
+      end
+      else begin
+        {select the "all" format}
+        SetAllFormat('<dir>', 'Mm/dd/yy', 'Hh:mmt');
+        ChangeOrientation(PickVertical);
+      end;
+
+      if Redraw then
+        {update the underlying window}
+        UpdateDirWin;
+    end;
+  end;
+
+  function InitDir(X1, Y1, X2, Y2 : Byte; Msg : string) : Boolean;
+    {-Initialize the directory window}
+  const
+    MaxLen = SizeOf(PathStr)-1;
+    MaxMaskLen = 20;
+  var
+    FMask : PathStr;
+  begin
+    InitDir := False;
+
+    {get the file mask}
+    FMask := '*.*';
+    if not EditProc(0, 'File mask: ', True, True, MaxLen, FMask) then
+      Exit;
+
+    {initialize the directory list}
+    if not DirWin.Init(X1, Y1, X2, Y2, DirBufferSize, PickSnaking, MultipleFile) then begin
+      InsufficientMemory;
+      Exit;
+    end;
+
+    {add headers, hot spots, etc.}
+    CustomizeWindow(DirWin, '', MaxMaskLen+10);
+
+    with DirWin, wFrame, udMap(wUserData) do begin
+      {switch command processors}
+      SetCommandProcessor(DirCommands);
+
+      {set basic options}
+      SetCursor(cuHidden);
+      diOptionsOn(diOptimizeSize);
+      pkOptionsOn(pkDrawActive+pkMousePage);
+
+      {set display/select options}
+      SetPadSize(0, 1);
+      SetSelectMarker(#16, '');
+
+      {call our routine to set proper format}
+      SetDirFormat(False);
+
+      {set sort type and search mode}
+      SetSortType(False);
+      SetSearchMode(PickCharSearch);
+
+      {set file mask}
+      SetMask(FMask, AnyFile);
+      AddMaskHeader(True, 1, MaxMaskLen, heTC);
+
+      {customize colors}
+      SetPickAttr(pkNormal, False, DirItemColor, DirItemMono);
+
+      {try to load the directory list}
+      PreloadDirList;
+      if (diCurFiles = 0) or (ClassifyError(RawError) = etFatal) then begin {!!.12}
+        DirWin.Done;
+        Exit;
+      end;
+
+      {set the header}
+      udmTitle := diMaskHdr;
+      AddHotHeader(heTC, hsRegion0, Length(frFindHeader(diMaskHdr)^.heName^));
+      udmTitleHotSpot := GetLastHotIndex;
+
+      {set the move proc}
+      SetMoveProc(DirMoveProc);
+
+      if ClassifyError(RawError) = etFatal then {!!.12}
+        DirWin.Done
+      else
+        InitDir := True;
+    end;
+  end;
+
+  function ItemIsDirectory(N : Word) : Boolean;
+    {-Return True if item N is a directory}
+  var
+    DR : DirRec;
+  begin
+    with DirWin do begin
+      GetMultiDirRec(N, DR);
+      ItemIsDirectory := ByteFlagIsSet(DR.Attr, Directory);
+    end;
+  end;
+
+  function EraseFile(FName : string) : Boolean;
+    {-Erase FName}
+  var
+    F : File;
+  begin
+    Assign(F, FName);
+    Erase(F);
+    if IoResult <> 0 then begin
+      ErrorMessage('Unable to erase '+FName, True);
+      EraseFile := False;
+    end
+    else
+      EraseFile := True;
+  end;
+
+  function RemoveDirectory(FName : string) : Boolean;
+    {-Remove the specified directory}
+  begin
+    RmDir(FName);
+    if IoResult <> 0 then begin
+      ErrorMessage('Unable to remove '+FName, True);
+      RemoveDirectory := False;
+    end
+    else
+      RemoveDirectory := True;
+  end;
+
+  function DelItem(N : Word; Confirm, Remove : Boolean) : Byte;
+    {-Delete item N, asking for confirmation if requested}
+  var
+    FName : PathStr;
+    B : Byte;
+  begin
+    with DirWin do begin
+      DelItem := 1;
+
+      {update the pick list}
+      SetInitialChoice(N);
+      Draw;
+
+      {confirm}
+      FName := GetMultiPath(N);
+      if Confirm then begin
+        B := YesNoQuit(0, 'Delete '+FName, 0, True);
+        DelItem := B;
+        case B of
+          0,   {teNo}
+          2 :  {teQuit}
+            begin
+              DeselectItem(N);
+              Exit;
+            end;
+          1,   {teYes}
+          3 :  {teAll}
+            {go ahead};
+        end;
+      end;
+
+      {is this a directory?}
+      if ItemIsDirectory(N) then begin
+        {try to remove the directory}
+        if not RemoveDirectory(FName) then
+          DeselectItem(N)
+        else if Remove then begin
+          {remove it from the list}
+          RemoveMultiFile(N);
+
+          {update the screen}
+          Draw;
+        end;
+      end
+      {erase the file}
+      else if not EraseFile(FName) then
+        DeselectItem(N)
+      else if Remove then begin
+        {remove it from the list}
+        RemoveMultiFile(N);
+
+        {update the screen}
+        Draw;
+      end;
+    end;
+  end;
+
+  procedure DeleteMarkedItems(Confirm : Boolean);
+    {-Delete all marked items}
+  var
+    N : Word;
+    Stop : Boolean;
+  begin
+    with DirWin do begin
+      {select current item if none selected}
+      if GetSelectedCount = 0 then
+        SelectItem(GetLastChoice);
+
+      {find the first item in the sequence}
+      InitSequence(N);
+
+      Stop := False;
+      while HaveSelected(N) do begin
+        {delete the item}
+        if Stop then
+          DeselectItem(N)
+        else case DelItem(N, Confirm, False) of
+          0,   {teNo}
+          1 :  {teYes}
+            {continue} ;
+          2 :  {teQuit}
+            Stop := True;
+          3 :  {teAll}
+            Confirm := False;
+        end;
+
+        {get the next selected item}
+        NextSelected(N);
+      end;
+
+      {remove selected items from the list}
+      RemoveSelectedFiles;
+
+      {update the screen}
+      Draw;
+    end;
+  end;
+
+  function CopyPrim(OldName, NewName : PathStr) : Boolean;
+    {-Primitive routine to allocate a buffer and copy OldName to NewName}
+  var
+    DefBuf : array[1..512] of Byte;
+    BufPtr : Pointer;
+    BufSize : Word;
+  begin
+    {try to allocate a buffer that's as large as possible}
+    BufPtr := nil;
+    if MaxAvail > 65521 then
+      BufSize := 65521
+    else
+      BufSize := MaxAvail;
+    if (BufSize < 512) or not GetMemCheck(BufPtr, BufSize) then begin
+      BufSize := 512;
+      BufPtr := @DefBuf;
+    end;
+
+    {try to copy the file}
+    CopyPrim := CopyFile(OldName, NewName, BufPtr, BufSize) = 0;
+
+    {deallocate buffer}
+    if BufPtr <> @DefBuf then
+      FreeMemCheck(BufPtr, BufSize);
+  end;
+
+  function RenamePrim(OldName, NewName : PathStr; Moving : Boolean) : Boolean;
+    {-Primitive routine to rename OldName to NewName}
+  var
+    F : File;
+  begin
+    if NewName[1] <> OldName[1] then
+      if Moving then
+        RenamePrim := CopyPrim(OldName, NewName) and EraseFile(OldName)
+      else
+        RenamePrim := False
+    else begin
+      Assign(F, OldName);
+      Rename(F, NewName);
+      RenamePrim := (IoResult = 0);
+    end;
+  end;
+
+  function MoveItem(N : Word; NewPath : PathStr; Confirm : Boolean) : Byte;
+    {-Move item N to NewPath}
+  var
+    OldName, NewName : PathStr;
+    B : Byte;
+  begin
+    MoveItem := 0;
+    with DirWin do begin
+      {update the pick list}
+      SetInitialChoice(N);
+      Draw;
+
+      {is this a directory?}
+      if ItemIsDirectory(N) then begin
+        ErrorMessage('Cannot move directories', True);
+        DeselectItem(N);
+        Exit;
+      end;
+
+      {get the old name}
+      OldName := GetMultiPath(N);
+
+      {get the new name}
+      NewName := JustFileName(OldName);
+      NewName := AddBackslash(NewPath)+NewName;
+      NewName := FullPathName(NewName);
+
+      {confirm}
+      NewPath := JustPathName(NewName);
+      if Length(NewPath) > 35 then
+        NewPath := Copy(NewPath, 1, 32)+'...';
+      if Confirm then begin
+        B := YesNoQuit(0, 'Move '+JustFileName(OldName)+' to '+NewPath, 0, True);
+        MoveItem := B;
+        case B of
+          0,   {teNo}
+          2 :  {teQuit}
+            begin
+              DeselectItem(N);
+              Exit;
+            end;
+          1,   {teYes}
+          3 :  {teAll}
+            {go ahead};
+        end;
+      end;
+
+      {try to rename the file}
+      if not RenamePrim(OldName, NewName, True) then begin
+        ErrorMessage('Unable to move '+JustFileName(OldName), True);
+        DeselectItem(N);
+        if Confirm then
+          MoveItem := 0
+        else
+          MoveItem := 2;
+      end;
+    end;
+  end;
+
+  procedure MoveFiles(Confirm : Boolean);
+    {-Move all marked files}
+  const
+    MaxLen = SizeOf(PathStr)-1;
+  var
+    NewPath : PathStr;
+    N : Word;
+    Stop : Boolean;
+  begin
+    with DirWin do begin
+      {get the new path}
+      NewPath := '';
+      if (not EditProc(0, 'Move to: ', True, True, MaxLen, NewPath)) or
+         (NewPath = '') then
+           Exit;
+
+      {select current item if none selected}
+      if GetSelectedCount = 0 then
+        SelectItem(GetLastChoice);
+
+      {find the first item in the sequence}
+      InitSequence(N);
+
+      Stop := False;
+      while HaveSelected(N) do begin
+        {move the file}
+        if Stop then
+          DeselectItem(N)
+        else case MoveItem(N, NewPath, Confirm) of
+          0,   {teNo}
+          1 :  {teYes}
+            {continue} ;
+          2 :  {teQuit}
+            Stop := True;
+          3 :  {teAll}
+            Confirm := False;
+        end;
+
+        {get the next selected item}
+        NextSelected(N);
+      end;
+
+      {remove selected items from the list}
+      RemoveSelectedFiles;
+
+      {update the screen}
+      Draw;
+    end;
+  end;
+
+  function CopyItem(N : Word; NewPath : PathStr; Confirm : Boolean) : Byte;
+    {-Copy item N to NewPath}
+  var
+    OldName, NewName : PathStr;
+    B : Byte;
+  begin
+    CopyItem := 0;
+    with DirWin do begin
+      {update the pick list}
+      SetInitialChoice(N);
+      Draw;
+
+      {is this a directory?}
+      if ItemIsDirectory(N) then begin
+        ErrorMessage('Cannot copy directories', True);
+        DeselectItem(N);
+        Exit;
+      end;
+
+      {get the old name}
+      OldName := GetMultiPath(N);
+
+      {get the new name}
+      NewName := JustFileName(OldName);
+      NewName := AddBackslash(NewPath)+NewName;
+      NewName := FullPathName(NewName);
+
+      {confirm}
+      NewPath := JustPathName(NewName);
+      if Length(NewPath) > 35 then
+        NewPath := Copy(NewPath, 1, 32)+'...';
+      if Confirm then begin
+        B := YesNoQuit(0, 'Copy '+JustFileName(OldName)+' to '+NewPath, 0, True);
+        CopyItem := B;
+        case B of
+          0,   {teNo}
+          2 :  {teQuit}
+            begin
+              DeselectItem(N);
+              Exit;
+            end;
+          1,   {teYes}
+          3 :  {teAll}
+            {go ahead};
+        end;
+      end;
+
+      {is the name the same?}
+      if (NewName = OldName) then begin
+        ErrorMessage('File cannot be copied onto itself', True);
+        DeselectItem(N);
+        if Confirm then
+          CopyItem := 0
+        else
+          CopyItem := 2;
+      end
+      {copy the file}
+      else if not CopyPrim(OldName, NewName) then begin
+        ErrorMessage('Unable to copy '+JustFileName(OldName), True);
+        DeselectItem(N);
+        if Confirm then
+          CopyItem := 0
+        else
+          CopyItem := 2;
+      end;
+    end;
+  end;
+
+  procedure CopyFiles(Confirm : Boolean);
+    {-Copy all marked files}
+  const
+    MaxLen = SizeOf(PathStr)-1;
+  var
+    NewPath : PathStr;
+    N : Word;
+    Stop : Boolean;
+  begin
+    with DirWin do begin
+      {get the new path}
+      NewPath := '';
+      if (not EditProc(0, 'Copy to: ', True, True, MaxLen, NewPath)) or
+         (NewPath = '') then
+           Exit;
+
+      {select current item if none selected}
+      if GetSelectedCount = 0 then
+        SelectItem(GetLastChoice);
+
+      {find the first item in the sequence}
+      InitSequence(N);
+
+      Stop := False;
+      while HaveSelected(N) do begin
+        {move the file}
+        if not Stop then
+          case CopyItem(N, NewPath, Confirm) of
+            0,   {teNo}
+            1 :  {teYes}
+              {continue} ;
+            2 :  {teQuit}
+              Stop := True;
+            3 :  {teAll}
+              Confirm := False;
+          end;
+
+        {deselect the item, in any case}
+        DeselectItem(N);
+
+        {get the next selected item}
+        NextSelected(N);
+      end;
+
+      {update the screen}
+      Draw;
+    end;
+  end;
+
+  procedure RenameItem(N : Word);
+    {-Rename the specified item}
+  label
+    ExitPoint;
+  const
+    MaxLen = SizeOf(PathStr)-1;
+  var
+    OldName, NewName : PathStr;
+    F : File;
+  begin
+    with DirWin do begin
+      {is this a directory?}
+      if ItemIsDirectory(N) then begin
+        ErrorMessage('Cannot rename directories', True);
+        Exit;
+      end;
+
+      {get the old name}
+      OldName := GetMultiPath(N);
+
+      {get the new name}
+      NewName := JustFileName(OldName);
+      if (not EditProc(0, 'New name: ', True, True, MaxLen, NewName)) or
+         (NewName = '') then
+           Exit;
+
+      {make sure the name was changed}
+      if JustPathname(NewName) = '' then
+        NewName := AddBackSlash(JustPathname(OldName))+NewName;
+      NewName := CleanPathName(NewName);
+      if (NewName = OldName) then
+        Exit;
+
+      {try to rename the file}
+      if not RenamePrim(OldName, NewName, False) then begin
+        ErrorMessage('Unable to rename file', True);
+        Exit;
+      end;
+
+      {fix the directory name}
+      NewName := JustFileName(NewName);
+      if diOptionsAreOn(diFilesUpcase) then
+        NewName := StUpcase(NewName)
+      else
+        NewName := StLocase(NewName);
+      diDPtr^[N].Name := NewName;
+
+      {sort the list}
+      SortList;
+
+      {rebuild all the strings}
+      diReformatAll;
+
+      {reset the selection highlight}
+      for N := 1 to pkItems do
+        if diDPtr^[N].Name = NewName then begin
+          SetInitialChoice(N);
+          goto ExitPoint;
+        end;
+
+ExitPoint:
+      {update the screen}
+      Draw;
+    end;
+  end;
+
+  function ChangeAttrPrim(Name : PathStr; Attr : Byte) : Boolean;
+    {-Change the file attribute for Name to Attr}
+  var
+    F : File;
+  begin
+    Assign(F, Name);
+    SetFAttr(F, Attr);
+    ChangeAttrPrim := (DosError = 0);
+  end;
+
+  function ChangeAttrItem(N : Word; Confirm : Boolean) : Byte;
+    {-Change the attribute for item N to DefFileAttr}
+  var
+    Name : PathStr;
+    B : Byte;
+  begin
+    ChangeAttrItem := 0;
+    with DirWin do begin
+      {update the pick list}
+      SetInitialChoice(N);
+      Draw;
+
+      {is this a directory?}
+      if ItemIsDirectory(N) then begin
+        ErrorMessage('Cannot change attribute for directories', True);
+        DeselectItem(N);
+        if not Confirm then
+          ChangeAttrItem := 2;
+        Exit;
+      end;
+
+      {get the name}
+      Name := GetMultiPath(N);
+
+      {confirm}
+      if Confirm then begin
+        B := YesNoQuit(0, 'Change attribute for '+JustFileName(Name), 0, True);
+        ChangeAttrItem := B;
+        case B of
+          0,   {teNo}
+          2 :  {teQuit}
+            begin
+              DeselectItem(N);
+              Exit;
+            end;
+          1,   {teYes}
+          3 :  {teAll}
+            {go ahead};
+        end;
+      end;
+
+      {copy the file}
+      if ChangeAttrPrim(Name, DefFileAttr) then begin
+        {update OPDIR's records}
+        diDPtr^[N].Attr := DefFileAttr;
+
+        {reformat}
+        FormatMultiFile(N);
+      end
+      else begin
+        ErrorMessage('Unable to change '+JustFileName(Name), True);
+        DeselectItem(N);
+        if Confirm then
+          ChangeAttrItem := 0
+        else
+          ChangeAttrItem := 2;
+      end;
+    end;
+  end;
+
+  procedure ChangeAttrFiles(Confirm : Boolean);
+    {-Change the file attribute for all marked files}
+  var
+    N : Word;
+    Stop : Boolean;
+  begin
+    with DirWin do begin
+      {select current item if none selected}
+      if GetSelectedCount = 0 then
+        SelectItem(GetLastChoice);
+
+      {find the first item in the sequence}
+      InitSequence(N);
+
+      Stop := False;
+      while HaveSelected(N) do begin
+        {move the file}
+        if not Stop then
+          case ChangeAttrItem(N, Confirm) of
+            0,   {teNo}
+            1 :  {teYes}
+              {continue} ;
+            2 :  {teQuit}
+              Stop := True;
+            3 :  {teAll}
+              Confirm := False;
+          end;
+
+        {deselect the item, in any case}
+        DeselectItem(N);
+
+        {get the next selected item}
+        NextSelected(N);
+      end;
+
+      {update the screen}
+      Draw;
+    end;
+  end;
+
+  procedure ChangeDir;
+    {-Change directories}
+  const
+    MaxLen = SizeOf(DirStr)-1;
+  var
+    D : DirStr;
+    SD : DirStr;  {!!.11}
+  begin
+    {get default choice}
+    if ItemIsDirectory(DirWin.GetLastChoice) then
+      {current item is a directory}
+      D := DirWin.GetMultiPath(DirWin.GetLastChoice)
+    else begin
+      {default to current directory of current drive}
+      GetDir(0, D);
+      if IoResult = 0 then
+        D := '';
+    end;
+
+    {get the new directory}
+    if (not EditProc(0, 'Change to: ', True, True, MaxLen, D)) or (D = '') then
+      Exit;
+
+    {try to change directories}
+    GetDir(0, SD);                                 {!!.11}
+    ChDir(D);
+    if IoResult <> 0 then begin                    {!!.11}
+      ErrorMessage('Unable to change to '+D, True);
+      ChDir(SD);                                   {!!.11}
+    end;                                           {!!.11}
+  end;
+
+  procedure MakeDir;
+    {-Make a new directory}
+  const
+    MaxLen = SizeOf(DirStr)-1;
+  var
+    D : DirStr;
+  begin
+    {get the name of the directory to create}
+    D := '';
+    if (not EditProc(0, 'Make: ', True, True, MaxLen, D)) or (D = '') then
+      Exit;
+
+    {try to make the directory}
+    MkDir(D);
+    if IoResult = 0 then begin
+      {reset directory window and redraw}
+      DirWin.ResetList;
+      UpdateDirWin;
+    end
+    else
+      ErrorMessage('Unable to make '+D, True);
+  end;
+
+  procedure RemoveDir;
+    {-Remove a directory}
+  const
+    MaxLen = SizeOf(DirStr)-1;
+  var
+    D : DirStr;
+  begin
+    {get default choice}
+    if ItemIsDirectory(DirWin.GetLastChoice) then
+      {current item is a directory}
+      D := DirWin.GetMultiPath(DirWin.GetLastChoice)
+    else
+      D := '';
+
+    {get the name of the directory to remove}
+    if (not EditProc(0, 'Remove: ', True, True, MaxLen, D)) or (D = '') then
+      Exit;
+
+    {try to remove the directory}
+    if RemoveDirectory(D) then begin
+      {reset directory window and redraw}
+      DirWin.ResetList;
+      UpdateDirWin;
+    end;
+  end;
+
+  function OkToCloseDir : Boolean;
+    {-Return True if OK to close the directory window}
+  var
+    Esc : Boolean;
+    I : Word;
+  begin
+    I := DirWin.GetSelectedCount;
+    if I = 0 then
+      OkToCloseDir := True
+    else
+      OkToCloseDir :=
+        YesNo(Long2Str(I)+' file(s) marked. Close files window anyway?', 'N', Esc);
+  end;
+
+  procedure ProcessDir(var Cmd : Word);
+    {-Process the commands for the directory window}
+  label
+    Reevaluate;
+  const
+    MaxLen = SizeOf(PathStr)-1;
+  var
+    AllDone : Boolean;
+    Mask, SaveMask : PathStr;
+
+    procedure ToggleFileAttr(Flag : Byte);
+    begin
+      if ByteFlagIsSet(DefFileAttr, Flag) then
+        ClearByteFlag(DefFileAttr, Flag)
+      else
+        SetByteFlag(DefFileAttr, Flag);
+    end;
+
+    function LoadEditor : Boolean;
+      {-Load current file into editor}
+    var
+      L : LongInt;
+    begin
+      LoadEditor := False;
+      with DirWin do
+        if ItemIsDirectory(GetLastChoice) then
+          ErrorMessage('Cannot edit directories', True)
+        else if Desk.WindowIsActive(EditWinId) then begin
+          {make sure it's OK to switch files}
+          if not Desk.OkToCloseWindow(EditWinId) then
+            Exit;
+          if not Desk.ActivateWindow(EditWinId, '') then
+            Exit;
+          EditWin.ReadFile(GetMultiPath(GetLastChoice), L);
+          if EditWin.RawError = 0 then    {!!.12}
+            LoadEditor := True
+          else begin
+            Desk.DeactivateWindow(EditWinId, True);
+            if Desk.ActivateWindow(DirWinId, '') then {};
+          end;
+        end
+        else
+          LoadEditor := Desk.ActivateWindow(EditWinId,
+                                            GetMultiPath(GetLastChoice));
+    end;
+
+    function LoadBrowser : Boolean;
+      {-Load current file into browser}
+    begin
+      LoadBrowser := False;
+      with DirWin do
+        if ItemIsDirectory(GetLastChoice) then
+          ErrorMessage('Cannot browse directories', True)
+        else if Desk.WindowIsActive(BrowseWinId) then begin
+          if not Desk.ActivateWindow(BrowseWinId, '') then
+            Exit;
+          BrowseWin.OpenFile(GetMultiPath(GetLastChoice));
+          if BrowseWin.RawError = 0 then {!!.12}
+            LoadBrowser := True
+          else begin
+            Desk.DeactivateWindow(BrowseWinId, True);
+            if Desk.ActivateWindow(DirWinId, '') then {};
+          end;
+        end
+        else
+          LoadBrowser := Desk.ActivateWindow(BrowseWinId,
+                                             GetMultiPath(GetLastChoice));
+    end;
+
+    function ProcessLocalMenu(var Cmd : Word; var AllDone : Boolean) : Boolean;
+      {-Process local menu commands}
+    var
+      Stop : Boolean;
+      P : Pointer;
+    begin
+      StatusLocalMenu;
+
+      ProcessLocalMenu := True;
+      Stop := False;
+      repeat
+        case GetDirMenuCmd of
+          ccSelect :
+            case DirMenuChoice of
+              1..4 :
+                begin
+                  case DirMenuChoice of
+                    1 : Cmd := ccQuit;
+                    2 : Cmd := MoveWindowCmd;
+                    3 : Cmd := ResizeWindowCmd;
+                    4 : Cmd := ZoomWindowCmd;
+                  end;
+                  ProcessLocalMenu := False;
+                  Stop := True;
+                end;
+              06 : ChangeDir;
+              07 : MakeDir;
+              08 : RemoveDir;
+              11 : ToggleFileAttr(Archive);
+              12 : ToggleFileAttr(Hidden);
+              13 : ToggleFileAttr(ReadOnly);
+              14 : ToggleFileAttr(SysFile);
+              15..21 :
+                begin
+                  EraseDirMenu;
+                  case DirMenuChoice of
+                    15 : ChangeAttrFiles(DirWinConfirm);
+                    16 : if LoadBrowser then begin
+                           Stop := True;
+                           AllDone := True;
+                         end;
+                    17 : CopyFiles(DirWinConfirm);
+                    18 : DeleteMarkedItems(DirWinConfirm);
+                    19 : if LoadEditor then begin
+                           Stop := True;
+                           AllDone := True;
+                         end;
+                    20 : MoveFiles(DirWinConfirm);
+                    21 : RenameItem(DirWin.GetLastChoice);
+                  end;
+                end;
+              23 : DirWinConfirm := not DirWinConfirm;
+              24 :
+                begin
+                  DirWinFormatAll := not DirWinFormatAll;
+                  SetDirFormat(True);
+                end;
+              25 :
+                begin
+                  Inc(CurDirSortType);
+                  SetSortType(True);
+                end;
+            end;
+          {$IFDEF UseMouse}
+          ccMouseSel :
+            begin
+              P := Desk.WindowClickedOn;
+              if P = @DirWin then
+                Stop := True
+              else if P <> nil then begin
+                Cmd := ccMouseSel;
+                ProcessLocalMenu := False;
+                Stop := True;
+              end;
+            end;
+          {$ENDIF}
+          MainMenuCmd :
+            begin
+              Cmd := MainMenuCmd;
+              ProcessLocalMenu := False;
+              Stop := True;
+            end;
+          LocalMenuCmd,
+          ccQuit,
+          ccError :
+            Stop := True;
+        end;
+      until Stop or (DirWin.RawError <> 0) or (DirWin.diCurFiles = 0); {!!.12}
+      EraseDirMenu;
+    end;
+
+  begin
+    AllDone := False;
+    with DirWin do
+      repeat
+        {draw status line}
+        ResetDirStatus;
+
+        {get some selections}
+        Process;
+
+        {get the command}
+        Cmd := GetLastCommand;
+
+Reevaluate:
+        {process exit commands}
+        if not Desk.ProcessExitCommands(Cmd) then
+          {process any exit commands that TPUI can't handle for us}
+          case Cmd of
+            ccLoadEditor :
+              AllDone := LoadEditor;
+            ccLoadBrowser :
+              AllDone := LoadBrowser;
+            ccToggleMode :
+              begin
+                DirWinFormatAll := not DirWinFormatAll;
+                SetDirFormat(False);
+              end;
+            ccNewMask :
+              begin
+                Mask := diMask;
+                SaveMask := Mask;
+                if EditProc(0, 'File mask: ', True, True, MaxLen, Mask) then
+                  if Mask <> SaveMask then begin
+                     SetMask(Mask, AnyFile);
+                     PreloadDirList;
+                     if (diCurFiles = 0) then begin
+                       SetMask(SaveMask, AnyFile);
+                       PreloadDirList;
+                     end;
+                  end;
+              end;
+            ccDeleteItem :
+              if DelItem(GetLastChoice, DirWinConfirm, True) = 0 then {};
+            ccDeleteFiles :
+              DeleteMarkedItems(DirWinConfirm);
+            ccCopyFiles :
+              CopyFiles(DirWinConfirm);
+            ccMoveFiles :
+              MoveFiles(DirWinConfirm);
+            ccRenameFile :
+              RenameItem(GetLastChoice);
+            LocalMenuCmd :
+              if not ProcessLocalMenu(Cmd, AllDone) then
+                goto Reevaluate;
+            NextWindowCmd..SelectWindow8,
+            ExitTsrCmd, UnloadTsrCmd,
+            MainMenuCmd, ccError :
+              AllDone := True;
+            ccQuit :
+              AllDone := OkToCloseDir;
+          end;
+      until AllDone;
+  end;
+
+  procedure CloseDir(EraseFirst : Boolean);
+    {-Close the directory window}
+  begin
+    if EraseFirst then
+      DirWin.Erase;
+    DirWin.Done;
+  end;
+
+  {--------- routines for calculator -----------}
+
+  procedure StatusCalc;
+    {-Display the status line for the calculator window}
+  const
+    StatusMsg =
+      '<F6> Next  <^F6> Prev  <F9> Menu  <F10> Main menu  <Esc> Close  <AltX> Exit';
+  begin
+    Message(StatusMsg, True);
+  end;
+
+  function InitCalc(X1, Y1, X2, Y2 : Byte; Msg : string) : Boolean;
+    {-Initialize the calculator window}
+  const
+    CalcTitle = 'Calculator';
+  begin
+    InitCalc := False;
+
+    with CalcWin do begin
+      if not Init(X1, Y1) then begin
+        InsufficientMemory;
+        Exit;
+      end;
+
+      {add headers, hot spots, etc.}
+      CustomizeWindow(CalcWin, CalcTitle, Length(CalcTitle));
+
+      {customize colors}
+      SetTextAttr(CalcTextColor, CalcTextMono);
+      SetSubheadAttr(CalcSubheadColor, CalcSubheadMono);
+      SetHighlightAttr(CalcHighlightColor, CalcHighlightMono);
+
+      if ClassifyError(RawError) = etFatal then {!!.12}
+        Done
+      else
+        InitCalc := True;
+    end;
+  end;
+
+  procedure ProcessCalc(var Cmd : Word);
+    {-Process the commands for the calculator window}
+  label
+    Reevaluate;
+  var
+    AllDone : Boolean;
+
+    function ProcessLocalMenu(var Cmd : Word) : Boolean;
+      {-Process local menu commands}
+    const
+      LastChoice : Word = 1;
+    var
+      Stop : Boolean;
+      P : Pointer;
+    begin
+      StatusLocalMenu;
+
+      ProcessLocalMenu := True;
+      Stop := False;
+      repeat
+        case GetLocalMenuCmd(CalcWin, LastChoice) of
+          ccSelect :
+            begin
+              case LastChoice of
+                1 : Cmd := ccQuit;
+                2 : Cmd := MoveWindowCmd;
+              end;
+              ProcessLocalMenu := False;
+              Stop := True;
+            end;
+          {$IFDEF UseMouse}
+          ccMouseSel :
+            begin
+              P := Desk.WindowClickedOn;
+              if P = @CalcWin then
+                Stop := True
+              else if P <> nil then begin
+                Cmd := ccMouseSel;
+                ProcessLocalMenu := False;
+                Stop := True;
+              end;
+            end;
+          {$ENDIF}
+          MainMenuCmd :
+            begin
+              Cmd := MainMenuCmd;
+              ProcessLocalMenu := False;
+              Stop := True;
+            end;
+          LocalMenuCmd,
+          ccQuit,
+          ccError :
+            Stop := True;
+        end;
+      until Stop;
+      EraseLocalMenu;
+    end;
+
+    procedure InsertNumberIntoEditor;
+      {-Insert a number into the editor}
+    var
+      TC, Esc : Boolean;
+    begin
+      if not Desk.WindowIsActive(EditWinId) then
+        ErrorMessage('Edit window not open', True)
+      else begin
+        if not CalcWin.caBcdMode then
+          TC := False
+        else begin
+          TC := YesNo('Convert to typed constant?', 'Y', Esc);
+          if Esc then
+            Exit;
+        end;
+
+        {get the string and stuff it into the editor}
+        EditWin.ActivateWrite;
+        EditWin.InsertStringAtCursor(CalcWin.GetResult(TC));
+        EditWin.Draw;
+        EditWin.DeactivateWrite;
+      end;
+    end;
+
+  begin
+    AllDone := False;
+    repeat
+      {draw status line}
+      StatusCalc;
+
+      {call the calculator}
+      CalcWin.Process;
+
+      {get the command}
+      Cmd := CalcWin.GetLastCommand;
+
+Reevaluate:
+      {process exit commands}
+      if not Desk.ProcessExitCommands(Cmd) then begin
+        {process any exit commands that TPUI can't handle for us}
+        case Cmd of
+          ccInsertNumber :
+            InsertNumberIntoEditor;
+          LocalMenuCmd :
+            if not ProcessLocalMenu(Cmd) then
+              goto Reevaluate;
+          NextWindowCmd..SelectWindow8,
+          ExitTsrCmd,
+          UnloadTsrCmd,
+          MainMenuCmd,
+          ccError,
+          ccQuit :
+            AllDone := True;
+        end;
+      end;
+    until AllDone;
+  end;
+
+  procedure CloseCalc(EraseFirst : Boolean);
+    {-Close the calculator window}
+  begin
+    if EraseFirst then
+      CalcWin.Erase;
+    CalcWin.Done;
+  end;
+
+  function OkToCloseCalc : Boolean;
+    {-Return True if OK to close the calculator window}
+  begin
+    OkToCloseCalc := True;
+  end;

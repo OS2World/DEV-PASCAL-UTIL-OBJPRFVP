@@ -1,0 +1,1423 @@
+{*********************************************************}
+{*                  OPWINDOW.IN2 1.30                    *}
+{*     Copyright (c) TurboPower Software 1987, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {---- Some RawWindow Routines ----}
+
+  {$IFDEF UseAdjustableWindows}
+  function RawWindow.rwValidZoomCoords(var X1, Y1, X2, Y2 : Byte) : Boolean; {!!.01}
+    {-Compute and validate zoom coordinates}
+  begin
+    rwValidZoomCoords := False;
+    {Increase to maximum frame position limits}
+    X1 := wMinXL;
+    Y1 := wMinYL;
+    X2 := wMaxXH;
+    Y2 := wMaxYH;
+
+    with wFrame do begin
+      {Check to see whether minimum frame size limits are met}
+      if (X2 < Word(X1)+frMinW-1) or (Y2 < Word(Y1)+frMinH-1) then begin
+        Error(epNonFatal+ecWinCoordsBad);
+        Exit;
+      end;
+      {Limit to maximum frame size}
+      LimitByte(X2, Word(X1)+frMaxW-1);
+      LimitByte(Y2, Word(Y1)+frMaxH-1);
+    end;
+
+    {Convert to active window coordinates}
+    {if LongFlagIsSet(wFlags, wBordered) then} {!!.03}
+    with wFrame do begin
+      inc(X1, Integer(wXL)-frXL);
+      inc(X2, Integer(wXH)-frXH);
+      inc(Y1, Integer(wYL)-frYL);
+      inc(Y2, Integer(wYH)-frYH);
+    end;
+
+    {Check to see whether minimum active size limits are met}
+    if (X2 < Word(X1)+wMinW-1) or (Y2 < Word(Y1)+wMinH-1) then begin
+      Error(epNonFatal+ecWinCoordsBad);
+      Exit;
+    end;
+    {Limit to maximum active window size}
+    LimitByte(X2, Word(X1)+wMaxW-1);
+    LimitByte(Y2, Word(Y1)+wMaxH-1);
+    rwValidZoomCoords := True;
+  end;
+
+  procedure RawWindow.Zoom;
+    {-Increase window size to specified limits temporarily}
+  var
+    X1 : Byte;
+    Y1 : Byte;
+    X2 : Byte;
+    Y2 : Byte;
+  begin
+    {Can't zoom a zoomed window}
+    if IsZoomed then begin
+      Error(epWarning+ecWinIsZoomed);
+      Exit;
+    end;
+    {Only handles resizeable windows}
+    if not LongFlagIsSet(wFlags, wResizeable) then begin
+      Error(epNonFatal+ecWinNotSizeable);
+      Exit;
+    end;
+
+    {Compute and validate zoom coordinates} {!!.01}
+    if not rwValidZoomCoords(X1, Y1, X2, Y2) then {!!.01}
+      Exit; {!!.01}
+
+    {Save current active window coordinates}
+    wzXL := wXL;
+    wzYL := wYL;
+    wzXH := wXH;
+    wzYH := wYH;
+
+    ClearErrors; {!!.01}
+    {Note X1, Y1, ... are active window coordinates here}
+    AdjustWindow(X1, Y1, X2, Y2);
+    if RawError = 0 then {!!.01}
+      {Mark window as zoomed}
+      SetLongFlag(wFlags, wZoomed)
+    else begin
+      wzXL := 0;
+      wzYL := 0;
+      wzXH := 0;
+      wzYH := 0;
+    end;
+  end;
+
+  procedure RawWindow.Unzoom;
+    {-Return zoomed window to original size}
+  begin
+    if not IsZoomed then
+      Exit;
+
+    ClearErrors; {!!.01}
+
+    {Restore size}
+    AdjustWindow(wzXL, wzYL, wzXH, wzYH);
+
+    if RawError = 0 then {!!.01}
+      {Mark window as unzoomed}
+      rwMarkUnzoomed;
+  end;
+  {$ENDIF}
+
+  procedure RawWindow.rwScrollHorizPart(Cols : Integer; sXH : Byte);
+    {-Scroll contents horizontally, leaving region past sXH unchanged}
+  var
+    WordsToMove : Word;
+    SrcPos : Word;
+    DestPos : Word;
+    Row : Word;
+    XL : Byte;
+    XH : Byte;
+    Wid : Byte;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    if not IsActive then begin
+      Error(epNonFatal+ecWinNotActive);
+      Exit;
+    end;
+    if Cols = 0 then
+      Exit;
+
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+
+    {Shift existing text}
+    Wid := sXH-wXL+1;
+    if Abs(Cols) < Wid then begin
+      WordsToMove := Wid-Abs(Cols);
+      SrcPos := Word(2)*(OpCrt.VirtualWidth*(wYL-1)+(wXL-1));
+      DestPos := SrcPos;
+      if Cols > 0 then
+        inc(SrcPos, 2*Cols)
+      else
+        inc(DestPos, 2*Abs(Cols));
+      for Row := wYL to wYH do begin
+        {$IFDEF VIRTUALPASCAL}
+        MoveScreen(Mem[OpCrt.VirtualSegment+SrcPos],
+                   Mem[OpCrt.VirtualSegment+DestPos],
+                   WordsToMove);
+        {$ELSE}
+        MoveScreen(Mem[OpCrt.VirtualSegment:SrcPos],
+                   Mem[OpCrt.VirtualSegment:DestPos],
+                   WordsToMove);
+        {$ENDIF}
+        Inc(SrcPos, 2*OpCrt.VirtualWidth);
+        Inc(DestPos, 2*OpCrt.VirtualWidth);
+      end;
+    end;
+
+    {Fill remaining region}
+    if Cols > 0 then begin
+      XL := sXH-Cols+1;
+      XH := sXH;
+    end else begin
+      XL := wXL;
+      XH := wXL-Cols-1;
+    end;
+    ClearRect(XL, wYL, XH, wYH, ColorMono(wTextColor, wTextMono), wBackChar);
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+  end;
+
+  procedure RawWindow.ScrollHoriz(Cols : Integer);
+    {-Scroll contents horizontally}
+  begin
+    rwScrollHorizPart(Cols, wXH);
+  end;
+
+  procedure RawWindow.rwScrollVert(Rows : Integer);
+    {-Scroll contents vertically}
+  var
+    WordsToMove : Word;
+    BytesAcross : Integer;
+    SrcPos : Word;
+    DestPos : Word;
+    Row : Word;
+    YL : Byte;
+    YH : Byte;
+    {$IFDEF UseMouse}
+    MOn : Boolean;
+    {$ENDIF}
+  begin
+    if not IsActive then begin
+      Error(epNonFatal+ecWinNotActive);
+      Exit;
+    end;
+    if Rows = 0 then
+      Exit;
+
+    {$IFDEF UseMouse}
+    HideMousePrim(MOn);
+    {$ENDIF}
+
+    {Shift existing text}
+    if Abs(Rows) < Height then begin
+      WordsToMove := Width;
+      BytesAcross := Integer(2)*OpCrt.VirtualWidth;
+      if Rows > 0 then begin
+        DestPos := Word(2)*(OpCrt.VirtualWidth*(wYL-1)+(wXL-1));
+        SrcPos := DestPos+BytesAcross*Rows;
+      end else begin
+        DestPos := Word(2)*(OpCrt.VirtualWidth*(wYH-1)+(wXL-1));
+        SrcPos := DestPos+BytesAcross*Rows;
+        BytesAcross := -BytesAcross;
+      end;
+      for Row := wYL to wYH-Abs(Rows) do begin
+        {$IFDEF VIRTUALPASCAL}
+        MoveScreen(Mem[OpCrt.VirtualSegment+SrcPos],
+                   Mem[OpCrt.VirtualSegment+DestPos],
+                   WordsToMove);
+        {$ELSE}
+        MoveScreen(Mem[OpCrt.VirtualSegment:SrcPos],
+                   Mem[OpCrt.VirtualSegment:DestPos],
+                   WordsToMove);
+        {$ENDIF}
+        Inc(SrcPos, BytesAcross);
+        Inc(DestPos, BytesAcross);
+      end;
+    end;
+
+    {Fill remaining region}
+    if Rows > 0 then begin
+      YL := wYH-Rows+1;
+      YH := wYH;
+    end else begin
+      YL := wYL;
+      YH := wYL-Rows-1;
+    end;
+    ClearRect(wXL, YL, wXH, YH, ColorMono(wTextColor, wTextMono), wBackChar);
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(MOn);
+    {$ENDIF}
+  end;
+
+  procedure RawWindow.ScrollVert(Rows : Integer);
+    {-Scroll contents vertically}
+  begin
+    rwScrollVert(Rows);
+  end;
+
+{----------------- Routines for exploding windows -------------------}
+
+  procedure EmptyOpenCloseProc(WPtr : RawWindowPtr);
+    {-Default open/close procedure, does nothing}
+  begin
+  end;
+
+  {Declarations used to avoid real numbers for explosion calculations}
+const
+  PartRes = 200;
+  PartRnd = PartRes div 2;
+type
+  Parts = Word;
+
+  function OneDelta(H, L : Byte) : Parts;
+    {-Compute slightly less than one-half of H-L+1 in PartRes units}
+  begin
+    if H <= L then     {!!.11}
+      OneDelta := 1    {!!.11}
+    else               {!!.11}
+      OneDelta := ((Parts(PartRes)*(H-L+1)) shr 1)-PartRnd;
+  end;
+
+  function RoundParts(L : Parts) : Byte;
+    {-Round Parts to nearest byte}
+  begin
+    RoundParts := (L+PartRnd) div PartRes;
+  end;
+
+  function TruncParts(L : Parts) : Byte;
+    {-Truncate Parts to next lower byte}
+  begin
+    TruncParts := L div PartRes;
+  end;
+
+  procedure SetDeltas(var SD, BD : Parts; var Frames : Integer);
+    {-Compute dimensions for exploding frame}
+  begin
+    Frames := RoundParts(BD);
+    if SD < PartRes then
+      SD := PartRes div (Frames+1);
+    SD := (LongInt(PartRes)*SD) div BD;
+    BD := PartRes;
+  end;
+
+  procedure ComputeDeltas(WPtr : RawWindowPtr;
+                          var XD, YD : Parts;
+                          var Frames : Integer);
+    {-Compute information for exploding frame boundaries}
+  begin
+    with WPtr^.wFrame do begin
+      XD := OneDelta(frXH, frXL);
+      YD := OneDelta(frYH, frYL);
+      if XD < YD then
+        SetDeltas(XD, YD, Frames)
+      else
+        SetDeltas(YD, XD, Frames);
+    end;
+  end;
+
+  procedure ExplodeOpenProc(WPtr : RawWindowPtr);
+    {-Explode the window}
+  var
+    XD : Parts;
+    YD : Parts;
+    DX : Parts;
+    DY : Parts;
+    XL : Parts;
+    YL : Parts;
+    XH : Parts;
+    YH : Parts;
+    Frames : Integer;
+    F : Integer;
+    StDel : Word;
+    Attr : Byte;
+    Ch : Char;
+    Noisy : Boolean;
+    HaveCont : Boolean;
+    WorkFrame : Frame;
+  begin
+    {Compute number of frames, and step size per frame}
+    ComputeDeltas(WPtr, XD, YD, Frames);
+
+    with WPtr^ do begin
+      {Copy the active frame to adjust here}
+      WorkFrame.frInitFrom(wFrame);
+
+      with WorkFrame do begin
+        {Compute frame corners in Parts}
+        XL := Parts(PartRes)*frXL;
+        YL := Parts(PartRes)*frYL;
+        XH := Parts(PartRes)*frXH;
+        YH := Parts(PartRes)*frYH;
+
+        {Save values needed within loop}
+        Ch := wBackChar;
+        Attr := ColorMono(wTextColor, wTextMono);
+        Noisy := LongFlagIsSet(wFlags, wSoundEffects);
+        StDel := wStageDelay;
+        HaveCont := LongFlagIsSet(wFlags, wSaveContents) and
+                    wContents.HaveContents;
+
+        {Draw a series of frames}
+        F := Frames-1;
+        while F >= 0 do begin
+          {Compute dimensions of WorkFrame}
+          DX := F*XD;
+          DY := F*YD;
+          frXL := TruncParts(XL+DX);
+          frYL := TruncParts(YL+DY);
+          frXH := RoundParts(XH-DX);
+          frYH := RoundParts(YH-DY);
+
+          if HaveCont and (frXH-frXL > 1) and (frYH-frYL > 1) then
+            {Restore previous contents}
+            wContents.CopyPartToScreen(frXL+1, frYL+1, frXH-1, frYH-1)
+          else
+            {Clear what's within it}
+            ClearRect(frXL, frYL, frXH, frYH, Attr, Ch);
+
+          {Draw border part of frame}
+          DrawBorder;
+          {Make noise if selected}
+          if Noisy then
+          {$IFDEF VIRTUALPASCAL}
+            OpCrt.PlaySound( 1320-35*F, StDel );
+          {$ELSE}
+            OpCrt.Sound(1320-35*F);
+          {$ENDIF}
+          if (Frames > 10) and (F > 1) then
+            {Use only half the frames for big windows}
+            Dec(F);
+          Dec(F);
+          {$IFNDEF VIRTUALPASCAL}
+          OpCrt.Delay(StDel);
+          {$ENDIF}
+        end;
+
+        {Turn off the sound, if any}
+        {$IFNDEF VIRTUALPASCAL}
+        if Noisy then
+          OpCrt.NoSound;
+        {$ENDIF}
+
+      end;
+      {Dispose of the workframe}
+      WorkFrame.Done;
+    end;
+  end;
+
+  procedure ExplodeCloseProc(WPtr : RawWindowPtr);
+    {-Implode the window}
+  var
+    XD : Parts;
+    YD : Parts;
+    DX : Parts;
+    DY : Parts;
+    XL : Parts;
+    YL : Parts;
+    XH : Parts;
+    YH : Parts;
+    pXL : Parts;
+    pYL : Parts;
+    pXH : Parts;
+    pYH : Parts;
+    Frames : Integer;
+    F : Integer;
+    StDel : Word;
+    Noisy : Boolean;
+    RestH : Boolean;
+    RestV : Boolean;
+    WorkFrame : Frame;
+  begin
+    if LongFlagIsSet(WPtr^.wFlags, wNoCoversBuffer) then {!!.01}
+      Exit;                                              {!!.01}
+
+    {Compute number of frames, and step size per frame}
+    ComputeDeltas(WPtr, XD, YD, Frames);
+
+    with WPtr^ do begin
+      {Copy the active frame to adjust here}
+      WorkFrame.frInitFrom(wFrame);
+
+      with WorkFrame do begin
+        {Compute frame corners in Parts}
+        XL := Parts(PartRes)*frXL;
+        YL := Parts(PartRes)*frYL;
+        XH := Parts(PartRes)*frXH;
+        YH := Parts(PartRes)*frYH;
+
+        {Save previous coordinates to allow proper restoring}
+        pXL := frXL;
+        pXH := frXH;
+        pYL := frYL;
+        pYH := frYH;
+
+        Noisy := LongFlagIsSet(wFlags, wSoundEffects);
+        StDel := wStageDelay;
+        RestH := (YL <> YH);
+        RestV := (XL <> XH);
+
+        {Draw a series of frames}
+        F := 1;
+        while F < Frames do begin
+          {Compute dimensions of WorkFrame}
+          DX := F*XD;
+          DY := F*YD;
+          frXL := TruncParts(XL+DX);
+          frYL := TruncParts(YL+DY);
+          frXH := RoundParts(XH-DX);
+          frYH := RoundParts(YH-DY);
+          {Restore underlying screen}
+          if RestH then begin
+            wCovers.CopyPartToScreen(pXL, pYL, pXH, frYL);
+            wCovers.CopyPartToScreen(pXL, frYH, pXH, pYH);
+          end;
+          if RestV then begin
+            wCovers.CopyPartToScreen(pXL, frYL, frXL, frYH);
+            wCovers.CopyPartToScreen(frXH, frYL, pXH, frYH);
+          end;
+          {Draw border part of frame}
+          DrawBorder;
+          {Save previous coordinates for next loop}
+          pXL := frXL;
+          pYL := frYL;
+          pXH := frXH;
+          pYH := frYH;
+          {Make noise if selected}
+          {$IFDEF VIRTUALPASCAL}
+            OpCrt.PlaySound( 1320-35*F, StDel );
+          {$ELSE}
+            OpCrt.Sound(1320-35*F);
+          {$ENDIF}
+          if (Frames > 10) and (F < Frames-2) then
+            {Use only half the frames for big windows}
+            Inc(F);
+          Inc(F);
+          {$IFNDEF VIRTUALPASCAL}
+          OpCrt.Delay(StDel);
+          {$ENDIF}
+        end;
+
+        {$IFNDEF VIRTUALPASCAL}
+        {Turn off the sound, if any}
+        if Noisy then
+          OpCrt.NoSound;
+        {$ENDIF}
+      end;
+      {Dispose of the workframe}
+      WorkFrame.Done;
+    end;
+  end;
+
+  {---- Window-relative FastWrite routines ----}
+
+  {Note that wAbsWnCoords and wAbsFrCoords cannot be called reentrantly}
+  var
+    AbsRow : Byte;
+    AbsCol : Byte;
+    MaxLen : Integer;
+    {$IFDEF UseMouse}
+    MouseOn : Boolean;
+    {$ENDIF}
+
+  function RawWindow.wAbsWnCoords(Row, Col : Byte) : Boolean;
+    {-Convert window relative coordinates to absolute}
+  var
+    MaxRow : Byte;
+  begin
+    {$IFDEF UseMouse}
+    MouseOn := OpMouse.MouseCursorOn;
+    {$ENDIF}
+    if not IsActive then begin
+      Error(epNonFatal+ecWinNotActive);
+      wAbsWnCoords := False;
+      Exit;
+    end;
+
+    AbsCol := Col+wXL-1;
+    AbsRow := Row+wYL-1;
+    MaxLen := Integer(wXH)-AbsCol+1;
+    MaxRow := wYH;
+
+    if (MaxLen > 0) and (AbsRow <= MaxRow) then begin
+      {$IFDEF UseMouse}
+      HideMousePrim(MouseOn);
+      {$ENDIF}
+      wAbsWnCoords := True;
+    end else
+      wAbsWnCoords := False;
+  end;
+
+  procedure RawWindow.wFastWrite(St : string; Row, Col, Attr : Byte);
+    {-Write a string at Row,Col in attribute Attr}
+  begin
+    if wAbsWnCoords(Row, Col) then begin
+      if Length(St) > MaxLen then
+        St[0] := Char(MaxLen);
+      OpCrt.FastWrite(St, AbsRow, AbsCol, Attr);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.wFastText(St : string; Row, Col : Byte);
+    {-Write St at Row,Col without changing the underlying video attribute}
+  begin
+    if wAbsWnCoords(Row, Col) then begin
+      if Length(St) > MaxLen then
+        St[0] := Char(MaxLen);
+      OpCrt.FastText(St, AbsRow, AbsCol);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.wFastVert(St : string; Row, Col, Attr : Byte);
+    {-Write a string vertically}
+  begin
+    if not IsActive then begin
+      Error(epNonFatal+ecWinNotActive);
+      Exit;
+    end;
+    AbsCol := Col+wXL-1;
+    AbsRow := Row+wYL-1;
+    MaxLen := Integer(wYH)-AbsRow+1;
+    if (MaxLen > 0) and (AbsCol <= wXH) then begin
+      if Length(St) > MaxLen then
+        St[0] := Char(MaxLen);
+      {$IFDEF UseMouse}
+      HideMousePrim(MouseOn);
+      {$ENDIF}
+      OpCrt.FastVert(St, AbsRow, AbsCol, Attr);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.wFastFill(Number : Word; Ch : Char; Row, Col, Attr : Byte);
+    {-Fill Number chs at Row,Col in Attr}
+  var
+    MaxNum : Word;
+    N : Word;
+    W : Byte;
+    H : Byte;
+    RB : Byte;
+    CB : Byte;
+  begin
+    if not IsActive then begin
+      Error(epNonFatal+ecWinNotActive);
+      Exit;
+    end;
+    W := Width;
+    H := Height;
+    CB := wXL-1; {zero-based origin}
+    RB := wYL-1;
+    if (Row > H) or (Col > W) then
+      Exit;
+    MaxNum := (Word(H)-(Row-1))*Word(W)-(Col-1);
+    if Number > MaxNum then
+      Number := MaxNum;
+    {$IFDEF UseMouse}
+    HideMousePrim(MouseOn);
+    {$ENDIF}
+    while Number > 0 do begin
+      N := Number;
+      if N > W-(Col-1) then
+        N := W-(Col-1);
+      OpCrt.FastFill(N, Ch, RB+Row, CB+Col, Attr);
+      inc(Row);
+      Col := 1;
+      dec(Number, N);
+    end;
+    {$IFDEF UseMouse}
+    ShowMousePrim(MouseOn);
+    {$ENDIF}
+  end;
+
+  procedure RawWindow.wChangeAttribute(Number : Word; Row, Col, Attr : Byte);
+    {-Change Number video attributes to Attr starting at Row,Col}
+  var
+    MaxNum : Word;
+    N : Word;
+    W : Byte;
+    H : Byte;
+    RB : Byte;
+    CB : Byte;
+  begin
+    if not IsActive then begin
+      Error(epNonFatal+ecWinNotActive);
+      Exit;
+    end;
+    W := Width;
+    H := Height;
+    CB := wXL-1; {zero-based origin}
+    RB := wYL-1;
+    if (Row > H) or (Col > W) then
+      Exit;
+    MaxNum := (Word(H)-(Row-1))*Word(W)-(Col-1);
+    if Number > MaxNum then
+      Number := MaxNum;
+    {$IFDEF UseMouse}
+    HideMousePrim(MouseOn);
+    {$ENDIF}
+    while Number > 0 do begin
+      N := Number;
+      if N > W-(Col-1) then
+        N := W-(Col-1);
+      OpCrt.ChangeAttribute(N, RB+Row, CB+Col, Attr);
+      inc(Row);
+      Col := 1;
+      dec(Number, N);
+    end;
+    {$IFDEF UseMouse}
+    ShowMousePrim(MouseOn);
+    {$ENDIF}
+  end;
+
+  procedure RawWindow.wFastCenter(St : string; Row, Attr : Byte);
+    {-Write St centered on Row in Attr}
+  var
+    Col : Byte;
+  begin
+    if wAbsWnCoords(Row, 1) then begin
+      if Length(St) >= MaxLen then begin
+        St[0] := Char(MaxLen);
+        Col := 0;
+      end else
+        Col := (MaxLen-Length(St)) shr 1;
+      OpCrt.FastWrite(St, AbsRow, AbsCol+Col, Attr);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.wFastFlush(St : string; Row, Attr : Byte);
+    {-Write St flush right on Row in Attr without snow}
+  var
+    Col : Byte;
+  begin
+    if wAbsWnCoords(Row, 1) then begin
+      if Length(St) >= MaxLen then begin
+        St[0] := Char(MaxLen);
+        Col := 0;
+      end else
+        Col := MaxLen-Length(St);
+      OpCrt.FastWrite(St, AbsRow, AbsCol+Col, Attr);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.wFastRead(Number, Row, Col : Byte; var St : string);
+    {-Read Number characters from the screen into St starting at Row,Col}
+  begin
+    if wAbsWnCoords(Row, Col) then begin
+      if Number > MaxLen then
+        Number := MaxLen;
+      OpCrt.FastRead(Number, AbsRow, AbsCol, St);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end else
+      St[0] := #0;
+  end;
+
+  procedure RawWindow.wReadAttribute(Number, Row, Col : Byte; var St : string);
+    {-Read Number attributes from the screen into St starting at Row,Col}
+  begin
+    if wAbsWnCoords(Row, Col) then begin
+      if Number > MaxLen then
+        Number := MaxLen;
+      OpCrt.ReadAttribute(Number, AbsRow, AbsCol, St);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end else
+      St[0] := #0;
+  end;
+
+  procedure RawWindow.wWriteAttribute(St : String; Row, Col : Byte);
+    {-Write string of attributes St at Row,Col without changing characters}
+  begin
+    if wAbsWnCoords(Row, Col) then begin
+      if Length(St) > MaxLen then
+        St[0] := Char(MaxLen);
+      OpCrt.WriteAttribute(St, AbsRow, AbsCol);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.wFlexWrite(St : string; Row, Col : Byte; var FAttrs : FlexAttrs);
+    {-Write a string flexibly using window-relative coordinates}
+  begin
+    if wAbsWnCoords(Row, Col) then begin
+      {Can't clip string reliably in a reasonable time}
+      OpCrt.FlexWrite(St, AbsRow, AbsCol, FAttrs);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.wFastWriteCtrl(St : String; Row, Col, Attr, Ctrl : Byte);
+    {-Write St at Row,Col in Attr (video attribute) without snow.
+      Control characters displayed in Ctrl as upper-case letters}
+  begin
+    if wAbsWnCoords(Row, Col) then begin
+      if Length(St) > MaxLen then
+        St[0] := Char(MaxLen);
+      OpCrt.FastWriteCtrl(St, AbsRow, AbsCol, Attr, Ctrl);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  {---- frame-relative fastwrite routines ----}
+
+  function RawWindow.wAbsFrCoords(Row, Col : Byte) : Boolean;
+    {-Convert frame relative coordinates to absolute}
+  var
+    MaxRow : Byte;
+  begin
+    {$IFDEF UseMouse}
+    MouseOn := OpMouse.MouseCursorOn;
+    {$ENDIF}
+    if not IsActive then begin
+      Error(epNonFatal+ecWinNotActive);
+      wAbsFrCoords := False;
+      Exit;
+    end;
+    with wFrame do begin
+      AbsCol := Col+frXL;
+      AbsRow := Row+frYL;
+      MaxLen := Integer(frXH)-AbsCol;
+      MaxRow := frYH;
+    end;
+    {Adjust for whether frame has a border}
+    if LongFlagIsSet(wFlags, wBordered) then
+      dec(MaxRow)
+    else begin
+      dec(AbsCol);
+      dec(AbsRow);
+      inc(MaxLen, 2);
+    end;
+    if (MaxLen > 0) and (AbsRow <= MaxRow) then begin
+      {$IFDEF UseMouse}
+      HideMousePrim(MouseOn);
+      {$ENDIF}
+      wAbsFrCoords := True;
+    end else
+      wAbsFrCoords := False;
+  end;
+
+  procedure RawWindow.fFastWrite(St : string; Row, Col, Attr : Byte);
+    {-Write a string at Row,Col relative to frame in attribute Attr}
+  begin
+    if wAbsFrCoords(Row, Col) then begin
+      if Length(St) > MaxLen then
+        St[0] := Char(MaxLen);
+      OpCrt.FastWrite(St, AbsRow, AbsCol, Attr);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.fFastText(St : string; Row, Col : Byte);
+    {-Write a string at Row,Col relative to frame in attribute Attr}
+  begin
+    if wAbsFrCoords(Row, Col) then begin
+      if Length(St) > MaxLen then
+        St[0] := Char(MaxLen);
+      OpCrt.FastText(St, AbsRow, AbsCol);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.fFastVert(St : string; Row, Col, Attr : Byte);
+    {-Write a string vertically}
+  var
+    MaxCol : Byte;
+  begin
+    if not IsActive then begin
+      Error(epNonFatal+ecWinNotActive);
+      Exit;
+    end;
+    with wFrame do begin
+      AbsCol := Col+frXL;
+      AbsRow := Row+frYL;
+      MaxLen := Integer(frYH)-AbsRow;
+      MaxCol := frXH;
+      {Adjust for whether frame has a border}
+      if LongFlagIsSet(wFlags, wBordered) then
+        dec(MaxCol)
+      else begin
+        dec(AbsCol);
+        dec(AbsRow);
+        inc(MaxLen, 2);
+      end;
+    end;
+    if (MaxLen > 0) and (AbsCol <= MaxCol) then begin
+      if Length(St) > MaxLen then
+        St[0] := Char(MaxLen);
+      {$IFDEF UseMouse}
+      HideMousePrim(MouseOn);
+      {$ENDIF}
+      OpCrt.FastVert(St, AbsRow, AbsCol, Attr);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.fFastFill(Number : Word; Ch : Char; Row, Col, Attr : Byte);
+    {-Fill Number chs at Row,Col in Attr}
+  var
+    MaxNum : Word;
+    N : Word;
+    W : Byte;
+    H : Byte;
+    RB : Byte;
+    CB : Byte;
+  begin
+    if not IsActive then begin
+      Error(epNonFatal+ecWinNotActive);
+      Exit;
+    end;
+    with wFrame do begin
+      W := frXH-frXL+1;
+      H := frYH-frYL+1;
+      CB := frXL-1; {zero-based origin}
+      RB := frYL-1;
+      {Adjust if border shows}
+      if LongFlagIsSet(wFlags, wBordered) then begin
+        inc(CB);
+        inc(RB);
+        dec(W, 2);
+        dec(H, 2);
+      end;
+      if (Row > H) or (Col > W) then
+        Exit;
+      MaxNum := (Word(H)-(Row-1))*Word(W)-(Col-1);
+      if Number > MaxNum then
+        Number := MaxNum;
+      {$IFDEF UseMouse}
+      HideMousePrim(MouseOn);
+      {$ENDIF}
+      while Number > 0 do begin
+        N := Number;
+        if N > W-(Col-1) then
+          N := W-(Col-1);
+        OpCrt.FastFill(N, Ch, RB+Row, CB+Col, Attr);
+        inc(Row);
+        Col := 1;
+        dec(Number, N);
+      end;
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.fChangeAttribute(Number : Word; Row, Col, Attr : Byte);
+    {-Change Number video attributes to Attr starting at Row,Col}
+  var
+    MaxNum : Word;
+    N : Word;
+    W : Byte;
+    H : Byte;
+    RB : Byte;
+    CB : Byte;
+  begin
+    if not IsActive then begin
+      Error(epNonFatal+ecWinNotActive);
+      Exit;
+    end;
+    with wFrame do begin
+      W := frXH-frXL+1;
+      H := frYH-frYL+1;
+      CB := frXL-1; {zero-based origin}
+      RB := frYL-1;
+      {Adjust if border shows}
+      if LongFlagIsSet(wFlags, wBordered) then begin
+        inc(CB);
+        inc(RB);
+        dec(W, 2);
+        dec(H, 2);
+      end;
+      if (Row > H) or (Col > W) then
+        Exit;
+      MaxNum := (Word(H)-(Row-1))*Word(W)-(Col-1);
+      if Number > MaxNum then
+        Number := MaxNum;
+      {$IFDEF UseMouse}
+      HideMousePrim(MouseOn);
+      {$ENDIF}
+      while Number > 0 do begin
+        N := Number;
+        if N > W-(Col-1) then
+          N := W-(Col-1);
+        OpCrt.ChangeAttribute(N, RB+Row, CB+Col, Attr);
+        inc(Row);
+        Col := 1;
+        dec(Number, N);
+      end;
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.fFastCenter(St : string; Row, Attr : Byte);
+    {-Write St centered on Row in Attr}
+  var
+    Col : Byte;
+  begin
+    if wAbsFrCoords(Row, 1) then begin
+      if Length(St) >= MaxLen then begin
+        St[0] := Char(MaxLen);
+        Col := 0;
+      end else
+        Col := (MaxLen-Length(St)) shr 1;
+      OpCrt.FastWrite(St, AbsRow, AbsCol+Col, Attr);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.fFastFlush(St : string; Row, Attr : Byte);
+    {-Write St flush right on Row in Attr without snow}
+  var
+    Col : Byte;
+  begin
+    if wAbsFrCoords(Row, 1) then begin
+      if Length(St) >= MaxLen then begin
+        St[0] := Char(MaxLen);
+        Col := 0;
+      end else
+        Col := MaxLen-Length(St);
+      OpCrt.FastWrite(St, AbsRow, AbsCol+Col, Attr);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.fFastRead(Number, Row, Col : Byte; var St : string);
+    {-Read Number characters from the screen into St starting at Row,Col}
+  begin
+    if wAbsFrCoords(Row, Col) then begin
+      if Number > MaxLen then
+        Number := MaxLen;
+      OpCrt.FastRead(Number, AbsRow, AbsCol, St);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end else
+      St[0] := #0;
+  end;
+
+  procedure RawWindow.fReadAttribute(Number, Row, Col : Byte; var St : string);
+    {-Read Number attributes from the screen into St starting at Row,Col}
+  begin
+    if wAbsFrCoords(Row, Col) then begin
+      if Number > MaxLen then
+        Number := MaxLen;
+      OpCrt.ReadAttribute(Number, AbsRow, AbsCol, St);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end else
+      St[0] := #0;
+  end;
+
+  procedure RawWindow.fWriteAttribute(St : String; Row, Col : Byte);
+    {-Write string of attributes St at Row,Col without changing characters}
+  begin
+    if wAbsFrCoords(Row, Col) then begin
+      if Length(St) > MaxLen then
+        St[0] := Char(MaxLen);
+      OpCrt.WriteAttribute(St, AbsRow, AbsCol);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.fFlexWrite(St : string; Row, Col : Byte;
+                                 var FAttrs : FlexAttrs);
+    {-Write a string flexibly using window-relative coordinates}
+  begin
+    if wAbsFrCoords(Row, Col) then begin
+      {Can't clip string reliably in a reasonable time}
+      OpCrt.FlexWrite(St, AbsRow, AbsCol, FAttrs);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure RawWindow.fFastWriteCtrl(St : String; Row, Col, Attr, Ctrl : Byte);
+    {-Write St at Row,Col in Attr (video attribute) without snow.
+      Control characters displayed in Ctrl as upper-case letters}
+  begin
+    if wAbsFrCoords(Row, Col) then begin
+      if Length(St) > MaxLen then
+        St[0] := Char(MaxLen);
+      OpCrt.FastWriteCtrl(St, AbsRow, AbsCol, Attr, Ctrl);
+      {$IFDEF UseMouse}
+      ShowMousePrim(MouseOn);
+      {$ENDIF}
+    end;
+  end;
+
+  {---- utility routines for screen design tools ----}
+
+  function RawWindow.IsExploding : Boolean;
+    {-Returns True if window explodes}
+  begin
+    IsExploding := (@wOpenProc <> @EmptyOpenCloseProc);
+  end;
+
+  function RawWindow.HasFrame : Boolean;
+    {-Returns True if wFrame has a frame}
+  begin
+    HasFrame := wFrame.IsFramed;
+  end;
+
+  function RawWindow.HasHeaders : Boolean;
+    {-Returns True if wFrame has headers (not counting spans)}
+  var
+    HP : HeaderPtr;
+  begin
+    HP := HeaderPtr(wFrame.frHeaders.Head);
+    while HP <> nil do begin
+      if HP^.heType <> heSpan then begin
+        HasHeaders := True;
+        Exit;
+      end;
+      HP := HeaderPtr(HP^.dlNext);
+    end;
+    HasHeaders := False;
+  end;
+
+  function RawWindow.HasHeaderType(HPT : HeaderPosType;
+                                   var HP : HeaderPtr) : Boolean;
+    {-Returns True if wFrame has a header of the specified type.
+      Also returns a pointer to the header node in HP}
+  begin
+    HasHeaderType := False;
+    HP := HeaderPtr(wFrame.frHeaders.Head);
+    while HP <> nil do
+      if HP^.heType = HPT then begin
+        HasHeaderType := True;
+        Exit;
+      end else
+        HP := HeaderPtr(HP^.dlNext);
+  end;
+
+  function RawWindow.HasSpans : Boolean;
+    {-Returns True if wFrame has spans}
+  var
+    HP : HeaderPtr;
+  begin
+    HasSpans := HasHeaderType(heSpan, HP);
+  end;
+
+  procedure RawWindow.ResetHeaderColor(Color, Mono : Byte);
+    {-Reset colors for all headers of wFrame}
+  begin
+    wFrame.SetHeaderAttr(Color, Mono, True);
+  end;
+
+  {$IFDEF UseShadows}
+  function RawWindow.ShadowType : ShadowDrawType;
+    {-Returns type of shadows on wFrame}
+  begin
+    with wFrame, frShadows do
+      if Head = nil then
+        ShadowType := shNone
+      else if ShadowPtr(Head)^.ShChar = SeeThruChar then
+        ShadowType := shSeeThru
+      else
+        ShadowType := shOverWrite;
+  end;
+
+  function RawWindow.HasShadows : Boolean;
+    {-Returns True if wFrame has shadows}
+  begin
+    HasShadows := ShadowType <> shNone;
+  end;
+
+  procedure RawWindow.RemoveShadows;
+    {-Remove shadows, if any}
+  begin
+    wFrame.RemoveShadows;
+  end;
+
+  procedure RawWindow.ResetShadowColor(Color, Mono : Byte);
+    {-Reset colors for all shadows of wFrame}
+  begin
+    wFrame.SetShadowAttr(Color, Mono, True);
+  end;
+  {$ENDIF}
+
+  {$IFDEF UseScrollBars}
+  function RawWindow.HaveScrollBar(FET : FrameEdgeType) : Boolean;
+    {-Returns True if wFrame has scroll bar on specified edge}
+  begin
+    HaveScrollBar := wFrame.frBars[FET] <> nil;
+  end;
+
+  function RawWindow.HasScrollBars : Boolean;
+    {-Returns True if wFrame has scroll bars}
+  var
+    FET : FrameEdgeType;
+  begin
+    HasScrollBars := True;
+    for FET := frTT to frRR do
+      if HaveScrollBar(FET) then
+        Exit;
+    HasScrollBars := False;
+  end;
+
+  procedure RawWindow.ResetScrollBarColor(SliColor, SliMono : Byte;
+                                          BarColor, BarMono : Byte;
+                                          ArrowColor, ArrowMono : Byte);
+    {-Reset colors for all scroll bars of wFrame}
+  var
+    FET : FrameEdgeType;
+    SBP : ScrollBarPtr;
+  begin
+    for FET := frTT to frRR do begin
+      SBP := wFrame.frBars[FET];
+      if SBP <> nil then
+        with SBP^ do begin
+          sbSliColor   := SliColor;
+          sbSliMono    := SliMono;
+          sbBarColor   := BarColor;
+          sbBarMono    := BarMono;
+          sbArrowColor := ArrowColor;
+          sbArrowMono  := ArrowMono;
+        end;
+    end;
+  end;
+  {$ENDIF}
+
+{$IFDEF UseStreams}
+
+  {---- stream-related routines for RawWindows ----}
+
+  constructor RawWindow.Load(var S : IdStream);
+    {-Load from stream}
+  var
+    X1 : Byte;
+    Y1 : Byte;
+    X2 : Byte;
+    Y2 : Byte;
+  begin
+    rwZeroOut;
+    if not Root.Init then
+      Fail;
+
+    {Load fixed data}
+    S.ReadRange(wXL, WScrWidth);
+    S.ReadRange(wScrWidth, wFrame);
+    if S.PeekStatus <> 0 then begin
+      Root.Done;
+      Fail;
+    end;
+
+    {Assure active flag is off}
+    ClearLongFlag(wFlags, wActive);
+
+    {Load frames}
+    S.Get(wFrame);
+    S.Get(aFrame);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {Load screen rectangles}
+    if not LongFlagIsSet(wFlags, wSaveContents) then begin
+      wFrame.WithinFrameCoords(X1, Y1, X2, Y2);
+      wContents.Init(X1, Y1, X2, Y2, nil);
+    end else
+      S.Get(wContents);
+    if not LongFlagIsSet(wFlags, wNoCoversBuffer+wCoversOnDemand) then {!!.01}
+      S.Get(wCovers)
+    else with wFrame do                                                {!!.01}
+      wCovers.Init(frXL, frYL, frXH, frYH, nil);                       {!!.01}
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {Load open and close routines}
+    @wOpenProc := S.ReadUserPointer(@EmptyOpenCloseProc);
+    @wCloseProc := S.ReadUserPointer(@EmptyOpenCloseProc);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    ClearErrors;
+  end;
+
+  procedure RawWindow.Store(var S : IdStream);
+    {-Store to stream}
+  var
+    HContents : Boolean;
+  begin
+    {Store fixed data}
+    S.WriteRange(wXL, wFrame);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Store frames}
+    S.Put(wFrame);
+    S.Put(aFrame);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Store screen rectangles}
+    if LongFlagIsSet(wFlags, wSaveContents) then begin
+      {Store window contents to stream if available and requested}
+      HContents := wContents.HaveContents;
+      if HContents then
+        wContents.StoreContents(LongFlagIsSet(wFlags, wStoreContents));
+      S.Put(wContents);
+      wContents.StoreContents(HContents);
+    end;
+    if not LongFlagIsSet(wFlags, wNoCoversBuffer+wCoversOnDemand) then {!!.01}
+      S.Put(wCovers);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Store open and close routines}
+    S.WriteUserPointer(@wOpenProc, ptEmptyOpenCloseProc);
+    S.WriteUserPointer(@wCloseProc, ptEmptyOpenCloseProc);
+  end;
+
+  procedure RawWindowStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing raw windows}
+  begin
+    DoubleListStream(SPtr);
+    ScreenRectStream(SPtr);
+    FrameStream(SPtr);
+    with SPtr^ do begin
+      RegisterType(otRawWindow, veRawWindow,
+                   TypeOf(RawWindow), @RawWindow.Store, @RawWindow.Load);
+      RegisterPointer(ptEmptyOpenCloseProc, @EmptyOpenCloseProc);
+    end;
+  end;
+
+  procedure ExplodingWindowStream(SPtr : IdStreamPtr);
+    {-Register procedures used for exploding windows}
+  begin
+    with SPtr^ do begin
+      RegisterPointer(ptExplodeOpenProc, @ExplodeOpenProc);
+      RegisterPointer(ptExplodeCloseProc, @ExplodeCloseProc);
+    end;
+  end;
+
+{$ENDIF}
+
+  constructor StackWindowListNode.Init(W : WindowPtr);
+    {-Instantiate a window list node}
+  begin
+    if not SingleListNode.Init then
+      Fail;
+    swPtr := W;
+  end;
+
+  {!!.11} {Rewritten to correctly handle embedded child window fields}
+  destructor StackWindowListNode.Done;
+    {-Destroy a window list node}
+  begin
+    if swPtr <> nil then begin
+      {Avoid deallocating the list node twice}
+      swPtr^.wParentPtr := nil;
+      ClearLongFlag(swPtr^.wFlags, wIsChild+wActive);
+{$IFDEF Dpmi}                                                        {!!.20}
+      {we must assume it's on the heap, dispose it}                  {!!.20}
+      Dispose(swPtr, Done);                                          {!!.20}
+{$ELSE}                                                              {!!.20}
+      {Deallocate swPtr itself only if on heap}
+  {$IFNDEF VIRTUALPASCAL}
+      if (OS(swPtr).O <= $000F) and
+    {$IFDEF Heap6}
+         ((OS(swPtr).O = $0000) or (OS(swPtr).O = $0008)) and
+    {$ENDIF}
+         (OS(swPtr).S >= OS(HeapOrg).S) then
+        Dispose(swPtr, Done)
+      else
+  {$ENDIF}
+        swPtr^.Done;
+{$ENDIF}                                                             {!!.20}
+    end;
+    SingleListNode.Done;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor StackWindowListNode.Load(var S : IdStream);
+    {-Load a window list node from a stream}
+  begin
+    swPtr := WindowPtr(S.GetPtr);
+    if S.PeekStatus <> 0 then
+      Fail;
+  end;
+
+  procedure StackWindowListNode.Store(var S : IdStream);
+    {-Store a window list node to a stream}
+  begin
+    S.PutPtr(swPtr);
+  end;
+
+{$ENDIF}
+
+  procedure DefaultStackProc(WPtr : WindowPtr);
+    {-Default routine called when a window is stacked}
+  begin
+    {Does nothing}
+  end;
+
+  constructor StackWindow.Init(X1, Y1, X2, Y2 : Byte);
+    {-Create a stacked window}
+  begin
+    if not StackWindow.InitCustom(X1, Y1, X2, Y2,
+                                  DefaultColorSet,
+                                  DefWindowOptions) then
+      Fail;
+  end;
+
+  constructor StackWindow.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                     var Colors : ColorSet;
+                                     Options : LongInt);
+    {-Create a window with custom options}
+  begin
+    {No child list by default} {!!.01}
+    wChildList := nil;         {!!.01}
+    wActiveChild := nil;       {!!.01}
+    {No parent by default}     {!!.01}
+    wParentPtr := nil;         {!!.01}
+
+    {Raw window initialization does most of what we need}
+    if not RawWindow.InitCustom(X1, Y1, X2, Y2, Colors, Options) then
+      Fail;
+
+    {Set the default window stack and error proc}
+    wActiveStack := @wStack;
+    wStackProc := DefaultStackProc;
+    wNumber := 0;
+  end;
+

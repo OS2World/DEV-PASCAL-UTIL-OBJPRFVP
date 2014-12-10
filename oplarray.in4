@@ -1,0 +1,725 @@
+{*********************************************************}
+{*                  OPLARRAY.IN4 1.30                    *}
+{*     Copyright (c) TurboPower Software 1987, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+{implementation for XMS Arrays}
+
+type
+  XArrayHeader =
+    record
+      Cols : Word;
+      ElSize : Word;
+      Rows : Word;
+      SizeInK : Word;
+    end;
+  TpXArrayRec =
+    record
+      Handle : Word;
+      Header : XArrayHeader;
+    end;
+  TpXArrayInternal = ^TpXArrayRec;
+
+  function XmsBlockWrite(Handle : Word; StartingOfs : LongInt;
+                         var Data; Size : LongInt) : Word;
+  var
+    Source, Dest : ExtMemPtr;
+  begin
+    Source.RealPtr := @Data;
+    Dest.ProtectedPtr := StartingOfs;
+    XmsBlockWrite := MoveExtMemBlock(Size, 0, Source, Handle, Dest);
+  end;
+
+  function XmsBlockRead(Handle : Word; StartingOfs : LongInt;
+                         var Data; Size : LongInt) : Word;
+  var
+    Source, Dest : ExtMemPtr;
+
+  begin
+    Dest.RealPtr := @Data;
+    Source.ProtectedPtr := StartingOfs;
+    XmsBlockRead := MoveExtMemBlock(Size, Handle, Source, 0, Dest);
+  end;
+
+  function XArrayAddress(H : XArrayHeader; R, C : Word) : LongInt;
+  Inline(
+    $5B/                   {  pop   bx                ;save column in bx}
+    $58/                   {  pop   ax                ;save row in ax}
+    $5F/                   {  pop   di                ;offset of array header}
+    $07/                   {  pop   es                ;segment of array header}
+    $26/                   {es:}
+    $F7/$65/<EMSCOLSOFS/   {  mul word ptr [di+<EmsColsOfs] ;R*Cols in dx:ax}
+    $01/$D8/               {  add   ax,bx             ;add in column}
+    $83/$D2/$00/           {  adc   dx,0              ;carry into high word}
+    $26/                   {es:}
+    $8B/$4D/<EMSSIOFS/     {  mov   cx,[di+<EmsSiOfs] ;ElSize in cx}
+    $89/$D7/               {  mov   di,dx             ;save high word of multiplicand}
+    $F7/$E1/               {  mul   cx                ;multiply low word}
+    $89/$C6/               {  mov   si,ax             ;save low word result}
+    $89/$D3/               {  mov   bx,dx             ;save high word result}
+    $89/$F8/               {  mov   ax,di             ;get high word of multiplicand}
+    $F7/$E1/               {  mul   cx                ;multiply high word}
+    $89/$C2/               {  mov   dx,ax             ;save result in high word}
+    $01/$DA/               {  add   dx,bx             ;add other part of high word}
+    $89/$F0);              {  mov   ax,si}
+
+  function XmsArray.RangeError(Row, Col : Word) : Boolean;
+    {-Check for addressing range errors}
+  begin
+    with TpXArrayInternal(Internal)^.Header do
+      RangeError := (Row >= Dimension.dRows) or (Col >= Dimension.dCols);
+  end;
+
+  procedure XmsArray.RetA(Row, Col : Word; var Value);
+    {-Return the value of A[r,c]}
+  var
+    L : LongInt;
+  begin
+    with TpXArrayInternal(Internal)^ do begin
+      {Compute page number and offset}
+      L := XArrayAddress(Header, Row, Col);
+      {Return the data from the mapped window}
+      with Header do
+        if XmsBlockRead(Handle, L, Value, ElSize) <> 0 then
+          Error(epNonFatal+ecXmsError);
+    end;
+  end;
+
+  procedure XmsArray.SetA(Row, Col : Word; var Value);
+    {-Set the array element A[r,c] to value}
+  var
+    L : LongInt;
+  begin
+    with TpXArrayInternal(Internal)^ do begin
+      {Compute page number and offset}
+      L := XArrayAddress(Header, Row, Col);
+      {Save the data to the mapped window}
+      with Header do
+        if XmsBlockWrite(Handle, L, Value, ElSize) <> 0 then
+          Error(epNonFatal+ecXmsError);
+    end;
+  end;
+
+  procedure XmsRCArray.RetA(Row, Col : Word; var Value);
+    {-Return the value of A[r,c] with Range checking}
+  var
+    L : LongInt;
+  begin
+    with TpXArrayInternal(Internal)^ do begin
+      if Row >= Header.Rows then begin
+        Error(epNonFatal+ecRowOutOfRange);                    {!!.03}
+        Exit;
+      end;
+      if Col >= Header.Cols then begin
+        Error(epNonFatal+ecColOutOfRange);                    {!!.03}
+        Exit;
+      end;
+      {Compute page number and offset}
+      L := XArrayAddress(Header, Row, Col);
+      {Return the data from the mapped window}
+      with Header do
+        if XmsBlockRead(Handle, L, Value, ElSize) <> 0 then
+          Error(epNonFatal+ecXmsError);
+    end;
+  end;
+
+  procedure XmsRCArray.SetA(Row, Col : Word; var Value);
+    {-Set the array element A[r,c] to value with Range Checking}
+  var
+    L : LongInt;
+  begin
+    with TpXArrayInternal(Internal)^ do begin
+      if Row >= Header.Rows then begin
+        Error(epNonFatal+ecRowOutOfRange);                   {!!.03}
+        Exit;
+      end;
+      if Col >= Header.Cols then begin
+        Error(epNonFatal+ecColOutOfRange);                   {!!.03}
+        Exit;
+      end;
+      {Compute page number and offset}
+      L := XArrayAddress(Header, Row, Col);
+      {Save the data to the mapped window}
+      with Header do
+        if XmsBlockWrite(Handle, L, Value, ElSize) <> 0 then
+          Error(epNonFatal+ecXmsError);
+    end;
+  end;
+
+  procedure XmsArray.SafeRetA(Row, Col : Word; var Value);
+    {-Return the value of A[r,c] ignoring invalid Rows and Cols}
+  var
+    L : LongInt;
+  begin
+    with TpXArrayInternal(Internal)^ do begin
+      if (Row >= Header.Rows) or (Col >= Header.Cols) then
+        Exit;
+      {Compute page number and offset}
+      L := XArrayAddress(Header, Row, Col);
+      {Return the data from the mapped window}
+      with Header do
+        if XmsBlockRead(Handle, L, Value, ElSize) <> 0 then
+          Error(epNonFatal+ecXmsError);
+    end;
+  end;
+
+  procedure XmsArray.SafeSetA(Row, Col : Word; var Value);
+    {-Set the array element A[r,c] to value ignoring invalid Rows and Cols}
+  var
+    L : LongInt;
+  begin
+    with TpXArrayInternal(Internal)^ do begin
+      if (Row >= Header.Rows) or (Col >= Header.Cols) then
+        Exit;
+      {Compute page number and offset}
+      L := XArrayAddress(Header, Row, Col);
+      {Save the data to the mapped window}
+      with Header do
+        if XmsBlockWrite(Handle, L, Value, ElSize) <> 0 then
+          Error(epNonFatal+ecXmsError);
+    end;
+  end;
+
+  procedure XmsArray.ClearA(var Value; Initialize : InitType);
+    {-Reset all array values to Value}
+  const
+    MaxSize = 256;
+  var
+    B : Byte absolute Value;
+    R : Word;
+    C : Word;
+    A : Array[1..MaxSize] of Byte;
+    Total, Offst : LongInt;
+  begin
+    with TpXArrayInternal(Internal)^, Header do
+      case Initialize of
+        FastInit :
+          begin
+            {fill the entire array with B}
+            FillChar(A, SizeOf(A), B);
+            Total := LongInt(Rows) * Cols * ElSize;        {!!.20}
+            Offst := 0;
+            while Offst < Total do begin
+              if (Total - Offst) > LongInt(SizeOf(A)) then
+                R := SizeOf(A)
+              else
+                R := Word(Total - Offst);
+              if XmsBlockWrite(Handle, Offst, A, R) <> 0 then begin
+                Error(epNonFatal+ecXmsError);
+                Exit;
+              end;
+              Inc(Offst, R);
+            end;
+          end;
+        ExactInit :
+          begin
+            for R := 0 to Pred(Rows) do
+              for C := 0 to Pred(Cols) do begin
+                SetA(R, C, Value);
+                if LastError <> 0 then
+                  Exit;
+              end;
+          end;
+      end;
+  end;
+
+  function XMakeA(Rows : Word;
+                  Cols : Word;
+                  ElementSize : Word;
+                  A : XmsArrayPtr) : Boolean;
+    {-Determine page structure and allocate array}
+  var
+    H : XArrayHeader;
+    Bytes : LongInt;
+  begin
+    XMakeA := False;
+    if not XmsInstalled then begin
+      A^.Error(epFatal+ecNoXms);
+      Exit;
+    end;
+    with A^ do begin
+      {Assure at least one element on each axis}
+      if (Rows = 0) or (Cols = 0) then begin
+        Error(epFatal+ecBadDimensions);
+        Exit;
+      end;
+      {Assure element size is valid}
+      if ElementSize = 0 then begin
+        Error(epFatal+ecElSizeIsZero);
+        Exit;
+      end;
+      {XMSArray's require even sized elements}
+      if Odd(ElementSize) then begin
+        Error(epFatal+ecElSizeNotEven);
+        Exit;
+      end;
+      Bytes := LongInt(Rows) * Cols * ElementSize;
+      {Init the header H}
+      H.Rows := Rows;
+      H.Cols := Cols;
+      H.ElSize := ElementSize;
+      H.SizeInK := Word((Bytes + 1023) div 1024);
+
+      {allocate the internal TpXArrayRec}
+      if not GetMemCheck(Internal,SizeOf(TpXArrayRec)) then begin
+        Error(epFatal+ecOutOfMemory);
+        Exit;
+      end;
+      with A^, TpXArrayInternal(Internal)^ do begin
+        {Initialize header}
+        Header := H;
+        {Allocate memory in XMS}
+        if AllocateExtMem(H.SizeInK, Handle) <> 0 then begin
+          Error(epFatal+ecInsufficientXms);
+          FreeMemCheck(Internal, SizeOf(TpXArrayRec));
+          Exit;
+        end;
+      end;
+      XMakeA := True;
+    end;
+  end;
+
+  constructor XmsArray.Init(Rows, Cols : Word; ElementSize : Word;
+                            HeapToUse : LongInt; ArrayOptions : Byte);
+    {-create a new XMS array}
+  var
+    SaveBeep : Boolean;
+
+  begin
+    SaveBeep := DefBeepOnError;
+    DefBeepOnError := False;
+    AbstractArray.Init(Rows,Cols,ElementSize,HeapToUse,ArrayOptions);
+    TypeOfLArray := lXMSArray;
+    if not XMakeA(Rows,Cols,ElementSize,@Self) then begin
+      InitStatus := LastError;
+      DefBeepOnError := SaveBeep;
+      Fail;
+    end;
+    DefBeepOnError := SaveBeep;
+  end;
+
+  destructor XmsArray.Done;
+    {-Deallocate an XMS array}
+  var
+    P : Word;
+  begin
+    {if internal is NIL then no array allocated so Exit}
+    if Internal = NIL then
+      Exit;
+
+    with TpXArrayInternal(Internal)^  do begin
+      {Deallocate XMS memory}
+      if OpXms.FreeExtMem(Handle) <> 0 then begin
+        Error(epFatal+ecCantFreeXms);
+        Exit;
+      end;
+      {Deallocate the array internal TpXArrayRec}
+      FreeMemCheck(Internal, SizeOf(TpXArrayRec));
+    end;
+  end;
+
+  procedure XmsArray.StoreA(FileName : string);
+    {-Write array to disk in VARRAY format}
+  const
+    MaxBufferSize  = $FFF0;
+    AverageDiskIndexSize = 32 * SizeOf(LongInt);
+  type
+    IoBuffer       = Array[0..MaxBufferSize] of Byte;
+    IoBufferPtr    = ^IoBuffer;
+  var
+    F : file;
+    Bytes : Word;
+    P,
+    PageIndexSz,
+    IOBufSize,
+    Index,
+    R,
+    C,
+    PD,
+    RowOffset,
+    RowsAtATime,
+    ElsPerBuf : Word;
+    H : VArrayHeader;
+    OldH : VArrayHeader absolute H;
+    N : LongInt;
+    I : Word;
+    PIndex : ^DiskPageMap;
+    IOBuf  : IOBufferPtr;
+    PS : Longint;                  {!!.13}
+
+    procedure UnDo(ErrorCode : Word);
+      {-Free allocated heap space, close file and call Error method}
+    var
+      E : Word;
+    begin
+      FreeMemCheck(PIndex,PageIndexSz);
+      FreeMemCheck(IOBuf,H.PageSize);
+      Close(F);
+      E := IoResult;
+      Error(ErrorCode);
+    end;
+
+  begin
+    PIndex := NIL;
+    IOBuf  := NIL;
+    if MaxAvail < MaxBufferSize + AverageDiskIndexSize then
+      Bytes := MaxAvail - AverageDiskIndexSize
+    else
+      Bytes := MaxBufferSize;
+
+    with TpXArrayInternal(Internal)^, Header do begin
+      {init the VArrayHeader}
+      H.PageCount := DivUp(LongInt(Rows)*Cols*ElSize, Bytes);
+
+      if H.PageCount = 0 then begin
+        Error(epNonFatal + ecElementTooBig);
+        Exit;
+      end;
+
+      H.ColsInPage := Cols;                 {always equal to number of Cols}
+      H.PagesAcross := 1;                   {always just one page across}
+      H.ElSize := ElSize;
+
+      H.RowsInPage := (Rows+(H.PageCount-1)) DIV H.PageCount; {rows in a page}
+      H.PagesDown := H.PageCount;           {Pages down = total page count}
+      PS := LongInt(H.RowsInPage) * H.ColsInPage * H.ElSize;    {!!.13}
+      while PS > $FFFF do begin                                 {!!.13}
+        Inc(H.PagesDown);                                       {!!.13}
+        H.RowsInPage := (Rows+(H.PagesDown-1)) DIV H.PagesDown; {!!.13}
+        PS := LongInt(H.RowsInPage) * H.ColsInPage * H.ElSize;  {!!.13}
+      end;                                                      {!!.13}
+      H.PageSize := PS;                                         {!!.13}
+      if ByteFlagIsSet(lFlags, lTpVArrayFormat) then begin
+        {calculate next available byte in file}
+        OldH.NextAvail := LongInt(SizeOf(VArrayHeader)) +
+                       (H.PageCount*SizeOf(LongInt)) +
+                       (LongInt(H.PageSize) * H.PageCount);
+        OldH.ID := VArrayID;
+      end
+      else begin
+        {calculate next available byte in file}
+        H.NextAvail := LongInt(SizeOf(VArrayHeader)) +
+                       (H.PageCount*SizeOf(LongInt)) +
+                       (LongInt(H.PageSize) * H.PageCount);
+        H.ID := IDString;
+      end;
+    end;
+
+    {calculate the number of elements per buffer}
+    with H do
+      ElsPerBuf := RowsInPage * ColsInPage;
+
+    {allocate the I/O Buffer}
+    if not GetMemCheck(IOBuf,H.PageSize) then begin
+      UnDo(epNonFatal+ecOutOfMemory);
+      Exit;
+    end;
+
+    {calculate size needed for disk page index and allocate}
+    PageIndexSz := SizeOf(LongInt) * H.PageCount;
+    if not GetMemCheck(PIndex,PageIndexSz) then begin
+      UnDo(epNonFatal+ecOutOfMemory);
+      Exit;
+    end;
+
+    {Open the output file}
+    Assign(F, FileName);
+    Rewrite(F, 1);
+    I := IoResult;
+    if I <> 0 then begin
+      UnDo(epNonFatal+I);
+      Exit;
+    end;
+
+    {Write the header}
+    BlockWrite(F, H, SizeOf(VArrayHeader), Bytes);
+    I := IoResult;
+    if Bytes <> SizeOf(VArrayHeader) then
+      I := ecDeviceWrite;
+    if I <> 0 then begin
+      UnDo(epNonFatal+I);
+      Exit;
+    end;
+
+    {calculate the values for each entry in the Disk Page Index by counting
+     backwards from NextAvail}
+    if ByteFlagIsSet(lFlags, lTpVArrayFormat) then
+      N := OldH.NextAvail
+    else
+      N := H.NextAvail;
+    for I := Pred(H.PageCount) downto 0 do begin
+      N := N - H.PageSize;
+      PIndex^[I] := N;
+    end;
+
+    {write the page index}
+    BlockWrite(F,PIndex^,PageIndexSz,Bytes);
+    I := IoResult;
+    if Bytes <> PageIndexSz then
+      I := ecDeviceWrite;
+    if (I <> 0) then begin
+      UnDo(epNonFatal+I);
+      Exit;
+    end;
+
+    {all done with Disk Page Index so free memory}
+    FreeMemCheck(PIndex,PageIndexSz);
+
+    with TpXArrayInternal(Internal)^, Header do begin
+      Index := 0;
+      {Calculate the number of contiguos rows per run}
+      RowsAtATime := (Rows + Pred(H.PagesDown)) div H.PagesDown;
+
+      for PD := 0 to Pred(H.PagesDown) do begin
+        {starting row number based on PD}
+        RowOffset := (RowsAtATime * PD);
+        for C := 0 to Pred(Cols) do begin
+          for R := 0 to Pred(RowsAtATime) do begin
+            SafeRetA(R + RowOffset,C,IOBuf^[Index * H.ElSize]);
+            Inc(Index);
+
+            {if buffer full, then flush it to disk}
+            if Index >= ElsPerBuf then begin
+              Index := 0;
+              BlockWrite(F,IOBuf^,H.PageSize,Bytes);
+              I := IoResult;
+              if Bytes <> H.PageSize then
+                I := ecDeviceWrite;
+              if I <> 0 then begin
+                UnDo(epNonFatal+I);
+                Exit;
+              end;
+            end;
+          end;
+        end;
+      end;
+
+      {flush whatever is left in page}
+      if Index > 0 then begin
+        BlockWrite(F, IOBuf^, H.PageSize, Bytes);
+        I := IoResult;
+        if Bytes <> H.PageSize then
+          I := ecDeviceWrite;
+        if I <> 0 then begin
+          UnDo(epNonFatal+I);
+          Exit;
+        end;
+      end;
+    end;
+    FreeMemCheck(IOBuf,H.PageSize);
+    Close(F);
+    I := IoResult;
+    if I <> 0 then
+      Error(epNonFatal+I);
+  end;
+
+  constructor XmsArray.LoadA(FileName : String; HeapToUse : LongInt;
+                             ArrayOptions : Byte);
+  var
+    Bytes             : Word;
+    P,R,C             : Word;
+    ElementSize       : Word;
+    ElementsInBuf     : Word;
+    ElementsPerBuf    : Word;
+    NumInBuf          : Word;
+    CalcCols          : Word;
+    CalcRows          : Word;
+    PageNo            : Word;
+    PageOfs           : Word;
+    BufferSize        : LongInt;
+    HeapFree          : LongInt;
+    I                 : LongInt;
+    N                 : LongInt;
+    Buf               : Pointer;
+    E                 : Pointer;
+    H                 : VArrayHeader;
+    OldH              : OldVArrayHeader absolute H;
+    F                 : File;
+    RC                : ArrayRC;
+    SaveBeep : Boolean;
+
+    procedure UnDo(ErrorCode : Word);
+      {-Free memory for Buffer, Close file, and call Error method}
+    begin
+      InitStatus := LastError;
+      FreeMemCheck(Buf,BufferSize);
+      Close(F);
+      P := IoResult;
+      Error(ErrorCode);
+      Done;
+      DefBeepOnError := SaveBeep;
+    end;
+
+  begin
+    SaveBeep := DefBeepOnError;
+    DefBeepOnError := False;
+    AbstractArray.LoadA(HeapToUse, ArrayOptions);
+    TypeOfLArray := lXMSArray;
+
+    if not XmsInstalled then begin
+      InitStatus := ecNoXms;
+      DefBeepOnError := SaveBeep;
+      Fail;
+    end;
+
+    {Open the input file}
+    Assign(F, FileName);
+    Reset(F, 1);
+    I := IoResult;
+    if I <> 0 then begin
+      Error(epFatal+I);
+      InitStatus := LastError;
+      DefBeepOnError := SaveBeep;
+      Fail;
+    end;
+    Buf := NIL;
+
+    {Read the header}
+    BlockRead(F, H, SizeOf(VArrayHeader), Bytes);
+    if (IoResult <> 0) or (Bytes <> SizeOf(VArrayHeader)) then begin
+      Close(F);
+      P := IoResult;
+      Error(epFatal+ecNotLArrayFile);
+      InitStatus := LastError;
+      DefBeepOnError := SaveBeep;
+      Fail;
+    end;
+
+    with H do begin
+      {Check for proper file format (either OpLArray or TpVArray format OK)}
+      if not ((ID = IdString) or (ID = VArrayID)) then begin
+        if OldH.ID <> VArrayID then begin
+          UnDo(epFatal+ecNotLArrayFile);
+          Fail;
+        end
+        else
+          SetByteFlag(lFlags, lTpVArrayFormat);
+      end;
+      if Odd(ElSize) then begin
+        Undo(epFatal+ecElSizeNotEven);
+        Fail;
+      end;
+      ElementsInBuf := RowsInPage*ColsInPage;
+      BufferSize := ElementsInBuf*ElSize;
+      if BufferSize > LongInt(MaxHeapBlock) then
+        BufferSize := MaxHeapBlock;
+      {calculate the rows and cols based on page info}
+      CalcCols := ColsInPage * PagesAcross;
+      CalcRows := RowsInPage * PagesDown;
+    end;
+
+    {allocate memory and make the ems array}
+    if not XMakeA(CalcRows,CalcCols,H.ElSize,@Self) then begin
+      Close(F);
+      P := IoResult;
+      InitStatus := LastError;
+      Done;
+      DefBeepOnError := SaveBeep;
+      Fail;
+    end;
+
+    with Dimension do begin
+      dRows := CalcRows;
+      dCols := CalcCols;
+    end;
+
+    HeapFree := MaxAvail;
+    if HeapFree > BufferSize then
+      HeapFree := BufferSize;
+    ElementsPerBuf := Word(HeapFree div H.ElSize);{size of buffer in Elements}
+    BufferSize := H.ElSize * ElementsPerBuf;      {size of buffer in bytes}
+    if ElementsPerBuf = 0 then begin
+      UnDo(epFatal+ecOutOfMemory);
+      Fail;
+    end;
+
+    if not GetMemCheck(Buf,Word(BufferSize)) then begin
+      UnDo(epFatal+ecOutOfMemory);
+      Fail;
+    end;
+    with TpXArrayInternal(Internal)^, Header do begin
+      ElementSize := ElSize;
+      NumInBuf := 0;
+      {for each page, read the disk page index and process page}
+      for PageNo := 0 to Pred(H.PageCount) do begin
+        Seek(F,SizeOf(VArrayHeader)+(SizeOf(LongInt)*PageNo));
+        BlockRead(F,N,SizeOf(LongInt),Bytes);
+        I := IoResult;
+        if Bytes <> SizeOf(LongInt) then
+          I := ecDeviceRead;
+        if I <> 0 then begin
+          UnDo(epFatal+I);
+          Fail;
+        end;
+        {goto disk page offset for this page}
+        Seek(F,N);
+        {for each element in the page, add it to the Array}
+        for PageOfs := 0 to Pred(ElementsInBuf) do begin
+          {calculate row and col from PageNo and PageOfs}
+          LongInt(RC) := VArrayRC(H,PageNo,PageOfs);
+          {if buffer is empty, read next buffer full}
+          if (NumInBuf = 0) then begin
+            E := Buf;                  {reset ptr to beginning of buffer}
+            {Refill the buffer}
+            BlockRead(F,Buf^,BufferSize,Bytes);
+            I := IoResult;
+            if (Bytes = 0) then
+              I := ecDeviceRead;
+            if I <> 0 then begin
+              UnDo(epFatal+I);
+              Fail;
+            end;
+            NumInBuf := Bytes div ElementSize;
+            if (NumInBuf < ElementsInBuf) and
+               (PageNo = Pred(H.PageCount)) then
+              NumInBuf := ElementsInBuf;
+          end;
+          if NumInBuf > 0 then
+            Dec(NumInBuf);               {indicate we used an element}
+          with RC do
+            SafeSetA(RC.R,RC.C,E^);         {add the element to the array}
+          Inc(SegOfs(E).Ofst,ElementSize);  {point to next element}
+        end;
+      end;
+    end;
+
+    {dispose of I/O Buffer}
+    FreeMemCheck(Buf,BufferSize);
+    Close(F);                          {close the file}
+    I := IoResult;
+    if I <> 0 then begin
+      Error(epNonFatal+I);
+      InitStatus := LastError;
+      DefBeepOnError := SaveBeep;
+      Fail;
+    end;
+    DefBeepOnError := SaveBeep;
+
+  end;
+
+  constructor XmsRCArray.LoadA(FileName : String; HeapToUse : LongInt;
+                               ArrayOptions : Byte);
+    {-Allocate and read array from disk in VARRAY format. Object Instance will
+      perform range checking on SetA and RetA method calls.}
+  begin
+    if not XmsArray.LoadA(FileName, HeapToUse,
+                          ArrayOptions or lRangeCheck) then
+      Fail;
+  end;
+
+  constructor XmsRCArray.Init(Rows, Cols : Word; ElementSize : Word;
+                              HeapToUse : LongInt;
+                              ArrayOptions : Byte);
+    {-create a new RAM array. Object Instance will
+      perform range checking on SetA and RetA method calls.}
+  begin
+    if not XmsArray.Init(Rows,Cols,ElementSize,HeapToUse,ArrayOptions or lRangeCheck) then
+      Fail;
+  end;
+
+  function XmsArray.GetElementSize : Word;
+    {-Return the element size for the array}
+  begin
+    GetElementSize := TpXArrayInternal(Internal)^.Header.ElSize;
+  end;

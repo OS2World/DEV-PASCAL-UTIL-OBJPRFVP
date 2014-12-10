@@ -1,0 +1,838 @@
+{*********************************************************}
+{*                   OPFIELD.IN5 1.30                    *}
+{*      Copyright (c) TurboPower Software 1988,1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+{$IFDEF UseStreams}
+
+  procedure EntryFieldStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing entry fields}
+  begin
+    SelectFieldStream(SPtr);
+
+    with SPtr^ do
+      RegisterType(otEntryField, veEntryField, TypeOf(EntryField),
+                   @EntryField.Store, @EntryField.Load);
+  end;
+
+  procedure StringFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otStringEField, veStringEField, TypeOf(StringField),
+                   @StringField.Store, @StringField.Load);
+      RegisterPointer(ptStringConversion, @StringConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure StringFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otStringEField, veStringEField,
+                   TypeOf(StringField),
+                   @StringField.Store, @StringField.Load);
+      RegisterPointer(ptSimpleStringConversion, @SimpleStringConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor, @SimpleStringEditor);
+    end;
+  end;
+
+  procedure ArrayFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otArrayEField, veArrayEField, TypeOf(ArrayField),
+                   @ArrayField.Store, @ArrayField.Load);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure CharFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otCharEField, veCharEField, TypeOf(CharField),
+                   @CharField.Store, @CharField.Load);
+      RegisterPointer(ptValidateChar, @ValidateChar);
+      RegisterPointer(ptCharConversion, @CharConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptCharEditor, @CharEditor);
+    end;
+  end;
+
+  procedure CharFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otCharEField, veCharEField, TypeOf(CharField),
+                   @CharField.Store, @CharField.Load);
+      RegisterPointer(ptSimpleValidateChar, @SimpleValidateChar);
+      RegisterPointer(ptSimpleCharConversion, @SimpleCharConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleCharEditor, @SimpleCharEditor);
+    end;
+  end;
+
+  procedure BooleanFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otBooleanEField, veBooleanEField,
+                   TypeOf(BooleanField),
+                   @BooleanField.Store, @BooleanField.Load);
+      RegisterPointer(ptBooleanConversion, @BooleanConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptCharEditor, @CharEditor);
+    end;
+  end;
+
+  procedure BooleanFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otBooleanEField, veBooleanEField,
+                   TypeOf(BooleanField),
+                   @BooleanField.Store, @BooleanField.Load);
+      RegisterPointer(ptSimpleBooleanConversion, @SimpleBooleanConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleCharEditor, @SimpleCharEditor);
+    end;
+  end;
+
+  procedure YesNoFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otYesNoEField, veYesNoEField, TypeOf(YesNoField),
+                   @YesNoField.Store, @YesNoField.Load);
+      RegisterPointer(ptYesNoConversion, @YesNoConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptCharEditor, @CharEditor);
+    end;
+  end;
+
+  procedure YesNoFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otYesNoEField, veYesNoEField, TypeOf(YesNoField),
+                   @YesNoField.Store, @YesNoField.Load);
+      RegisterPointer(ptSimpleYesNoConversion, @SimpleYesNoConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleCharEditor, @SimpleCharEditor);
+    end;
+  end;
+
+  procedure LongIntFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otLongIntEField, veLongIntEField,
+                   TypeOf(LongIntField),
+                   @LongIntField.Store, @LongIntField.Load);
+      RegisterPointer(ptValidateLong, @ValidateLong);
+      RegisterPointer(ptLongConversion, @LongConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure LongIntFieldNumStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otLongIntEField, veLongIntEField,
+                   TypeOf(LongIntField),
+                   @LongIntField.Store, @LongIntField.Load);
+      RegisterPointer(ptValidateLong, @ValidateLong);
+      RegisterPointer(ptLongConversion, @LongConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptNumberEditor, @NumberEditor);
+    end;
+  end;
+
+  procedure LongIntFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otLongIntEField, veLongIntEField,
+                   TypeOf(LongIntField),
+                   @LongIntField.Store, @LongIntField.Load);
+      RegisterPointer(ptSimpleValidateLong, @SimpleValidateLong);
+      RegisterPointer(ptSimpleLongConversion, @SimpleLongConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor, @SimpleStringEditor);
+    end;
+  end;
+
+  procedure WordFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otWordEField, veWordEField, TypeOf(WordField),
+                   @WordField.Store, @WordField.Load);
+      RegisterPointer(ptValidateLong, @ValidateLong);
+      RegisterPointer(ptWordConversion, @WordConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure WordFieldNumStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otWordEField, veWordEField, TypeOf(WordField),
+                   @WordField.Store, @WordField.Load);
+      RegisterPointer(ptValidateLong, @ValidateLong);
+      RegisterPointer(ptWordConversion, @WordConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptNumberEditor, @NumberEditor);
+    end;
+  end;
+
+  procedure WordFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otWordEField, veWordEField, TypeOf(WordField),
+                   @WordField.Store, @WordField.Load);
+      RegisterPointer(ptSimpleValidateLong, @SimpleValidateLong);
+      RegisterPointer(ptSimpleWordConversion, @SimpleWordConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor, @SimpleStringEditor);
+    end;
+  end;
+
+  procedure SmallWordFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otSmallWordEField, veSmallWordEField, TypeOf(SmallWordField),
+                   @SmallWordField.Store, @SmallWordField.Load);
+      RegisterPointer(ptValidateLong, @ValidateLong);
+      RegisterPointer(ptSmallWordConversion, @SmallWordConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure SmallWordFieldNumStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otSmallWordEField, veSmallWordEField, TypeOf(SmallWordField),
+                   @SmallWordField.Store, @SmallWordField.Load);
+      RegisterPointer(ptValidateLong, @ValidateLong);
+      RegisterPointer(ptSmallWordConversion, @SmallWordConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptNumberEditor, @NumberEditor);
+    end;
+  end;
+
+  procedure SmallWordFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otSmallWordEField, veSmallWordEField, TypeOf(SmallWordField),
+                   @SmallWordField.Store, @SmallWordField.Load);
+      RegisterPointer(ptSimpleValidateLong, @SimpleValidateLong);
+      RegisterPointer(ptSimpleSmallWordConversion, @SimpleSmallWordConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor, @SimpleStringEditor);
+    end;
+  end;
+
+  procedure IntegerFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otIntegerEField, veIntegerEField,
+                   TypeOf(IntegerField),
+                   @IntegerField.Store, @IntegerField.Load);
+      RegisterPointer(ptValidateLong, @ValidateLong);
+      RegisterPointer(ptIntConversion, @IntConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure IntegerFieldNumStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otIntegerEField, veIntegerEField,
+                   TypeOf(IntegerField),
+                   @IntegerField.Store, @IntegerField.Load);
+      RegisterPointer(ptValidateLong, @ValidateLong);
+      RegisterPointer(ptIntConversion, @IntConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptNumberEditor, @NumberEditor);
+    end;
+  end;
+
+  procedure IntegerFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otIntegerEField, veIntegerEField,
+                   TypeOf(IntegerField),
+                   @IntegerField.Store, @IntegerField.Load);
+      RegisterPointer(ptSimpleValidateLong, @SimpleValidateLong);
+      RegisterPointer(ptSimpleIntConversion, @SimpleIntConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor, @SimpleStringEditor);
+    end;
+  end;
+
+  procedure SmallIntFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otSmallIntEField, veSmallIntEField,
+                   TypeOf(SmallIntField),
+                   @SmallIntField.Store, @SmallIntField.Load);
+      RegisterPointer(ptValidateLong, @ValidateLong);
+      RegisterPointer(ptSmallIntConversion, @SmallIntConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure SmallIntFieldNumStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otSmallIntEField, veSmallIntEField,
+                   TypeOf(SmallIntField),
+                   @SmallIntField.Store, @SmallIntField.Load);
+      RegisterPointer(ptValidateLong, @ValidateLong);
+      RegisterPointer(ptSmallIntConversion, @SmallIntConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptNumberEditor, @NumberEditor);
+    end;
+  end;
+
+  procedure SmallIntFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otSmallIntEField, veSmallIntEField,
+                   TypeOf(SmallIntField),
+                   @SmallIntField.Store, @SmallIntField.Load);
+      RegisterPointer(ptSimpleValidateLong, @SimpleValidateLong);
+      RegisterPointer(ptSimpleSmallIntConversion, @SimpleSmallIntConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor, @SimpleStringEditor);
+    end;
+  end;
+
+  procedure ByteFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otByteEField, veByteEField, TypeOf(ByteField),
+                   @ByteField.Store, @ByteField.Load);
+      RegisterPointer(ptValidateLong, @ValidateLong);
+      RegisterPointer(ptByteConversion, @ByteConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure ByteFieldNumStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otByteEField, veByteEField, TypeOf(ByteField),
+                   @ByteField.Store, @ByteField.Load);
+      RegisterPointer(ptValidateLong, @ValidateLong);
+      RegisterPointer(ptByteConversion, @ByteConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptNumberEditor, @NumberEditor);
+    end;
+  end;
+
+  procedure ByteFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otByteEField, veByteEField, TypeOf(ByteField),
+                   @ByteField.Store, @ByteField.Load);
+      RegisterPointer(ptSimpleValidateLong, @SimpleValidateLong);
+      RegisterPointer(ptSimpleByteConversion, @SimpleByteConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor, @SimpleStringEditor);
+    end;
+  end;
+
+  procedure ShortIntFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otShortIntEField, veShortIntEField,
+                   TypeOf(ShortIntField),
+                   @ShortIntField.Store, @ShortIntField.Load);
+      RegisterPointer(ptValidateLong, @ValidateLong);
+      RegisterPointer(ptShortConversion, @ShortConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure ShortIntFieldNumStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otShortIntEField, veShortIntEField,
+                   TypeOf(ShortIntField),
+                   @ShortIntField.Store, @ShortIntField.Load);
+      RegisterPointer(ptValidateLong, @ValidateLong);
+      RegisterPointer(ptShortConversion, @ShortConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptNumberEditor, @NumberEditor);
+    end;
+  end;
+
+  procedure ShortIntFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otShortIntEField, veShortIntEField,
+                   TypeOf(ShortIntField),
+                   @ShortIntField.Store, @ShortIntField.Load);
+      RegisterPointer(ptSimpleValidateLong, @SimpleValidateLong);
+      RegisterPointer(ptSimpleShortConversion, @SimpleShortConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor, @SimpleStringEditor);
+    end;
+  end;
+
+  procedure RealFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otRealEField, veRealEField, TypeOf(RealField),
+                   @RealField.Store, @RealField.Load);
+      RegisterPointer(ptValidateReal, @ValidateReal);
+      RegisterPointer(ptRealConversion, @RealConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure RealFieldNumStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otRealEField, veRealEField, TypeOf(RealField),
+                   @RealField.Store, @RealField.Load);
+      RegisterPointer(ptValidateReal, @ValidateReal);
+      RegisterPointer(ptRealConversion, @RealConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptNumberEditor, @NumberEditor);
+    end;
+  end;
+
+  procedure RealFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otRealEField, veRealEField, TypeOf(RealField),
+                   @RealField.Store, @RealField.Load);
+      RegisterPointer(ptSimpleValidateReal, @SimpleValidateReal);
+      RegisterPointer(ptSimpleRealConversion, @SimpleRealConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor, @SimpleStringEditor);
+    end;
+  end;
+
+{$IFDEF UseBcd}
+
+  procedure BcdFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otBcdEField, veBcdEField, TypeOf(BcdField),
+                   @BcdField.Store, @BcdField.Load);
+      RegisterPointer(ptValidateBcd, @ValidateBcd);
+      RegisterPointer(ptBcdConversion, @BcdConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure BcdFieldNumStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otBcdEField, veBcdEField, TypeOf(BcdField),
+                   @BcdField.Store, @BcdField.Load);
+      RegisterPointer(ptValidateBcd, @ValidateBcd);
+      RegisterPointer(ptBcdConversion, @BcdConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptNumberEditor, @NumberEditor);
+    end;
+  end;
+
+  procedure BcdFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otBcdEField, veBcdEField, TypeOf(BcdField),
+                   @BcdField.Store, @BcdField.Load);
+      RegisterPointer(ptSimpleValidateBcd, @SimpleValidateBcd);
+      RegisterPointer(ptSimpleBcdConversion, @SimpleBcdConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor, @SimpleStringEditor);
+    end;
+  end;
+
+{$ENDIF}
+
+{$IFOPT N+}
+
+  procedure ExtendedFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otExtendedEField, veExtendedEField,
+                   TypeOf(ExtendedField),
+                   @ExtendedField.Store, @ExtendedField.Load);
+      RegisterPointer(ptValidateExt, @ValidateExt);
+      RegisterPointer(ptExtConversion, @ExtConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure ExtendedFieldNumStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otExtendedEField, veExtendedEField,
+                   TypeOf(ExtendedField),
+                   @ExtendedField.Store, @ExtendedField.Load);
+      RegisterPointer(ptValidateExt, @ValidateExt);
+      RegisterPointer(ptExtConversion, @ExtConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptNumberEditor, @NumberEditor);
+    end;
+  end;
+
+  procedure ExtendedFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otExtendedEField, veExtendedEField,
+                   TypeOf(ExtendedField),
+                   @ExtendedField.Store, @ExtendedField.Load);
+      RegisterPointer(ptSimpleValidateExt, @SimpleValidateExt);
+      RegisterPointer(ptSimpleExtConversion, @SimpleExtConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor, @SimpleStringEditor);
+    end;
+  end;
+
+  procedure DoubleFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otDoubleEField, veDoubleEField, TypeOf(DoubleField),
+                   @DoubleField.Store, @DoubleField.Load);
+      RegisterPointer(ptValidateExt, @ValidateExt);
+      RegisterPointer(ptDblConversion, @DblConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure DoubleFieldNumStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otDoubleEField, veDoubleEField,
+                   TypeOf(DoubleField),
+                   @DoubleField.Store, @DoubleField.Load);
+      RegisterPointer(ptValidateExt, @ValidateExt);
+      RegisterPointer(ptDblConversion, @DblConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptNumberEditor, @NumberEditor);
+    end;
+  end;
+
+  procedure DoubleFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otDoubleEField, veDoubleEField, TypeOf(DoubleField),
+                   @DoubleField.Store, @DoubleField.Load);
+      RegisterPointer(ptSimpleValidateExt, @SimpleValidateExt);
+      RegisterPointer(ptSimpleDblConversion, @SimpleDblConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor, @SimpleStringEditor);
+    end;
+  end;
+
+  procedure SingleFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otSingleEField, veSingleEField, TypeOf(SingleField),
+                   @SingleField.Store, @SingleField.Load);
+      RegisterPointer(ptValidateExt, @ValidateExt);
+      RegisterPointer(ptSglConversion, @SglConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure SingleFieldNumStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otSingleEField, veSingleEField, TypeOf(SingleField),
+                   @SingleField.Store, @SingleField.Load);
+      RegisterPointer(ptValidateExt, @ValidateExt);
+      RegisterPointer(ptSglConversion, @SglConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptNumberEditor, @NumberEditor);
+    end;
+  end;
+
+  procedure SingleFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otSingleEField, veSingleEField, TypeOf(SingleField),
+                   @SingleField.Store, @SingleField.Load);
+      RegisterPointer(ptSimpleValidateExt, @SimpleValidateExt);
+      RegisterPointer(ptSimpleSglConversion, @SimpleSglConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor, @SimpleStringEditor);
+    end;
+  end;
+
+  procedure CompFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otCompEField, veCompEField, TypeOf(CompField),
+                   @CompField.Store, @CompField.Load);
+      RegisterPointer(ptValidateExt, @ValidateExt);
+      RegisterPointer(ptCompConversion, @CompConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure CompFieldNumStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otCompEField, veCompEField, TypeOf(CompField),
+                   @CompField.Store, @CompField.Load);
+      RegisterPointer(ptValidateExt, @ValidateExt);
+      RegisterPointer(ptCompConversion, @CompConversion);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptNumberEditor, @NumberEditor);
+    end;
+  end;
+
+  procedure CompFieldSimStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otCompEField, veCompEField, TypeOf(CompField),
+                   @CompField.Store, @CompField.Load);
+      RegisterPointer(ptSimpleValidateExt, @SimpleValidateExt);
+      RegisterPointer(ptSimpleCompConversion, @SimpleCompConversion);
+      RegisterPointer(ptSimpleDrawString, @SimpleDrawString);
+      RegisterPointer(ptSimpleStringEditor, @SimpleStringEditor);
+    end;
+  end;
+
+{$ENDIF}
+
+{$IFDEF UseDates}
+
+  procedure DateFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otDateEField, veDateEField, TypeOf(DateField),
+                   @DateField.Store, @DateField.Load);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure DateStFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otDateStEField, veDateStEField, TypeOf(DateStField),
+                   @DateStField.Store, @DateStField.Load);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure TimeFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otTimeEField, veTimeEField, TypeOf(TimeField),
+                   @TimeField.Store, @TimeField.Load);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+{$ENDIF}
+
+  procedure NestedFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otNestedEField, veNestedEField, TypeOf(NestedField),
+                   @NestedField.Store, @NestedField.Load);
+      RegisterPointer(ptDrawString, @DrawString);
+      RegisterPointer(ptStringEditor, @StringEditor);
+    end;
+  end;
+
+  procedure ChoiceFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otChoiceEField, veChoiceEField, TypeOf(ChoiceField),
+                   @ChoiceField.Store, @ChoiceField.Load);
+      RegisterPointer(ptDrawString, @DrawString);
+    end;
+  end;
+
+  procedure MultiLineFieldStream(SPtr : IdStreamPtr);
+    {-Register all types}
+  begin
+    EntryFieldStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otMultiLineField, veMultiLineField,
+                   TypeOf(MultiLineField),
+                   @MultiLineField.Store, @MultiLineField.Load);
+    end;
+  end;
+
+{$ENDIF}

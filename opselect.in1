@@ -1,0 +1,1208 @@
+{*********************************************************}
+{*                  OPSELECT.IN1 1.30                    *}
+{*     Copyright (c) TurboPower Software 1989, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {--------------- methods for Selector's ----------------}
+
+  constructor Selector.Init(X1, Y1, X2, Y2 : Byte);
+    {-Initialize the selector}
+  begin
+    {initialize selector with default window options}
+    if not Selector.InitCustom(X1, Y1, X2, Y2, DefaultColorSet, DefWindowOptions) then
+      Fail;
+  end;
+
+  constructor Selector.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                  var Colors : ColorSet;
+                                  Options : LongInt);
+    {-Initialize the selector}
+  begin
+    {initialize the abstract selector}
+    if not AbstractSelector.InitCustom(X1, Y1, X2, Y2, Colors, Options,
+                                  SelectCommands, ucSelect) then
+      Fail;
+
+    {initialize procedure pointers}
+    @slGetFieldProc := nil;
+    @slActionProc := nil;
+    @slPreSelectProc := nil;
+    @slPostSelectProc := nil;
+  end;
+
+  procedure Selector.slOptionsOn(OptionFlags : Byte);
+    {-Activate multiple options}
+  begin
+    SetByteFlag(asOptions, OptionFlags and not BadSelectOptions);
+  end;
+
+  procedure Selector.slOptionsOff(OptionFlags : Byte);
+    {-Deactivate multiple options}
+  begin
+    ClearByteFlag(asOptions, OptionFlags and not BadSelectOptions);
+  end;
+
+  function Selector.slOptionsAreOn(OptionFlags : Byte) : Boolean;
+    {-Return true if all specified options are on}
+  begin
+    slOptionsAreOn := (asOptions and OptionFlags) = OptionFlags;
+  end;
+
+  procedure Selector.slFieldOptionsOn(OptionFlags : LongInt);
+    {-Activate multiple options}
+  begin
+    SetLongFlag(asFieldOptions, OptionFlags);
+  end;
+
+  procedure Selector.slFieldOptionsOff(OptionFlags : LongInt);
+    {-Deactivate multiple options}
+  begin
+    ClearLongFlag(asFieldOptions, OptionFlags);
+  end;
+
+  function Selector.slFieldOptionsAreOn(OptionFlags : LongInt) : Boolean;
+    {-Return true if all specified options are on}
+  begin
+    slFieldOptionsAreOn := (asFieldOptions and OptionFlags) = OptionFlags;
+  end;
+
+  function Selector.slGetField(ID : Word; NeedPrompt : Boolean) : string;
+    {-Call user's get field routine}
+  var
+    S : String;
+    SLen : Byte absolute S;
+    SFP : SelectFieldPtr;
+  begin
+    S := '';
+    if @slGetFieldProc = nil then
+      Abstract
+    else begin
+      SFP := FindField(ID);
+      if SFP <> nil then
+        with SFP^ do
+          if NeedPrompt then begin
+            if (sfPWidth <> 0) then begin
+              slGetFieldProc(ID, True, S);
+              if SLen > sfPWidth then
+                SLen := sfPWidth;
+            end;
+          end
+          else if (afWidth <> 0) then begin {!!.22}
+            slGetFieldProc(ID, False, S);
+            if SLen > afWidth then          {!!.22}
+              SLen := afWidth;              {!!.22}
+          end;
+    end;
+    slGetField := S;
+  end;
+
+  procedure Selector.slAction(ID : Word);
+    {-Call user's action routine}
+  begin
+    if @slActionProc <> nil then
+      slActionProc(@Self, ID);
+  end;
+
+  procedure Selector.slPreSelect(ID : Word);
+    {-Call user's pre-select routine}
+  begin
+    if @slPreSelectProc <> nil then
+      slPreSelectProc(@Self, ID);
+  end;
+
+  procedure Selector.slPostSelect(ID : Word);
+    {-Call user's post-select routine}
+  begin
+    if @slPostSelectProc <> nil then
+      slPostSelectProc(@Self, ID);
+  end;
+
+  procedure Selector.asDrawKnownField(SFP : SelectFieldPtr);
+    {-Draw the field}
+  var
+    FA, PA, CA : Byte;
+    Row, Col : Integer;
+    {$IFDEF UseMouse}
+    SaveMouse : Boolean;
+    {$ENDIF}
+  begin
+    with SFP^ do begin
+      {don't draw if field is invisible}
+      if LongFlagIsSet(sfOptions, sfInvisible) then
+        Exit;
+
+      {$IFDEF UseMouse}
+      HideMousePrim(SaveMouse);
+      {$ENDIF}
+
+      {determine attributes to use for the field}
+      slCalcAttrs(SFP, FA, CA, PA);
+
+      {draw the prompt}
+      if asFixCoordinates(sfPRow, sfPCol, sfPWidth, 1, Row, Col) then
+        if LongFlagIsSet(sfOptions, sfHidden) then      {!!.01}
+          FastFill(sfPWidth, ' ', Row, Col, PA)         {!!.01}
+        else                                            {!!.01}
+          FastWrite(slGetField(sfID, True), Row, Col, PA);
+
+      {draw the field}
+      if asFixCoordinates(sfFRow, sfFCol, sfFWidth, sfFHeight, Row, Col) then
+        if LongFlagIsSet(sfOptions, sfHidden) then      {!!.01}
+          FastFill(sfFWidth, ' ', Row, Col, FA)         {!!.01}
+        else                                            {!!.01}
+          if LongFlagIsSet(sfOptions, sfMapCtrls) then
+            FastWriteCtrl(slGetField(sfID, False), Row, Col, FA, CA)
+          else
+            FastWrite(slGetField(sfID, False), Row, Col, FA);
+
+      {$IFDEF UseMouse}
+      ShowMousePrim(SaveMouse);
+      {$ENDIF}
+    end;
+  end;
+
+  procedure Selector.ProcessSelf; {!!.01}
+    {-Process selection commands}
+  label
+    Restart, ExitPoint;
+  var
+    SFP : SelectFieldPtr absolute asNext;
+    {SaveBreak : Boolean;} {!!.01}
+    Finished : Boolean;
+    ScrollByPage : Boolean;
+    LastCmd : Word;
+    {$IFDEF UseMouse}
+    {SaveMouse : Boolean;}  {!!.01}
+    {$ENDIF}
+  begin
+    (*                      {!!.01}
+    {check for pending error}
+    cwCmd := ccError;
+    if cwGetLastError <> 0 then
+      Exit;
+    *)
+
+    {do nothing if there are no fields}
+    if asCount = 0 then begin
+      GotError(epFatal+ecNoFields, emNullError);
+      Exit;
+    end;
+
+    {establish default visitation order }   {!!.30}
+    asEstablishDefaultLinks;                {!!.30}
+
+    (*                      {!!.01}
+    {Save break checking state}
+    SaveBreak := CheckBreak;
+    CheckBreak := False;
+    *)
+
+    {make sure SFP <> nil}
+    if SFP = nil then
+      if asCurrent = nil then
+        SFP := Pointer(asFields.Head)
+      else
+        SFP := asCurrent;
+    asCurrent := SFP;
+
+    {draw everything}
+    asCurID := BadFieldID;
+
+    {Draw initial screen if not already done}
+    Draw;
+    if RawError <> 0 then begin             {!!.01}
+      {GotError(wNotCurrent, emNullError);} {!!.01}
+      Exit;
+    end;
+
+    (*                                       {!!.01}
+    {$IFDEF UseMouse}
+    SaveMouse := MouseCursorOn;
+    if cwCmdPtr^.MouseEnabled then
+      ShowMouse;
+    {$ENDIF}
+    *)
+
+    {hide the cursor}
+    SetCursor(cuHidden);
+
+    {loop while reading keys}
+    Finished := False;
+    ScrollByPage := ByteFlagIsSet(asOptions, slScrollByPage);
+    repeat
+      cwCmd := ccNone;
+
+Restart:
+      while SFP <> nil do begin
+        {redraw the current field if we're changing fields}
+        if (asCurID <> BadFieldID) and (SFP <> asCurrent) then begin
+          asCurID := BadFieldID;
+          asDrawKnownField(asCurrent);
+        end;
+
+        {make sure the next field is OK}
+        if not asNextFieldOK then begin
+          GotError(epFatal+ecNoFields, emNullError);
+          goto ExitPoint;
+        end;
+
+        {reset current field}
+        asCurrent := SFP;
+        asCurID := SFP^.sfID;
+        SFP := nil;
+
+        {adjust window if it scrolls}
+        asFixWindow(True, ScrollByPage);
+
+        {call pre-selection routine}
+        slPreSelect(asCurID);
+      end;
+
+      {update entire screen if necessary}
+      if not ByteFlagIsSet(asOptions, slFastUpdates) then
+        UpdateContents;
+
+      {draw the current field}
+      asDrawKnownField(asCurrent);
+
+      {position cursor on the current field}
+      PositionCursorAt(asCurrent);
+
+      {get next command}
+      if cwCmd = ccNone then begin
+{inline($cc);}                         {!!.10}
+        if ByteFlagIsSet(asOptions, slAutoSelect) then
+          slAction(asCurID);
+        if cwCmd = ccNone then
+          GetNextCommand;
+      end;
+
+      repeat
+        ScrollByPage := ByteFlagIsSet(asOptions, slScrollByPage);
+        LastCmd := cwCmd;
+
+        with asCurrent^ do
+          case cwCmd of
+            ccSelect :
+              if not ByteFlagIsSet(asOptions, slAutoSelect) then
+                slAction(asCurID);
+            ccTab,
+            ccNextField,
+            ccAutoAdvance :
+              if not asIDisValid(sfNextID) then
+                asGotoNextField;
+            ccBackTab,
+            ccPrevField :
+              if not asIDisValid(sfPrevID) then
+                asGotoPrevField;
+            ccLeft,
+            ccWordLeft :
+              asGotoPrevField;
+            ccRight,
+            ccWordRight :
+              asGotoNextField;
+            ccUp :
+              asUpField;
+            ccDown :
+              asDownField;
+            ccHome :
+              asHomeField;
+            ccEnd :
+              asEndField;
+            ccPageUp :
+              begin
+                asPageUpOrDown(-1);
+                ScrollByPage := True;
+              end;
+            ccPageDn :
+              begin
+                asPageUpOrDown(+1);
+                ScrollByPage := True;
+              end;
+            ccFirstFld :
+              asSeekToFirst;
+            ccLastFld :
+              asSeekToLast;
+            ccHelp :             {Help}
+              RequestHelp(sfHelpIndex);
+            ccError,             {fatal error}
+            ccExitAtTop,         {exit at top}
+            ccExitAtBot,         {exit at bottom}
+            ccUser0..ccUser65335, {user-defined exit commands}
+            ccDone,              {done}
+            ccQuit :             {exit}
+              Finished := True;
+            ccIncChoice,
+            ccDecChoice :
+              if sfOptionsAreOn(sfIncDec) then
+                slActionProc(@Self, asCurID);
+            {$IFDEF UseMouse}
+            ccMouseAuto,                           {!!.03}
+            ccMouseDown,                           {!!.03}
+            ccMouseSel :            {Mouse select}
+              if cwCmdPtr^.MouseEnabled then
+                case asProcessMouseCommand(cwCmd, ScrollByPage) of
+                  1 : Finished := True;
+                      {user clicked on current field--call action routine}
+                  2 : if (cwCmd = ccMouseSel) then  {!!.03}
+                        slActionProc(@Self, asCurID);
+                end;
+            {$ENDIF}
+          end;
+      until (cwCmd = LastCmd);
+
+      if (SFP <> nil) and (SFP = asCurrent) then
+        {don't do a move if we're not going anywhere}
+        SFP := nil
+      else if (SFP <> nil) or Finished then begin
+        {changing fields or exiting--call post-selection routine}
+        slPostSelect(asCurID);
+
+        {restart if post-select routine changed the command}
+        if cwCmd <> LastCmd then begin
+          Finished := False;
+          goto Restart;
+        end;
+      end;
+
+    until Finished;
+
+ExitPoint:
+
+    {restore break checking status}
+    {CheckBreak := SaveBreak;}       {!!.01}
+
+    {save window state}
+    rwSaveWindowState;
+
+    {$IFDEF UseMouse}
+    {ShowMousePrim(SaveMouse);}       {!!.01}
+    {$ENDIF}
+  end;
+
+  procedure Selector.AddField(PromptRow, PromptCol : Word;
+                              PromptWidth : Byte;
+                              FieldRow, FieldCol : Word;
+                              FieldWidth : Byte;
+                              HelpIndex : Word);
+    {-Add a field with the specified coordinates and help index}
+  var
+    SFP : SelectFieldPtr;
+  begin
+    {check for pending error}
+    if cwGetLastError <> 0 then
+      Exit;
+
+    {make sure PromptRow and PromptCol OK}                                   {!!.03}
+    if (PromptWidth > 0) and not asCoordsOK(PromptRow, PromptCol, PromptWidth, 1) then
+      Exit;                                         {!!.03}
+    if not asCoordsOK(FieldRow, FieldCol, FieldWidth, 1) then
+      Exit;
+
+    {allocate and initialize the field}
+    New(SFP, Init(asCount, PromptRow, PromptCol, PromptWidth,
+                  FieldRow, FieldCol, FieldWidth, 1,
+                  HelpIndex, asFieldOptions, 0, asColors));
+
+    if SFP = nil then
+      GotError(epFatal+ecOutOfMemory, emInsufficientMemory)
+    else begin
+      {add it to the linked list}
+      asFields.Append(SFP);
+
+      {set pointers if this is the first field}
+      if asCount = 0 then begin
+        asCurrent := SFP;
+        asKnown := SFP;
+        asNext := SFP;
+      end;
+
+      {increment field count}
+      Inc(asCount);
+    end;
+  end;
+
+  procedure Selector.SetGetFieldProc(GFP : GetFieldProc);
+    {-Set routine to call to get strings to display}
+  begin
+    slGetFieldProc := GFP;
+  end;
+
+  procedure Selector.SetActionProc(AP : SelectProc);
+    {-Set routine to call when <Enter> pressed}
+  begin
+    slActionProc := AP;
+  end;
+
+  procedure Selector.SetPreSelectProc(PSP : SelectProc);
+    {-Set routine to call before moving to new field}
+  begin
+    slPreSelectProc := PSP;
+  end;
+
+  procedure Selector.SetPostSelectProc(PSP : SelectProc);
+    {-Set routine to call before moving to next one}
+  begin
+    slPostSelectProc := PSP;
+  end;
+
+  procedure Selector.slCalcAttrs(SFP : SelectFieldPtr; var FA, CA, PA : Byte);
+    {-Determine attributes for fields, control characters, and prompts}
+  var
+    Protected : Boolean;
+    Selected : Boolean;
+  begin
+    with SFP^ do begin
+      {is field invisible?}
+      if LongFlagIsSet(sfOptions, sfInvisible) then
+        Exit;
+
+      {is field hidden?}
+      if LongFlagIsSet(sfOptions, sfHidden) then begin
+        FA := ColorMono(wTextColor, wTextMono); {!!.01}
+        CA := FA;
+        PA := FA;
+        Exit;
+      end;
+
+      Protected := asFieldIsProtected(SFP);
+      Selected := (sfID = asCurID);
+      if Protected then
+        FA := ColorMono(sfProFieldColor, sfProFieldMono)
+      else if Selected then
+        FA := ColorMono(sfSelFieldColor, sfSelFieldMono)
+      else
+        FA := ColorMono(sfFieldColor, sfFieldMono);
+
+      {determine attributes to use for the prompt}
+      if Protected then
+        PA := ColorMono(sfProPromptColor, sfProPromptMono)
+      else if Selected then
+        PA := ColorMono(sfSelPromptColor, sfSelPromptMono)
+      else
+        PA := ColorMono(sfPromptColor, sfPromptMono);
+
+      {determine attribute for control characters}
+      CA := ColorMono(sfCtrlColor, sfCtrlMono);
+    end;
+  end;
+
+  {--------------- methods for ScrollingSelector's ----------------}
+
+  constructor ScrollingSelector.Init(X1, Y1, X2, Y2 : Byte);
+    {-Initialize the selector}
+  begin
+    {initialize using default window options}
+    if not ScrollingSelector.InitCustom(X1, Y1, X2, Y2, DefaultColorSet, DefWindowOptions) then
+      Fail;
+  end;
+
+  constructor ScrollingSelector.InitCustom(X1, Y1, X2, Y2 : Byte;
+                                           var Colors : ColorSet;
+                                           Options : LongInt);
+    {-Initialize the selector}
+  begin
+    {initialize our special fields}
+    ssScrollable := False;
+    ssRowOfs     := 0;
+    ssColOfs     := 0;
+
+    {initialize the virtual screen}
+    ssVS.Alloc(0, 0);
+
+    {perform normal selector initialization}
+    if not Selector.InitCustom(X1, Y1, X2, Y2, Colors, Options) then
+      Fail;
+
+    {make the window resizeable}
+    wOptionsOn(wResizeable);
+  end;
+
+  destructor ScrollingSelector.Done;
+    {-Deallocate field list, screen buffers}
+  begin
+    if ssScrollable then
+      ssVS.Done;
+
+    Selector.Done;
+  end;
+
+  procedure ScrollingSelector.AllocateScreen;
+    {-Call after last field added}
+  var
+    HighRow : Word;
+    HighCol : Word;
+    {$IFDEF UseAdjustableWindows}
+    MinWidth : Word;
+    MinHeight : Word;
+    {$ENDIF}
+    SFP : SelectFieldPtr;
+    TFP : TextFieldPtr;
+  begin
+    {do this only once}
+    if ssScrollable then
+      Exit
+    else
+      ssScrollable := True;
+
+    {check for pending error}
+    if cwGetLastError <> 0 then
+      Exit;
+
+    {scan the list looking for the extreme bounds of the selection window}
+    HighRow := 1;
+    HighCol := 1;
+    {$IFDEF UseAdjustableWindows}
+    MinWidth := wMinW;
+    MinHeight := wMinH;
+    {$ENDIF}
+    SFP := Pointer(asFields.Head);
+    while SFP <> nil do
+      with SFP^ do begin
+        {check prompt}
+        if sfPWidth <> 0 then begin
+          HighRow := MaxWord(HighRow, sfPRow);
+          HighCol := MaxWord(HighCol, sfPCol+Pred(sfPWidth));
+        end;
+
+        {check field}
+        HighRow := MaxWord(HighRow, sfFRow+Pred(sfFHeight));
+        HighCol := MaxWord(HighCol, sfFCol+Pred(sfFWidth));
+        {$IFDEF UseAdjustableWindows}
+        MinHeight := MaxWord(MinHeight, sfFHeight);
+        MinWidth := MaxWord(MinWidth, sfFWidth);
+        {$ENDIF}
+
+        {follow link}
+        SFP := Pointer(SFP^.dlNext);
+      end;
+
+    {scan the text field list too}
+    TFP := Pointer(asTextFields.Head);
+    while TFP <> nil do
+      with TFP^ do begin
+        HighRow := MaxWord(HighRow, tfRow+Pred(tfHeight)); {!!.03}
+        HighCol := MaxWord(HighCol, tfCol+Pred(tfWidth));  {!!.03}
+
+        {follow link}
+        TFP := Pointer(TFP^.slNext);
+      end;
+
+    {try to allocate the virtual screen}
+    if not ssVS.Alloc(HighRow, HighCol) then
+      GotError(epFatal+ecOutOfMemory, emInsufficientMemory)
+    {$IFDEF UseAdjustableWindows}
+    else
+      {set the limits to use when resizing the window}
+      SetSizeLimits(MinWidth, MinHeight, ScreenWidth, ScreenHeight);
+    {$ELSE}
+      ;
+    {$ENDIF}
+  end;
+
+  procedure ScrollingSelector.asFixWindow(Redraw, ScrollByPage : Boolean);
+    {-Fix the edit window if necessary}  {!!.10} {numerous changes}
+  var
+    Scrolled : Boolean;
+    RowAtTop : Integer;
+    RowAtBottom : Integer;
+    ColAtLeft : Integer;
+    ColAtRight : Integer;
+    FirstCol : Word;
+    LRow : Integer;
+    HRow : Integer;
+    LCol : Integer;
+    HCol : Integer;
+    PLCol : Integer;
+    FHeight : Word;
+    WHeight : Word;
+    Width1 : Word;
+    HavePrompt : Boolean;
+    SaveRowOffset : Integer;
+
+    procedure ScrollRight(Cols : Integer);
+    var
+      MaxColOfs : Integer;
+    begin
+      if Cols <> 0 then begin
+        Scrolled := True;
+        {make sure we don't scroll too far}
+        if Cols < -ssColOfs then
+          ssColOfs := 0
+        else
+          Inc(ssColOfs, Cols);
+      end;
+
+      MaxColOfs := ssVS.vCols-Width1-1;
+      if (MaxColOfs > 0) and (ssColOfs > MaxColOfs) then begin
+        ssColOfs := MaxColOfs;
+        Scrolled := True;
+      end;
+    end;
+
+    procedure ScrollDown(Rows : Integer);
+    var
+      StartOfLastPage, NewRowAtBottom : Integer;
+    begin
+      StartOfLastPage := ssVS.vRows-Pred(WHeight);
+
+      if Rows <> 0 then begin
+        if ScrollByPage then
+          {round to nearest page boundary}
+          ssRowOfs := (Pred(LRow) div WHeight) * WHeight
+        else
+          Inc(ssRowOfs, Rows);
+
+        {make sure we don't scroll too far}
+        if ssRowOfs < 0 then
+          ssRowOfs := 0
+        else if ssRowOfs > Pred(LRow) then
+          if (LRow >= RowAtTop) and (HRow <= RowAtBottom) then
+            ssRowOfs := SaveRowOffset
+          else
+            ssRowOfs := Pred(LRow);
+
+        {make sure we scroll far enough}
+        if (FHeight <= WHeight) then begin
+          NewRowAtBottom := Succ(ssRowOfs)+(wYH-wYL);
+          if HRow > NewRowAtBottom then
+            Inc(ssRowOfs, HRow - NewRowAtBottom);
+        end;
+      end;
+
+      if (StartOfLastPage > 0) and (ssRowOfs >= StartOfLastPage) then
+        {make sure end of last page is displayed at bottom of window}
+        ssRowOfs := Pred(StartOfLastPage);
+  end;
+
+  begin
+    if not ssScrollable then begin
+      GotError(epFatal+ecNotScrollable, emNullError);
+      Exit;
+    end;
+
+    {make sure we know the first and last rows}
+    asResetFlags;
+
+    FirstCol := SFPtr(asFields.Head)^.sfFCol;
+    with asCurrent^ do begin
+      SaveRowOffset := ssRowOfs;
+      RowAtTop := Succ(ssRowOfs);
+      RowAtBottom := RowAtTop+(wYH-wYL);
+      Width1 := (wXH-wXL);
+      FHeight := sfFHeight;
+      WHeight := Succ(wYH-wYL);
+      ColAtLeft := Succ(ssColOfs);
+      ColAtRight := ColAtLeft+Width1;
+      HavePrompt := sfPWidth <> 0;
+
+      {figure out which rows we need displayed}
+      LRow := sfFRow;
+      HRow := sfFRow+Pred(FHeight);
+      if HavePrompt and not ScrollByPage then
+        if (sfPRow < LRow) and (HRow-sfPRow < WHeight) then
+          LRow := sfPRow
+        else if (sfPRow > HRow) and (sfPRow-LRow < WHeight) then
+          HRow := sfPRow;
+
+      {figure out which columns we need displayed}
+      LCol := sfFCol;
+      HCol := sfFCol+Pred(sfFWidth);
+
+      if HavePrompt then begin
+        {try to get both the prompt and the edit field on screen at once}
+        PLCol := sfPCol+sfPWidth-1;
+        if (sfPCol < LCol) and (HCol-sfPCol <= Width1) then
+          LCol := sfPCol;
+        if (PLCol > HCol) and (PLCol-LCol <= Width1) then
+          HCol := PLCol;
+      end;
+
+      {scroll the window vertically if necessary}
+      if ssVS.vRows {asMaxRow} <= WHeight then        {!!.11}
+        {force original alignment if everything fits}
+        ScrollDown(-ssRowOfs)
+      else if (LRow = asMinRow) and (ssRowOfs > 0) and (HRow < WHeight) then
+        {force original alignment if this is the first row}
+        ScrollDown(-ssRowOfs)
+      else if (HRow = asMaxRow) and (ssVS.vRows > RowAtBottom) then
+        {force last row to be displayed if this is on the last row}
+        ScrollDown(ssVS.vRows-RowAtBottom)
+      else if HRow > RowAtBottom then
+        {scroll window to allow hidden field to be displayed}
+        ScrollDown(HRow-RowAtBottom)
+      else if LRow < RowAtTop then
+        {scroll window to allow hidden field to be displayed}
+        ScrollDown(LRow-RowAtTop)
+      else
+        {make sure end of last page is displayed at bottom of window if
+         appropriate}
+        ScrollDown(0);
+      Scrolled := (ssRowOfs <> SaveRowOffset);
+
+      {scroll the window horizontally if necessary}
+      if ssVS.vCols <= Succ(Width1) then
+        {force original alignment if everything fits}
+        ScrollRight(-ssColOfs)
+      else if (LCol <= FirstCol) and (Width1 >= HCol-1) then
+        {force original alignment}
+        ScrollRight(-ssColOfs)
+      else if (LCol < ColAtLeft) and (Width1 >= HCol-LCol) then
+        {force leftmost column to be displayed at left edge of window}
+        ScrollRight(LCol-ColAtLeft)
+      else if HCol > ColAtRight then
+        {make sure rightmost column is in view}
+        ScrollRight(HCol-ColAtRight)
+      else
+        {make sure we aren't scrolled too far}
+        ScrollRight(0);
+
+      if Redraw and Scrolled then
+        {update physical screen}
+        VScreenToScreen;
+    end;
+  end;
+
+  procedure ScrollingSelector.UpdateContents;
+    {-Redraw the entire selection window}
+  var
+    SFP : SelectFieldPtr;
+    ID : Word;
+  begin
+    {do nothing if there are no fields}           {!!.11}
+    if asCount = 0 then begin                     {!!.11}
+      GotError(epFatal+ecNoFields, emNullError);  {!!.11}
+      Exit;                                       {!!.11}
+    end;                                          {!!.11}
+
+    {make sure virtual screen has been allocated}
+    if not ssScrollable then begin
+      AllocateScreen;
+      if cwGetLastError <> 0 then
+        Exit;
+    end;
+
+    {reset flags if necessary}
+    asResetFlags;
+    if RawError <> 0 then                         {!!.12}
+      Exit;                                       {!!.12}
+
+    if not ByteFlagIsSet(asOptions, slFastUpdates) then begin
+      {switch to virtual screen}
+      ssVS.Activate;
+
+      {clear the virtual screen}
+      ssVS.Clear(ColorMono(wTextColor, wTextMono), wBackChar); {!!.12}
+
+      {draw background, if any}  {!!.03}
+      DrawBackground;            {!!.03}
+
+      {draw text fields}
+      asDrawAllTextFields(False);
+
+      {temporarily change asCurID}
+      ID := asCurID;
+      asCurID := BadFieldID;
+
+      {start with first field}
+      SFP := Pointer(asFields.Head);
+      while SFP <> nil do begin
+        {draw this field}
+        asDrawKnownField(SFP);
+
+        {point to next field in list}
+        SFP := Pointer(SFP^.dlNext);
+      end;
+
+      {restore current ID}
+      asCurID := ID;
+
+      {call user screen update proc}
+      asUpdate;
+
+      {indicate that we've done this once}
+      SetByteFlag(asOptions, slFastUpdates);
+
+      {switch to physical screen}
+      ssVS.Deactivate;
+    end;
+
+    {make sure the current field is on the screen}
+    asFixWindow(False, ByteFlagIsSet(asOptions, slScrollByPage));
+
+    {copy virtual screen to physical screen}
+    VScreenToScreen;
+
+    {$IFDEF UseScrollBars}
+    {update scroll bars}
+    asUpdateScrollBars;
+    {$ENDIF}
+  end;
+
+  function ScrollingSelector.asFixCoordinates(InRow, InCol : Word; Wid, Ht : Byte;
+                                              var OutRow, OutCol : Integer) : Boolean;
+    {-Adjust coordinates}
+  begin
+    asFixCoordinates := True;
+    OutRow := InRow;
+    OutCol := InCol;
+    if VirtualSegment <> ssVS.vsVideoSeg then begin
+      Inc(OutRow, Pred(Integer(wYL))-ssRowOfs);
+      Inc(OutCol, Pred(Integer(wXL))-ssColOfs);
+      if (OutRow < wYL) or (OutRow+Pred(Ht) > wYH) or
+         (OutCol < wXL) or (OutCol+Pred(Wid) > wXH) then
+           asFixCoordinates := False;
+    end;
+  end;
+
+  function ScrollingSelector.asMaximumRow : Word;
+    {-Return maximum row coordinate relative to window}
+  begin
+    asMaximumRow := $FF00;
+  end;
+
+  function ScrollingSelector.asMaximumCol : Word;
+    {-Return maximum column coordinate relative to window}
+  begin
+    asMaximumCol := $FF00;
+  end;
+
+  procedure ScrollingSelector.asDrawKnownField(SFP : SelectFieldPtr);
+    {-Draw the field}
+  begin
+    if not ssScrollable then begin
+      GotError(epFatal+ecNotScrollable, emNullError);
+      Exit;
+    end;
+
+    {make sure the virtual screen isn't already active}
+    if VirtualSegment <> ssVS.vsVideoSeg then begin
+      {activate virtual screen}
+      ssVS.Activate;
+
+      {draw it on the virtual screen}
+      Selector.asDrawKnownField(SFP);
+
+      {switch to physical screen}
+      ssVS.Deactivate;
+    end;
+
+    {draw it again on the physical screen}
+    Selector.asDrawKnownField(SFP);
+  end;
+
+  procedure ScrollingSelector.asPageUpOrDown(Delta : Integer);
+    {-Process PgUp/PgDn commands}
+    {-Note: Page calculations treat 0 as first page #}
+  label
+    Restart;
+  var
+    SFP     : SelectFieldPtr absolute asNext;
+    SaveP   : SelectFieldPtr;
+    WHeight : Integer;
+    MaxPage : Integer;
+    CurPage : Integer;
+    NewPage : Integer;
+    NewRow  : Integer;
+    CurCol  : Integer;
+  begin
+    with asCurrent^ do begin
+      {make sure we know the first/last rows}
+      asResetFlags;
+
+      WHeight := Succ(wYH-wYL);
+      MaxPage := Pred(ssVS.vRows) div WHeight;
+      CurPage := Pred(sfFRow+sfFRPos-1) div WHeight;
+
+Restart:
+      {don't switch pages on PgUp if start of CurPage not on screen}
+      if (Delta < 0) and (ssRowOfs > (CurPage * WHeight)) and (CurPage = MaxPage-1) then
+      begin                  {!!.01}
+        NewPage := CurPage;  {!!.01}
+        Delta := 0;          {!!.01}
+      end                    {!!.01}
+      else
+        NewPage := CurPage + Delta;
+
+      {don't go too far}
+      if (NewPage < 0) then
+        NewPage := 0
+      else if (NewPage > MaxPage) then
+        NewPage := MaxPage;
+
+      if (NewPage = MaxPage) and (CurPage = MaxPage) and (Delta > 0) then
+        {special case--PgDn while already on last page}
+        NewRow := asMaxRow
+      else begin
+        NewRow := Succ(NewPage * WHeight);
+        if NewRow < asMinRow then
+          NewRow := asMinRow;
+      end;
+      CurCol := sfFCol+Pred(sfFCPos);
+
+      if NewRow < sfFRow then begin
+        SFP := Pointer(asFields.Head);
+        SaveP := SFP;
+      end
+      else begin
+        SaveP := asCurrent;
+        if (NewRow = sfFRow) or (SaveP^.dlNext = nil) then
+          SFP := SaveP
+        else
+          SFP := Pointer(SaveP^.dlNext);
+      end;
+
+      repeat
+        {find first field on row}
+        while (SFP <> nil) and (SFP^.sfFRow+Pred(SFP^.sfFHeight) < NewRow) do begin
+          if not asFieldIsProtected(SFP) then
+            SaveP := SFP;
+          SFP := Pointer(SFP^.dlNext);
+        end;
+
+        if SFP = nil then
+          SFP := SaveP;
+
+        if SFP <> nil then begin
+          NewRow := SFP^.sfFRow;
+          {if Delta < 0 and we're still on same page try going back another
+           page}
+          if (Delta < 0) and (Pred(NewRow) div WHeight = CurPage) then
+            if (NewPage > 0) then begin
+              Dec(Delta);
+              goto Restart;
+            end;
+          if (SFP^.sfFHeight > 1) and not asFieldIsProtected(SFP) then
+            Exit
+          else if asFindBestField(CurCol) then
+            Exit
+          else begin
+            Inc(NewRow);
+            if (NewRow > asMaxRow) and (SaveP <> nil) then begin
+              SFP := SaveP;
+              if asFindBestField(CurCol) then
+                Exit;
+            end;
+          end;
+        end;
+      until (SFP = nil) or (NewRow > asMaxRow);
+      SFP := nil
+    end;
+  end;
+
+  procedure ScrollingSelector.VScreenToScreen;
+    {-Copy the virtual screen to the physical screen}
+  type
+    XY = record
+           X, Y : Byte;
+         end;
+  var
+    {$IFDEF UseMouse}
+    SaveMouse : Boolean;
+    {$ENDIF}
+    SaveWindMin : Word;
+    SaveWindMax : Word;
+  begin
+    {$IFDEF UseMouse}
+    HideMousePrim(SaveMouse);
+    {$ENDIF}
+
+    {save/reset current window coordinates}
+    SaveWindMin := WindMin;
+    SaveWindMax := WindMax;
+    XY(WindMin).X := Pred(wXL);
+    XY(WindMin).Y := Pred(wYL);
+    XY(WindMax).X := Pred(wXH);
+    XY(WindMax).Y := Pred(wYH);
+
+    {copy the virtual screen to the physical screen}
+    ssVS.CopyToWindow(ssRowOfs+1, ssColOfs+1);
+
+    {restore current window coordinates}
+    WindMin := SaveWindMin;
+    WindMax := SaveWindMax;
+
+    {$IFDEF UseMouse}
+    ShowMousePrim(SaveMouse);
+    {$ENDIF}
+  end;
+
+{$IFDEF UseStreams}
+
+  {--------------- streams ----------------}
+
+  constructor AbstractSelector.Load(var S : IdStream);
+    {-Load an abstract selector from a stream}
+  begin
+    {initialize lists in case Done is called before they're loaded}
+    asFields.Init;
+    asTextFields.Init;
+
+    {Load the underlying command window}
+    if not CommandWindow.Load(S) then
+      Fail;
+
+    {load the two lists}
+    S.Get(asFields);
+    S.Get(asTextFields);
+
+    {read other data specific to the abstract selector}
+    S.ReadRange(asCount, asUpdateProc);
+    @asUpdateProc := S.ReadPointer;
+
+    {check the error status}
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {initialize remaining fields}
+    asCurrent := SelectFieldPtr(asFields.Head);
+    asNext := asCurrent;
+    asKnown := asCurrent;
+    asCurID := BadFieldID;
+
+    {clear fast updates flag}
+    ClearByteFlag(asOptions, slFastUpdates);
+  end;
+
+  procedure AbstractSelector.Store(var S : IdStream);
+    {-Store an abstract selector in a stream}
+  begin
+    {Store the underlying command window}
+    CommandWindow.Store(S);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {store the two lists}
+    S.Put(asFields);
+    S.Put(asTextFields);
+
+    {Write data specific to the abstract selector}
+    S.WriteRange(asCount, asUpdateProc);
+    S.WriteUserPointer(@asUpdateProc, ptNil);
+  end;
+
+  procedure AbstractSelectorStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing abstract selectors}
+  begin
+    {register the command window}
+    CommandWindowStream(SPtr);
+
+    {register text and select fields}
+    TextFieldStream(SPtr);
+    SingleListStream(SPtr);
+    SelectFieldStream(SPtr);
+    DoubleListStream(SPtr);
+
+    with SPtr^ do
+      RegisterType(otAbstractSelector, veAbstractSelector, TypeOf(AbstractSelector),
+                   @AbstractSelector.Store, @AbstractSelector.Load);
+  end;
+
+  constructor Selector.Load(var S : IdStream);
+    {-Load a selector from a stream}
+  begin
+    {Load the underlying abstract selector}
+    if not AbstractSelector.Load(S) then
+      Fail;
+
+    {set the command processor if necessary}
+    if cwCmdPtr = nil then
+      SetCommandProcessor(SelectCommands);
+
+    {read data specific to the selector}
+    @slGetFieldProc := S.ReadPointer;
+    @slActionProc := S.ReadPointer;
+    @slPreSelectProc := S.ReadPointer;
+    @slPostSelectProc := S.ReadPointer;
+
+    {check the error status}
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure Selector.Store(var S : IdStream);
+    {-Store a selector in a stream}
+  begin
+    {Store the abstract selector}
+    AbstractSelector.Store(S);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Write data specific to the selector}
+    S.WriteUserPointer(@slGetFieldProc, ptNil);
+    S.WriteUserPointer(@slActionProc, ptNil);
+    S.WriteUserPointer(@slPreSelectProc, ptNil);
+    S.WriteUserPointer(@slPostSelectProc, ptNil);
+  end;
+
+  procedure SelectorStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing selectors}
+  begin
+    {register the abstract selector}
+    AbstractSelectorStream(SPtr);
+
+    with SPtr^ do begin
+      RegisterType(otSelector, veSelector, TypeOf(Selector),
+                   @Selector.Store, @Selector.Load);
+      RegisterPointer(ptSelectCommands, @SelectCommands);
+    end;
+  end;
+
+  constructor ScrollingSelector.Load(var S : IdStream);
+    {-Load a selector from a stream}
+  begin
+    {initialize virtual screen in case Done is called}
+    ssScrollable := False;
+    ssVS.Alloc(0, 0);
+
+    {Load the underlying selector}
+    if not Selector.Load(S) then
+      Fail;
+
+    {read data specific to the scrolling selector}
+    S.ReadRange(ssRowOfs, ssVS);
+
+    {check the error status}
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {allocate the virtual screen}
+    AllocateScreen;
+    if cwGetLastError <> 0 then begin
+      InitStatus := cwGetLastError;
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure ScrollingSelector.Store(var S : IdStream);
+    {-Store a selector in a stream}
+  begin
+    {Store the selector}
+    Selector.Store(S);
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Write data specific to the scrolling selector}
+    S.WriteRange(ssRowOfs, ssVS);
+  end;
+
+  procedure ScrollingSelectorStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing scrolling selectors}
+  begin
+    {register the selector}
+    SelectorStream(SPtr);
+
+    SPtr^.RegisterType(otScrollingSelector, veScrollingSelector,
+                       TypeOf(ScrollingSelector),
+                       @ScrollingSelector.Store, @ScrollingSelector.Load);
+  end;
+
+{$ENDIF}

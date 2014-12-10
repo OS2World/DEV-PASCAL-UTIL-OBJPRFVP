@@ -1,0 +1,62 @@
+{*********************************************************}
+{*                  OPSELECT.ICD 1.30                    *}
+{*    Copyright (c) TurboPower Software 1989, 1992.      *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+const
+  {Keystroke to command mapping}
+  SelectKeyMax       = 160;   {last available slot in SelectKeySet}
+  {ID string for installation programs}
+  SelectKeyID : string[13] = 'opselect keys';
+  {default key assignments}
+  SelectKeySet : array[0..SelectKeyMax] of Byte = (
+   {length keys         command type      key sequence}
+    3,     $00, $00,    ccQuit,          {^Break}
+    3,     $00, $0F,    ccPrevField,     {Shift-Tab}
+    3,     $00, $3B,    ccHelp,          {F1}
+    3,     $00, $47,    ccHome,          {Home}
+    3,     $00, $48,    ccUp,            {Up}
+    3,     $00, $49,    ccPageUp,        {PgUp}
+    3,     $00, $4B,    ccLeft,          {Left}
+    3,     $00, $4D,    ccRight,         {Right}
+    3,     $00, $4F,    ccEnd,           {End}
+    3,     $00, $50,    ccDown,          {Down}
+    3,     $00, $51,    ccPageDn,        {PgDn}
+    3,     $00, $76,    ccLastFld,       {^PgDn}
+    3,     $00, $84,    ccFirstFld,      {^PgUp}
+    2,     $03,         ccPageDn,        {^C}
+    2,     $04,         ccRight,         {^D}
+    2,     $05,         ccUp,            {^E}
+    2,     $09,         ccNextField,     {^I, Tab}
+    2,     $0A,         ccDone,          {^J, Ctrl-Enter}
+    2,     $0D,         ccSelect,        {^M, Enter}
+    2,     $12,         ccPageUp,        {^R}
+    2,     $13,         ccLeft,          {^S}
+    2,     $18,         ccDown,          {^X}
+    2,     $1B,         ccQuit,          {Esc}
+    2,     $2D,         ccDecChoice,     {'-'}
+    2,     $2B,         ccIncChoice,     {'+'}
+    2,     $20,         ccIncChoice,     {' '}
+    3,     $0B, $04,    ccDone,          {^K^D}
+    3,     $0B, $11,    ccDone,          {^K^Q}
+    3,     $11, $03,    ccLastFld,       {^Q^C}
+    3,     $11, $04,    ccEnd,           {^Q^D}
+    3,     $11, $12,    ccFirstFld,      {^Q^R}
+    3,     $11, $13,    ccHome,          {^Q^S}
+  {$IFDEF UseMouse}
+    3,     $00, $EC,    ccSelect,        {click center = Enter}
+    3,     $00, $ED,    ccHelp,          {click both   = help}
+    3,     $00, $EE,    ccQuit,          {click right  = ESC}
+    3,     $00, $EF,    ccMouseSel,      {click left   = mouse selection}
+  {$ELSE}
+                0, 0, 0, 0, 0, 0,        {120}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,        {130}
+  {$ENDIF}
+    {-----------pad to end of array----------}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,        {140}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,        {150}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0);       {160}
+
+const
+  SelectCfgEnd : Byte = 0;

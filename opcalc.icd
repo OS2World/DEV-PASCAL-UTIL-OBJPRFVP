@@ -1,0 +1,92 @@
+{*********************************************************}
+{*                   OPCALC.ICD 1.30                     *}
+{*    Copyright (c) TurboPower Software 1989, 1992.      *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+const
+  {special OPCALC command codes}
+  ccAdd         = 150;
+  ccSubtract    = 151;
+  ccMultiply    = 152;
+  ccDivide      = 153;
+  ccHexA        = 154;
+  ccHexB        = 155;
+  ccHexC        = 156;
+  ccHexD        = 157;
+  ccHexE        = 158;
+  ccHexF        = 159;
+  ccBinaryMode  = 160;
+  ccDecimalMode = 161;
+  ccFloatMode   = 162;
+  ccExpMode     = 163;
+  ccAnd         = 164;
+  ccShl         = 165;
+  ccMod         = 166;
+  ccNot         = 167;
+  ccOr          = 168;
+  ccShr         = 169;
+  ccXor         = 170;
+  ccClearAll    = 171;
+  ccClearEntry  = 172;
+  ccInsertValue = 173;
+  ccSaveValue   = 174;
+  ccDecimalPt   = 175;
+const
+  CalcKeyMax = 160;   {last available slot in CalcKeySet}
+  {ID string for installation programs}
+  CalcKeyID : string[11] = 'opcalc keys';
+  {default key assignments}
+  CalcKeySet : array[0..CalcKeyMax] of Byte = (
+   {length keys         command type      key sequence}
+    3,     $00, $00,    ccQuit,          {^Break}
+    3,     $00, $3B,    ccHelp,          {F1}
+    2,     $01,         ccHexA,          {^A}
+    2,     $02,         ccHexB,          {^B}
+    2,     $03,         ccHexC,          {^C}
+    2,     $04,         ccHexD,          {^D}
+    2,     $05,         ccHexE,          {^E}
+    2,     $06,         ccHexF,          {^F}
+    2,     $08,         ccBack,          {^H}
+    2,     $0D,         ccSelect,        {^M, Enter}
+    2,     $1B,         ccQuit,          {Esc}
+    2,     $2A,         ccMultiply,      {'*'}
+    2,     $2B,         ccAdd,           {'+'}
+    2,     $2D,         ccSubtract,      {'-'}
+    2,     $2E,         ccDecimalPt,     {'.'}
+    2,     $2F,         ccDivide,        {'/'}
+    2,     $3D,         ccSelect,        {'='}
+    2,     $41,         ccAnd,           {'A'}
+    2,     $42,         ccBinaryMode,    {'B'}
+    2,     $43,         ccClearAll,      {'C'}
+    2,     $44,         ccDecimalMode,   {'D'}
+    2,     $45,         ccClearEntry,    {'E'}
+    2,     $46,         ccFloatMode,     {'F'}
+    2,     $48,         ccHexMode,       {'H'}
+    2,     $49,         ccInsertValue,   {'I'}
+    2,     $4C,         ccShl,           {'L'}
+    2,     $4D,         ccMod,           {'M'}
+    2,     $4E,         ccNot,           {'N'}
+    2,     $4F,         ccOr,            {'O'}
+    2,     $50,         ccExpMode,       {'P'}
+    2,     $52,         ccShr,           {'R'}
+    2,     $53,         ccSaveValue,     {'S'}
+    2,     $58,         ccXor,           {'X'}
+  {$IFDEF UseMouse}
+    3,     $00, $EF,    ccMouseSel,      {click left  = mouse select}
+    3,     $00, $EE,    ccQuit,          {click right = ESC}
+    3,     $00, $ED,    ccHelp,          {click both  = help}
+  {$ELSE}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,        {110}
+    0, 0,                                {120}
+  {$ENDIF}
+    {-----------pad to end of array----------}
+          0, 0, 0, 0, 0, 0, 0, 0,        {120}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,        {130}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,        {140}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,        {150}
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0);       {160}
+{.F+}
+
+const
+  CalcCfgEnd : Byte = 0;

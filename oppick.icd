@@ -1,0 +1,66 @@
+{*********************************************************}
+{*                   OPPICK.ICD 1.30                     *}
+{*    Copyright (c) TurboPower Software 1989, 1992.      *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+const
+  {Keystroke to command mapping}
+  PickKeyMax       = 170;
+  PickKeyID        : string[11] = 'oppick keys';
+  PickKeySet       : array[0..PickKeyMax] of Byte = (
+  {length keys         command type      key sequence}
+  3,      $00, $48,    ccUp,             {Up}
+  3,      $00, $50,    ccDown,           {Down}
+  3,      $00, $49,    ccPageUp,         {PgUp}
+  3,      $00, $51,    ccPageDn,         {PgDn}
+  3,      $00, $4B,    ccLeft,           {Left}
+  3,      $00, $4D,    ccRight,          {Right}
+  3,      $00, $3B,    ccHelp,           {F1}
+  3,      $00, $47,    ccHome,           {Home}
+  3,      $00, $4F,    ccEnd,            {End}
+  2,      $05,         ccUp,             {^E}
+  2,      $17,         ccUp,             {^W}
+  2,      $18,         ccDown,           {^X}
+  2,      $1A,         ccDown,           {^Z}
+  2,      $12,         ccPageUp,         {^R}
+  2,      $03,         ccPageDn,         {^C}
+  2,      $13,         ccLeft,           {^S}
+  2,      $04,         ccRight,          {^D}
+  2,      $1B,         ccQuit,           {Esc}
+  2,      $0D,         ccSelect,         {Enter}
+  3,      $11, $12,    ccHome,           {^QR}
+  3,      $11, $03,    ccEnd,            {^QC}
+  3,      $00, $84,    ccTopOfFile,      {^PgUp}      {!!.13}
+  3,      $00, $76,    ccEndOfFile,      {^PgDn}      {!!.13}
+
+  3,      $00, $52,    ccIns,            {Ins}
+  3,      $00, $53,    ccDel,            {Del}
+  2,      $20,         ccToggle,         {' '}
+  2,      $2B,         ccToggle,         {'+'}
+  2,      $2D,         ccDel,            {'-'}
+  2,      $0A,         ccBlkToggle,      {^J (^Enter)}
+  3,      $0B, $02,    ccBlkBegin,       {^K^B}
+  3,      $0B, $0B,    ccBlkEnd,         {^K^K}
+  3,      $00, $41,    ccBlkBegin,       {F7}
+  3,      $00, $42,    ccBlkEnd,         {F8}
+  3,      $0B, $08,    ccRestore,        {^K^H}
+
+  {$IFDEF UseMouse}
+  3,      $00, $EF,    ccMouseSel,       {Click left}
+  3,      $00, $EE,    ccQuit,           {Click right}
+  3,      $00, $ED,    ccHelp,           {Click both}
+  {$ELSE}
+                             0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0,
+  {$ENDIF}
+           0, 0, 0, 0, 0, 0, 0,          {Space for customization}
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+  );
+  {.F+}
+
+const
+  PickCfgEnd : Byte = 0;

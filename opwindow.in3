@@ -1,0 +1,1547 @@
+{*********************************************************}
+{*                  OPWINDOW.IN3 1.30                    *}
+{*     Copyright (c) TurboPower Software 1987, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  {---- StackWindow Routines ----}
+
+  constructor StackWindow.wCopy(var S : StackWindow);
+    {-Create a window by copying another}
+  begin
+    Self := S;
+    wNumber := 0;
+    if not RawWindow.wCopy(S) then
+      Fail;
+    {Does not copy the child list} {!!.01}
+  end;
+
+  procedure StackWindow.swEraseChildWindows; {!!.01}
+    {-Erase all child windows}
+  var
+    W : WindowPtr;
+    SaveCurrent : RawWindowPtr;
+    WLN : StackWindowListNodePtr;
+  begin
+    if wChildList <> nil then
+      with wChildList^ do begin
+        {Save current window state and pointer}
+        CurrentWindow^.rwSaveWindowState;
+        SaveCurrent := CurrentWindow;
+        WLN := StackWindowListNodePtr(Head);
+        while WLN <> nil do begin
+          W := WLN^.swPtr;
+          if W^.IsActive then begin
+            {Make child look like current window}
+            CurrentWindow := RawWindowPtr(W);
+            {Erase child, don't affect window stack}
+            W^.rwSetWindowState;
+            W^.wSaveCurrent := nil;
+            W^.Erase;
+          end;
+          WLN := StackWindowListNodePtr(Next(WLN));
+        end;
+        {Restore current window pointer and state}
+        CurrentWindow := SaveCurrent;
+        CurrentWindow^.rwSetWindowState;
+      end;
+  end;
+
+  {Note that swPrepWrite and swUnprepWrite cannot be called reentrantly}
+  var
+    NotCurrent : Boolean;
+    SaveCurrent : RawWindowPtr;
+    NowCurrent : RawWindowPtr;
+
+  function StackWindow.swPrepWrite : Boolean;
+  begin
+    swPrepWrite := True;
+    NotCurrent := IsActive and not IsCurrent;
+    if NotCurrent then begin
+      ClearErrors;
+      ActivateWrite;
+      if RawError <> 0 then begin
+        swPrepWrite := False;
+        Exit;
+      end;
+    end;
+    SaveCurrent := CurrentWindow;
+    if wActiveChild = nil then
+      NowCurrent := @Self
+    else begin
+      CurrentWindow := wActiveChild;
+      NowCurrent := CurrentWindow;
+    end;
+  end;
+
+  procedure StackWindow.swUnprepWrite;
+  begin
+    CurrentWindow := SaveCurrent;
+    if NotCurrent then
+      DeactivateWrite;
+  end;
+
+  procedure StackWindow.wFastWrite(St : string; Row, Col, Attr : Byte);
+    {-Write a string using window-relative coordinates}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.wFastWrite(St, Row, Col, Attr);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.wFastText(St : string; Row, Col : Byte);
+    {-Write St at Row,Col without changing the underlying video attribute.}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.wFastText(St, Row, Col);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.wFastVert(St : string; Row, Col, Attr : Byte);
+    {-Write a string vertically using window-relative coordinates}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.wFastVert(St, Row, Col, Attr);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.wFastFill(Number : Word; Ch : Char; Row, Col, Attr : Byte);
+    {-Fill Number chs at Row,Col in Attr without snow}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.wFastFill(Number, Ch, Row, Col, Attr);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.wFastCenter(St : string; Row, Attr : Byte);
+    {-Write St centered on Row in Attr without snow}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.wFastCenter(St, Row, Attr);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.wFastFlush(St : string; Row, Attr : Byte);
+    {-Write St flush right on Row in Attr without snow}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.wFastFlush(St, Row, Attr);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.wFastRead(Number, Row, Col : Byte; var St : string);
+    {-Read Number characters from the screen into St starting at Row,Col}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.wFastRead(Number, Row, Col, St);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.wReadAttribute(Number, Row, Col : Byte; var St : string);
+    {-Read Number attributes from the screen into St starting at Row,Col}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.wReadAttribute(Number, Row, Col, St);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.wWriteAttribute(St : String; Row, Col : Byte);
+    {-Write string of attributes St at Row,Col without changing characters}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.wWriteAttribute(St, Row, Col);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.wChangeAttribute(Number : Word; Row, Col, Attr : Byte);
+    {-Change Number video attributes to Attr starting at Row,Col}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.wChangeAttribute(Number, Row, Col, Attr);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.wFlexWrite(St : string; Row, Col : Byte; var FAttrs : FlexAttrs);
+    {-Write a string flexibly using window-relative coordinates}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.wFlexWrite(St, Row, Col, FAttrs);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.wFastWriteCtrl(St : String; Row, Col, Attr, Ctrl : Byte);
+    {-Write St at Row,Col in Attr (video attribute) without snow.
+      Control characters displayed in Ctrl as upper-case letters}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.wFastWriteCtrl(St, Row, Col, Attr, Ctrl);
+      swUnprepWrite;
+    end;
+  end;
+
+  {---- StackWindow frame-relative fast writing ----}
+
+  procedure StackWindow.fFastWrite(St : string; Row, Col, Attr : Byte);
+    {-Write a string using window-relative coordinates}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.fFastWrite(St, Row, Col, Attr);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.fFastText(St : string; Row, Col : Byte);
+    {-Write St at Row,Col without changing the underlying video attribute.}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.fFastText(St, Row, Col);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.fFastVert(St : string; Row, Col, Attr : Byte);
+    {-Write a string vertically using window-relative coordinates}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.fFastVert(St, Row, Col, Attr);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.fFastFill(Number : Word; Ch : Char; Row, Col, Attr : Byte);
+    {-Fill Number chs at Row,Col in Attr without snow}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.fFastFill(Number, Ch, Row, Col, Attr);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.fFastCenter(St : string; Row, Attr : Byte);
+    {-Write St centered on Row in Attr without snow}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.fFastCenter(St, Row, Attr);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.fFastFlush(St : string; Row, Attr : Byte);
+    {-Write St flush right on Row in Attr without snow}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.fFastFlush(St, Row, Attr);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.fFastRead(Number, Row, Col : Byte; var St : string);
+    {-Read Number characters from the screen into St starting at Row,Col}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.fFastRead(Number, Row, Col, St);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.fReadAttribute(Number, Row, Col : Byte; var St : string);
+    {-Read Number attributes from the screen into St starting at Row,Col}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.fReadAttribute(Number, Row, Col, St);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.fWriteAttribute(St : String; Row, Col : Byte);
+    {-Write string of attributes St at Row,Col without changing characters}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.fWriteAttribute(St, Row, Col);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.fChangeAttribute(Number : Word; Row, Col, Attr : Byte);
+    {-Change Number video attributes to Attr starting at Row,Col}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.fChangeAttribute(Number, Row, Col, Attr);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.fFlexWrite(St : string; Row, Col : Byte; var FAttrs : FlexAttrs);
+    {-Write a string flexibly using window-relative coordinates}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.fFlexWrite(St, Row, Col, FAttrs);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.fFastWriteCtrl(St : String; Row, Col, Attr, Ctrl : Byte);
+    {-Write St at Row,Col in Attr (video attribute) without snow.
+      Control characters displayed in Ctrl as upper-case letters}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.fFastWriteCtrl(St, Row, Col, Attr, Ctrl);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.swLinkToParent;
+    {-Link all windows on the child list to Self as parent}
+  var
+    WLN : StackWindowListNodePtr;
+  begin
+    if wChildList <> nil then
+      with wChildList^ do begin
+        WLN := StackWindowListNodePtr(Head);
+        while WLN <> nil do begin
+          WLN^.swPtr^.wParentPtr := @Self;
+          WLN := StackWindowListNodePtr(Next(WLN));
+        end;
+      end;
+  end;
+
+  destructor StackWindow.Done; {!!.01}
+    {-Destroy child list and then window itself}
+  begin
+    if wChildList <> nil then begin
+      {Dispose of child list and all the child windows}
+      Dispose(wChildList, Done);
+      {Make it clear that the children are gone}
+      wChildList := nil;
+      wActiveChild := nil;
+      ClearLongFlag(wFlags, wHasChildren);
+    end;
+    {Remove from parent's child list}  {!!.03}
+    if wParentPtr <> nil then          {!!.03}
+      wParentPtr^.RemoveChild(@Self);  {!!.03}
+    {Dispose of self}
+    RawWindow.Done;
+  end;
+
+  procedure StackWindow.AddChild(W : WindowPtr); {!!.01}
+    {-Validate window W as child and add to child list}
+  var
+    WLN : StackWindowListNodePtr;
+    X1 : Byte;
+    Y1 : Byte;
+    X2 : Byte;
+    Y2 : Byte;
+    PX1 : Byte;
+    PY1 : Byte;
+    PX2 : Byte;
+    PY2 : Byte;
+  begin
+    {Validate that the new child window fits within the frame of the parent}
+    {wFrame.WithinFrameCoords} Extent(PX1, PY1, PX2, PY2, False); {!!.03}
+    W^.Extent(X1, Y1, X2, Y2, {True} False);                      {!!.03}
+    if (X1 < PX1) or (X2 > PX2) or (Y1 < PY1) or (Y2 > PY2) then begin
+      Error(epNonFatal+ecWinCoordsBad);
+      Exit;
+    end;
+
+    {Allocate the list if needed}
+    if wChildList = nil then begin
+      New(wChildList, Init);
+      if wChildList = nil then begin
+        Error(epFatal+ecOutOfMemory);
+        Exit;
+      end;
+    end;
+
+    {Add the child to the list}
+    New(WLN, Init(W));
+    if WLN = nil then begin
+      Error(epFatal+ecOutOfMemory);
+      Exit;
+    end;
+    wChildList^.Append(WLN);
+    SetLongFlag(wFlags, wHasChildren);
+
+    {Mark W as a child and store its parent}
+    SetLongFlag(W^.wFlags, wIsChild);
+    W^.wParentPtr := @Self;
+  end;
+
+  procedure StackWindow.RemoveChild(W : WindowPtr); {!!.03}
+    {-Remove window W as child}
+  var
+    WLN : StackWindowListNodePtr;
+  begin
+    if wChildList <> nil then begin
+      {Assure W is not the active child}
+      if W = ActiveChild then
+        SetActiveChild(nil);
+      {Find the window on the child list}
+      WLN := StackWindowListNodePtr(wChildList^.Head);
+      while WLN <> nil do begin
+        if WLN^.swPtr = W then begin
+          {Remove the node from the list}
+          wChildList^.Remove(WLN);
+          {Dispose of node but not the child window itself}     {!!.11}
+          WLN^.swPtr := nil;                                    {!!.11}
+          Dispose(WLN, Done);                                   {!!.11}
+          {mark the window as a non-child}                      {!!.11}
+          W^.wParentPtr := nil;                                 {!!.11}
+          ClearLongFlag(W^.wFlags, wIsChild);                   {!!.11}
+          if wChildList^.Size = 0 then
+            {Make it clear that the children are gone}
+            ClearLongFlag(wFlags, wHasChildren);
+          Exit;
+        end;
+        WLN := StackWindowListNodePtr(wChildList^.Next(WLN));
+      end;
+    end;
+  end;
+
+  function StackWindow.ActiveFramePtr : AbstractFramePtr; {!!.13}
+    {-Return a pointer to frame the window is currently displaying}
+  begin
+    if RawWindow.IsCurrent or not LongFlagIsSet(wFlags, wAltFrame) then
+      ActiveFramePtr := @wFrame
+    else if (IsChild and wParentPtr^.IsCurrent and
+             (wParentPtr^.wActiveChild = @Self)) then
+      ActiveFramePtr := @wFrame
+    else
+      ActiveFramePtr := @aFrame;
+  end;
+
+  procedure StackWindow.SetActiveChild(W : WindowPtr); {!!.01}
+    {-Make W the active child window. If W is nil, Self becomes active}
+  var
+    ActChild : WindowPtr;
+  begin
+    if W = wActiveChild then
+      {No action required}
+      Exit;
+
+    {Verify that W is a child of Self}
+    if ChildIndex(W) = $FFFF then begin
+      Error(epNonFatal+ecBadParam);
+      Exit;
+    end;
+
+    if IsActive then begin
+      if not IsCurrent then begin
+        {Window is hidden. Call Select or ActivateWrite first}
+        Error(epNonFatal+ecWinInaccessible);
+        Exit;
+      end;
+
+      ActChild := wActiveChild;                                 {!!.13}
+      if ActChild <> nil then begin                             {!!.13}
+        {Save state of current active child and draw its alternate frame}
+        with ActChild^ do begin
+          rwSaveWindowState;
+          rwSaveContents;
+          if LongFlagIsSet(wFlags, wAltFrame) then begin
+            {$IFDEF UseShadows}
+            wFrame.EraseShadows;
+            {$ENDIF}
+            aFrame.Draw;
+          end;
+          {Assure active child doesn't think it's still active} {!!.13}
+          Self.wActiveChild := nil;                             {!!.13}
+          UpdateContents; {!!.03}
+        end;
+      end;
+
+      if (W <> nil) and (W <> @Self) then begin
+        {Draw main frame of active child}
+        {Avoid visibly deactivating the parent window}
+        CurrentWindow := nil;
+        W^.rwDraw;
+        CurrentWindow := @Self;
+        {Leave basic window state of child}      {!!.12}
+      end else                                   {!!.12}
+        {Restore basic window state of parent}   {!!.12}
+        CurrentWindow^.rwSetWindowState;
+    end;
+
+    {Save the new active child}
+    if W = @Self then
+      wActiveChild := nil
+    else
+      wActiveChild := W;
+  end;
+
+  function StackWindow.ChildListPtr : SingleListPtr; {!!.01}
+    {-Return the address of the list of child windows}
+  begin
+    ChildListPtr := wChildList;
+  end;
+
+  function StackWindow.ActiveChild : WindowPtr; {!!.01}
+    {-Return the address of the current child window, nil if none}
+  begin
+    ActiveChild := wActiveChild;
+  end;
+
+  function StackWindow.IsChild : Boolean; {!!.01}
+    {-Return True if window is a child of another}
+  begin
+    IsChild := LongFlagIsSet(wFlags, wIsChild);
+  end;
+
+  function StackWindow.IsParent : Boolean; {!!.01}
+    {-Return True if window is a parent of at least one other}
+  begin
+    IsParent := LongFlagIsSet(wFlags, wHasChildren);
+  end;
+
+  function StackWindow.ParentPtr : WindowPtr; {!!.01}
+    {-Return address of parent window, nil if none}
+  begin
+    ParentPtr := wParentPtr;
+  end;
+
+  function StackWindow.ChildIndex(W : WindowPtr) : Word; {!!.01}
+    {-Return the index of child W. 0=Self, 1=first child, $FFFF=no match}
+  var
+    WLN : StackWindowListNodePtr;
+    Index : Word;
+  begin
+    if (W = nil) or (W = @Self) then
+      {Nil implies Self}
+      ChildIndex := 0
+    else begin
+      if wChildList <> nil then
+        with wChildList^ do begin
+          WLN := StackWindowListNodePtr(Head);
+          Index := 1;
+          while WLN <> nil do begin
+            if WLN^.swPtr = W then begin
+              ChildIndex := Index;
+              Exit;
+            end;
+            WLN := StackWindowListNodePtr(Next(WLN));
+            inc(Index);
+          end;
+        end;
+      ChildIndex := $FFFF;
+    end;
+  end;
+
+  function StackWindow.ChildPtr(Index : Word) : WindowPtr; {!!.01}
+    {-Return the address of the child with specified Index, nil if none}
+  var
+    WLN : StackWindowListNodePtr;
+  begin
+    if Index = 0 then
+      ChildPtr := @Self
+    else begin
+      if wChildList <> nil then
+        with wChildList^ do begin
+          WLN := StackWindowListNodePtr(Head);
+          while (WLN <> nil) and (Index > 0) do begin
+            if Index = 1 then begin
+              ChildPtr := WLN^.swPtr;
+              Exit;
+            end;
+            WLN := StackWindowListNodePtr(Next(WLN));
+            dec(Index);
+          end;
+        end;
+      ChildPtr := nil;
+    end;
+  end;
+
+  procedure StackWindow.SetStackProc(SP : StackWindowProc);
+    {-Set window stack proc}
+  begin
+    wStackProc := SP;
+  end;
+
+  function StackWindow.WindowNumber : Word;
+    {-Return window number}
+  begin
+    WindowNumber := wNumber;
+  end;
+
+  procedure StackWindow.AssignNumber;
+    {-Called to assign window number}
+  begin
+    wNumber := wActiveStack^.wsFreeNumber;
+    {Give program a chance to see the window number}
+    wStackProc(@Self);
+  end;
+
+  procedure StackWindow.UpdateContents; {!!.01}
+    {-Update the contents of any child windows}
+  var
+    SaveCurrent : RawWindowPtr;
+    W : WindowPtr;
+    WLN : StackWindowListNodePtr;
+  begin
+    if wChildList <> nil then
+      with wChildList^ do begin
+        {Save current window and hide the cursor}
+        CurrentWindow^.rwSaveWindowState;
+        SaveCurrent := CurrentWindow;
+        HiddenCursor;
+
+        {Scan the list of child windows}
+        WLN := StackWindowListNodePtr(Head);
+        while WLN <> nil do begin
+          W := WLN^.swPtr;
+          if W^.IsActive then begin
+            {!!.03} {Following sequence changed to better deal with
+                     multiple WindowFields}
+            {Set back to the state of the parent window}
+            CurrentWindow := SaveCurrent;
+            W^.rwSetWindowState;
+            {Let it update its own contents}
+            W^.UpdateContents;
+          end else begin
+            {Set back to the state of the parent window}
+            CurrentWindow := SaveCurrent;
+            CurrentWindow^.rwSetWindowState;
+
+            {Avoid visibly deactivating the parent window}
+            CurrentWindow := nil;
+
+            {Use the alternate frame for all but the active child}
+            {Draw the window and let it update its own contents}
+            with W^ do
+                      {vvvvv} {!!.02}
+              if (W <> Self.wActiveChild) and LongFlagIsSet(wFlags, wAltFrame) then begin
+                ExchangeStructs(wFrame, aFrame, SizeOf(Frame));
+                wFramePtr := @aFrame;
+                rwDraw;
+                ExchangeStructs(wFrame, aFrame, SizeOf(Frame));
+                wFramePtr := @wFrame;
+              end else
+                rwDraw;
+          end;
+          WLN := StackWindowListNodePtr(Next(WLN));
+        end;
+
+        {Restore current window and restore basic window state}
+        CurrentWindow := SaveCurrent;
+        if Self.wActiveChild <> nil then          {!!.12}
+          Self.wActiveChild^.rwSetWindowState     {!!.12}
+        else                                      {!!.12}
+          CurrentWindow^.rwSetWindowState;
+      end;
+
+    {Hook to currently empty RawWindow method}
+    RawWindow.UpdateContents;
+  end;
+
+  function StackWindow.IsCurrent : Boolean; {!!.01}
+    {-Return True if window is the current one}
+  var
+    WLN : StackWindowListNodePtr;
+    Current : Boolean;
+  begin
+    Current := RawWindow.IsCurrent;
+    {!!.02} {Following block changed significantly}
+    if not Current then
+      if IsChild then begin
+        {Will be considered current if its parent is current}
+        Current := wParentPtr^.IsCurrent;
+        if not Current and (wParentPtr^.wChildList <> nil) then begin
+          {Window is considered current if any of parent's children is current}
+          WLN := StackWindowListNodePtr(wParentPtr^.wChildList^.Head);
+          while (WLN <> nil) and not Current do begin
+            Current := (WLN^.swPtr = WindowPtr(CurrentWindow));
+            WLN := StackWindowListNodePtr(WLN^.slNext);
+          end;
+        end;
+      end else if IsParent then begin
+        {Will be considered current if one of its children is current}
+        WLN := StackWindowListNodePtr(wChildList^.Head);
+        while (WLN <> nil) and not Current do begin
+          Current := (WLN^.swPtr = WindowPtr(CurrentWindow));
+          WLN := StackWindowListNodePtr(WLN^.slNext);
+        end;
+      end;
+    IsCurrent := Current;
+  end;
+
+  procedure StackWindow.Draw;
+    {-Draw a window and push it on the default stack}
+  begin
+    if IsActive then begin
+      {Already on-screen someplace}
+      if IsCurrent then begin
+        {Already the current window, just update it}
+        {if LongFlagIsSet(wFlags, wUserContents) then} {!!.01}
+          UpdateContents;
+      end else
+        {Window is hidden. Call Select or ActivateWrite instead}
+        Error(epNonFatal+ecWinInaccessible);
+      Exit;
+    end;
+
+    with wActiveStack^ do begin
+      {Don't change window numbers while the stack is being reorganized}
+      if not FlagIsSet(wsFlags, wsActivated) then
+        {Assign window number}
+        AssignNumber;
+
+      {Put it on the stack}
+      Push(@Self);
+    end;
+
+    {Draw it}
+    rwDraw; {!!.01}
+  end;
+
+  procedure StackWindow.Erase;
+    {-Erase a stacked window assuming it's the top window}
+  var
+    SWPtr : WindowPtr;
+  begin
+    if not IsActive then begin
+      Error(epNonFatal+ecWinNotActive);
+      Exit;
+    end;
+    if not IsCurrent then begin
+      Error(epNonFatal+ecWinInaccessible);
+      Exit;
+    end;
+
+    {Erase any child windows}                               {!!.01}
+    swEraseChildWindows;                                    {!!.01}
+
+    {Assure that Self is the current window}                {!!.14}
+    MarkCurrent;                                            {!!.14}
+
+    {Erase Self}
+    rwErase;                                                {!!.01}
+
+    with wActiveStack^ do begin
+      {Don't change window numbers while the stack is being reorganized}
+      if not FlagIsSet(wsFlags, wsActivated) then
+        wNumber := 0;
+
+      if TopWindow = @Self then                             {!!.01}
+        {Pop the stack}
+        SWPtr := WindowPtr(Pop);
+
+      {Code to redraw next active window is now in rwErase} {!!.01}
+    end;
+  end;
+
+  procedure StackWindow.swSelectTiled; {!!.03}
+    {-Make a tiled window the current one by pulling to top}
+  var
+    CPtr : RawWindowPtr;
+    TPtr : WindowPtr;
+    PPtr : WindowPtr;
+    TempStack : PointerStack;
+    {State of current window, becomes previous state of Self}
+    cTextAttr     : Byte;
+    cWindMin      : Word;
+    cWindMax      : Word;
+    cInitCursor   : Word;
+    cInitXY       : Word;
+    {$IFDEF UseMouse}
+    cMouseXL      : Byte;
+    cMouseYL      : Byte;
+    cMouseXH      : Byte;
+    cMouseYH      : Byte;
+    cMInitX       : Byte;
+    cMInitY       : Byte;
+    cMCurOn       : Boolean;
+    {$ENDIF}
+  begin
+    {Allocate a temporary stack}
+    if not TempStack.Init(wActiveStack^.Size) then begin
+      Error(epNonFatal+(InitStatus mod 10000));
+      Exit;
+    end;
+
+    {Get state of current window to save as new current's previous state}
+    CPtr := CurrentWindow;
+    CPtr^.rwSaveWindowState;
+    CPtr^.rwSaveContents;
+
+    OpCrt.GetCursorState(cInitXY, cInitCursor);
+    cWindMin := OpCrt.WindMin;
+    cWindMax := OpCrt.WindMax;
+    cTextAttr := OpCrt.TextAttr;
+    {$IFDEF UseMouse}
+    if MouseInstalled then begin
+      cMouseXL := OpMouse.MouseXLo+1;
+      cMouseYL := OpMouse.MouseYLo+1;
+      cMouseXH := OpMouse.MouseXHi;
+      cMouseYH := OpMouse.MouseYHi;
+      cMInitX := CPtr^.wMouseCurX;
+      cMInitY := CPtr^.wMouseCurY;
+      cMCurOn := OpMouse.MouseCursorOn;
+    end;
+    {$ENDIF}
+
+    {Update current window as non-current}
+    if LongFlagIsSet(CPtr^.wFlags, wAltFrame) then begin
+      {$IFDEF UseShadows}
+      CPtr^.wFrame.EraseShadows;
+      {$ENDIF}
+      CPtr^.aFrame.Draw;
+    end else
+      {Redraw frame in case someone modified it without telling us}
+      {Note: does not erase and redraw shadows}
+      CPtr^.wFrame.UpdateFrame;
+    CPtr^.UpdateContents;  {!!}
+    CPtr^.MarkNotCurrent;  {!!}
+    Self.MarkCurrent;      {!!}
+
+    {Transfer windows from wActiveStack to TempStack until Self is found}
+    repeat
+      TPtr := WindowPtr(wActiveStack^.Pop);
+      if TPtr = @Self then begin
+        {Transfer previous state from Self to window-over-Self}
+        {$IFDEF UseMouse}
+        move(wTextAttr, PPtr^.wTextAttr, ofs(wMouseCurX)-ofs(wTextAttr));
+        move(wMouseXL, PPtr^.wMouseXL, ofs(wScrWidth)-ofs(wMouseXL));
+        {$ELSE}
+        move(wTextAttr, PPtr^.wTextAttr, ofs(wDummyArray)-ofs(wTextAttr));
+        {$ENDIF}
+        PPtr^.wSaveCurrent := wSaveCurrent;
+      end else begin
+        TempStack.Push(TPtr);
+        PPtr := TPtr;
+      end;
+    until TPtr = @Self;
+
+    {Put windows back onto wActiveStack}
+    repeat
+      TPtr := WindowPtr(TempStack.Pop);
+      wActiveStack^.Push(TPtr);
+    until TempStack.SP = 0;
+    wActiveStack^.Push(@Self);
+
+    {Dispose of temporary stack}
+    TempStack.Done;
+
+    {Save state of previously current window in Self}
+    wTextAttr := cTextAttr;
+    wWindMin := cWindMin;
+    wWindMax := cWindMax;
+    wInitCursor := cInitCursor;
+    wInitXY := cInitXY;
+    {$IFDEF UseMouse}
+    wMouseXL := cMouseXL;
+    wMouseYL := cMouseYL;
+    wMouseXH := cMouseXH;
+    wMouseYH := cMouseYH;
+    wMInitX := cMInitX;
+    wMInitY := cMInitY;
+    wMCurOn := cMCurOn;
+    {$ENDIF}
+    wSaveCurrent := CPtr;
+
+    {Set screen properties for newly current window}
+    rwSetWindowState;
+
+    {Draw main frame of new current and update contents}
+    if LongFlagIsSet(wFlags, wAltFrame) then begin
+      {$IFDEF UseShadows}
+      aFrame.EraseShadows;
+      {$ENDIF}
+      wFrame.Draw;
+    end else
+      wFrame.UpdateFrame;
+    UpdateContents;
+  end;
+
+  procedure StackWindow.Select;
+    {-Make a window the current one (by displaying or pulling to top)}
+  label
+    ExitPoint;
+  var
+    S : Word;
+    StkLevel : Word;
+    BaseCursorSL : Word;       {!!.01}
+    RawCurrent : RawWindowPtr; {!!.01}
+    Covered : Boolean;         {!!.03}
+    TopIsCurrent : Boolean;    {!!.03}
+  begin
+    if not IsActive then begin
+      Draw;
+      Exit;
+    end;
+    if IsCurrent then begin
+      {if LongFlagIsSet(wFlags, wUserContents) then}         {!!.01}
+        UpdateContents;
+      Exit;
+    end;
+
+    with wActiveStack^ do begin
+      {Find the window in the stack and assure it's legal to unstack to it}
+      StkLevel := wsFindWindow(@Self, Covered);              {!!.03}
+      if StkLevel = 0 then begin
+        {Window cannot be accessed}
+        Self.Error(epNonFatal+ecWinInaccessible);            {!!.02}
+        Exit;
+      end;
+
+      {Is the top stackwindow the current window?}           {!!.03}
+      TopIsCurrent := TopWindow^.IsCurrent;                  {!!.03}
+      if TopIsCurrent and not Covered then begin             {!!.03}
+        {Optimize performance by not using a virtual screen} {!!.03}
+        swSelectTiled;                                       {!!.03}
+        Exit;                                                {!!.03}
+      end;                                                   {!!.03}
+
+      {Allocate and initialize virtual screen}
+      if not wsActivate then begin
+        Self.Error(epFatal+ecOutOfMemory);                   {!!.02}
+        Exit;
+      end;
+
+      {Assure a stacked window is current}
+      if not TopIsCurrent then begin                         {!!.02}
+        {Force switch to top stacked window}
+        RawCurrent := CurrentWindow;                         {!!.01}
+        TopWindow^.rwDraw;                                   {!!.01}
+      end else
+        RawCurrent := nil;                                   {!!.01}
+
+      {Erase windows down to and including Self}
+      if not wsPopWindows(StkLevel, BaseCursorSL) then begin {!!.01}
+        {Window cannot be accessed}
+        Self.Error(epNonFatal+ecWinInaccessible);            {!!.02}
+        goto ExitPoint;
+      end;
+
+      {Assign underlying cursor shape to new first window}   {!!.01}
+      if CurrentWindow = nil then                            {!!.01}
+        if wsLevel > 1 then                                  {!!.01}
+          WindowPtr(Peek(2))^.wInitCursor := BaseCursorSL    {!!.01}
+        else if RawCurrent <> nil then                       {!!.01}
+          RawCurrent^.wInitCursor := BaseCursorSL;           {!!.01}
+
+      {Redraw the windows except for Self}
+      for S := StkLevel+1 to wsLevel do
+        WindowPtr(Peek(S))^.Draw;
+
+      {Put Self back on top}
+      Draw;
+
+ExitPoint:
+      {Copy virtual screen to physical and deallocate}
+      wsDeactivate;
+    end;
+  end;
+
+  procedure StackWindow.DrawHidden(var Under : StackWindow);
+    {-Draw a window, inserting it in the stack underneath window Under}
+  label
+    ExitPoint;
+  var
+    S : Word;
+    StkLevel : Word;
+    BaseCursorSL : Word; {!!.01}
+    SWPtr : WindowPtr;
+    TWPtr : WindowPtr;
+    Covered : Boolean;   {!!.03}
+  begin
+    {Can't draw window twice}
+    if IsActive then begin
+      Error(epNonFatal+ecWinIsActive);
+      Exit;
+    end;
+
+    {Assure the window to draw underneath is already active}
+    if not Under.IsActive then begin
+      {Just draw window on top of stack}
+      Draw;
+      Exit;
+    end;
+
+    with wActiveStack^ do begin
+      {Find the window in the stack and assure it's legal to unstack to it}
+      StkLevel := wsFindWindow(@Under, Covered); {!!.03}
+      if StkLevel = 0 then begin
+        {Window cannot be accessed}
+        Self.Error(epNonFatal+ecWinInaccessible); {!!.02}
+        Exit;
+      end;
+
+      {Allocate and initialize virtual screen}
+      if not wsActivate then begin
+        Self.Error(epFatal+ecOutOfMemory); {!!.02}
+        Exit;
+      end;
+
+      {Erase windows down to and including Under}
+      if not wsPopWindows(StkLevel, BaseCursorSL) then begin {!!.01}
+        {Window cannot be accessed}
+        Self.Error(epNonFatal+ecWinInaccessible); {!!.02}
+        goto ExitPoint;
+      end;
+
+      {Assign underlying cursor shape to new first window} {!!.01}
+      if CurrentWindow = nil then                          {!!.01}
+        wInitCursor := BaseCursorSL;                       {!!.01}
+
+      {Draw the new window, assigning it a window number}
+      AssignNumber;
+      SWPtr := WindowPtr(Peek(StkLevel));
+      Push(@Self);
+      rwDraw; {!!.01}
+
+      {Redraw the windows}
+      for S := StkLevel+1 to wsLevel do begin
+        TWPtr := WindowPtr(Peek(S));
+        SWPtr^.Draw;
+        SWPtr := TWPtr;
+      end;
+      SWPtr^.Draw;
+
+ExitPoint:
+      {Copy virtual screen to physical and deallocate}
+      wsDeactivate;
+    end;
+  end;
+
+  procedure StackWindow.EraseHidden;
+    {-Erase a window even if it's hidden on the window stack}
+  label
+    ExitPoint;
+  var
+    S : Word;
+    StkLevel : Word;
+    BaseCursorSL : Word; {!!.01}
+    SWPtr : WindowPtr;
+    Covered : Boolean;   {!!.03}
+  begin
+    if not IsActive then
+      Exit;
+    if IsCurrent then begin
+      Erase;
+      Exit;
+    end;
+
+    with wActiveStack^ do begin
+      {Find the window in the stack and assure it's legal to unstack to it}
+      StkLevel := wsFindWindow(@Self, Covered);              {!!.03}
+      if StkLevel = 0 then begin
+        {Window cannot be accessed}
+        Self.Error(epNonFatal+ecWinInaccessible);            {!!.02}
+        Exit;
+      end;
+
+      {Allocate and initialize virtual screen}
+      if not wsActivate then begin
+        Self.Error(epFatal+ecOutOfMemory);                   {!!.02}
+        Exit;
+      end;
+
+      {Erase windows down to and including Self}
+      if not wsPopWindows(StkLevel, BaseCursorSL) then begin {!!.01}
+        {Window cannot be accessed}
+        Self.Error(epNonFatal+ecWinInaccessible);            {!!.02}
+        goto ExitPoint;
+      end;
+
+      {Assign underlying cursor shape to new first window}   {!!.01}
+      if CurrentWindow = nil then                            {!!.01}
+        WindowPtr(Peek(2))^.wInitCursor := BaseCursorSL;     {!!.01}
+
+      {Redraw the windows except for Self}
+      for S := StkLevel+1 to wsLevel do
+        WindowPtr(Peek(S))^.Draw;
+
+      {Set Self's window number to 0}
+      wNumber := 0;
+
+ExitPoint:
+      {Copy virtual screen to physical and deallocate}
+      wsDeactivate;
+    end;
+  end;
+
+  function StackWindow.OnStack : Boolean;
+    {-Return True if window is displayed on the window stack}
+  var
+    S : Word;
+  begin
+    if IsActive then
+      with wActiveStack^ do
+        for S := SP downto 1 do
+          if @Self = Peek(S) then begin
+            OnStack := True;
+            Exit;
+          end;
+    OnStack := False;
+  end;
+
+  procedure StackWindow.swActivateWriteTiled; {!!.03}
+    {-Activate fastwriting to a stacked, but uncovered, window}
+  var
+    CPtr : RawWindowPtr;
+    RPtr : RootPtr;
+  begin
+    wActiveStack^.wsLevel := wActiveStack^.SP;
+    wActiveStack^.wsCurrPtr := CurrentWindow; {!!.11}
+    while wActiveStack^.PeekTop <> @Self do
+      RPtr := wActiveStack^.Pop;
+
+    CPtr := CurrentWindow;
+    CPtr^.rwSaveWindowState;
+    CPtr^.rwSaveContents;
+
+    {Set screen properties for newly current window}
+    MarkCurrent;
+    rwSetWindowState;
+
+    SetFlag(wActiveStack^.wsFlags, wsActivated+wsTileActivated);
+  end;
+
+  procedure StackWindow.swDeactivateWriteTiled; {!!.03}
+    {-Deactivate fastwriting to a stacked, but uncovered, window}
+  var
+    CPtr : RawWindowPtr;
+  begin
+    {Save state of temporarily activated window}
+    rwSaveWindowState;
+    rwSaveContents;
+
+    {Restore the stack}
+    wActiveStack^.psTop := wActiveStack^.wsLevel;
+
+    {Set screen properties for newly current window}
+    {CPtr := RawWindowPtr(wActiveStack^.PeekTop);} {!!.11}
+    CPtr := wActiveStack^.wsCurrPtr;               {!!.11}
+    CPtr^.MarkCurrent;
+    CPtr^.rwSetWindowState;
+    CPtr^.UpdateContents;
+
+    ClearFlag(wActiveStack^.wsFlags, wsActivated+wsTileActivated);
+  end;
+
+  procedure StackWindow.ActivateWrite;
+    {-Activate fastwriting to a hidden window}
+  var
+    StkLevel : Word;
+    BaseCursorSL : Word; {!!.01}
+    Covered : Boolean;   {!!.03}
+  begin
+    with wActiveStack^ do begin
+      {Avoid double activation}                             {!!.01}
+      if IsCurrent and not OnPhysicalScreen then            {!!.01}
+        Exit;                                               {!!.01}
+
+      {Find the window in the stack and assure it's legal to unstack to it}
+      if not IsCurrent then begin                           {!!.02}
+        StkLevel := wsFindWindow(@Self, Covered);           {!!.03}
+        if StkLevel = 0 then begin
+          {Window cannot be accessed}
+          Self.Error(epNonFatal+ecWinInaccessible);         {!!.02}
+          Exit;
+        end;
+
+        if TopWindow^.IsCurrent and not Covered then begin  {!!.03}
+          {Optimize performance by not using virtual screen}{!!.03}
+          swActivateWriteTiled;                             {!!.03}
+          Exit;                                             {!!.03}
+        end;                                                {!!.03}
+      end;
+
+      {Allocate and initialize virtual screen}
+      if not wsActivate then begin
+        Self.Error(epFatal+ecOutOfMemory);                  {!!.02}
+        Exit;
+      end;
+
+      {Erase windows down to but not including Self}
+      if IsCurrent then                                        {!!.02}
+        {Save original stack level used when reactivating}     {!!.03}
+        wsLevel := SP                                          {!!.03}
+      else if not wsPopWindows(StkLevel+1, BaseCursorSL) then  {!!.01}
+        {Window cannot be accessed}
+        Self.Error(epNonFatal+ecWinInaccessible);              {!!.02}
+    end;
+  end;
+
+  procedure StackWindow.DeactivateWrite;
+    {-Deactivate fastwriting and display changes}
+  var
+    S : Word;
+  begin
+    with wActiveStack^ do
+      if FlagIsSet(wsFlags, wsActivated) then
+        if FlagIsSet(wsFlags, wsTileActivated) then        {!!.03}
+          {Optimize by not using virtual screen}           {!!.03}
+          swDeactivateWriteTiled                           {!!.03}
+        else begin                                         {!!.03}
+          {Redraw the windows}
+          for S := SP+1 to wsLevel do
+            WindowPtr(Peek(S))^.Draw;
+
+          {Copy virtual screen to physical and deallocate}
+          wsDeactivate;
+        end;
+  end;
+
+  procedure StackWindow.Clear;
+    {-Clear the window to wTextXXXX and wBackChar}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.rwClear;
+      NowCurrent^.wGotoXY(1, 1);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.ClearContents;
+    {-Clear region within active frame with wTextXXXX and wBackChar}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.rwClearContents;
+      NowCurrent^.wGotoXY(1, 1);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.SaveContents;
+    {-Save current window contents in the contents buffer}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.rwSaveContents;
+      swUnprepWrite;
+    end;
+  end;
+
+  {$IFDEF UseAdjustableWindows}
+  function StackWindow.swCheckChildFit(X1, Y1, X2, Y2 : Word) : Boolean; {!!.01}
+    {-Assure children still fit in parent}
+  var
+    PX1 : Byte;
+    PX2 : Byte;
+    PY1 : Byte;
+    PY2 : Byte;
+    CX1 : Byte;
+    CX2 : Byte;
+    CY1 : Byte;
+    CY2 : Byte;
+    WLN : StackWindowListNodePtr;
+  begin
+    if wChildList <> nil then
+      with wChildList^ do begin
+        {Get the new within-frame coordinates of the parent}
+        wFrame.WithinFrameCoords(PX1, PY1, PX2, PY2);
+        inc(PX1, Integer(X1)-wXL);
+        inc(PX2, Integer(X2)-wXH);
+        inc(PY1, Integer(Y1)-wYL);
+        inc(PY2, Integer(Y2)-wYH);
+
+        {Compare the frame coordinates of each child to the new limits}
+        WLN := StackWindowListNodePtr(Head);
+        while WLN <> nil do begin
+          WLN^.swPtr^.wFrame.Coordinates(CX1, CY1, CX2, CY2);
+          if (CX1 < PX1) or (CX2 > PX2) or (CY1 < PY1) or (CY2 > PY2) then begin
+            swCheckChildFit := False;
+            Exit;
+          end;
+          WLN := StackWindowListNodePtr(Next(WLN));
+        end;
+      end;
+    swCheckChildFit := True;
+  end;
+
+  function StackWindow.swMoveChildWindows(DX, DY : Integer) : Boolean; {!!.01}
+    {-Move all child windows by DX, DY}
+  var
+    W : WindowPtr;
+    SaveCurrent : RawWindowPtr;
+    WLN : StackWindowListNodePtr;
+  begin
+    if wChildList <> nil then
+      with wChildList^ do begin
+        {Save current window state and pointer}
+        if CurrentWindow <> nil then {!!.11}
+          CurrentWindow^.rwSaveWindowState;
+        SaveCurrent := CurrentWindow;
+        WLN := StackWindowListNodePtr(Head);
+        while WLN <> nil do begin
+          W := WLN^.swPtr;
+          if W^.IsActive then begin {!!.11}
+            {Make child look like current window}
+            CurrentWindow := RawWindowPtr(W);
+            {Erase child, without affecting window stack}
+            W^.rwSetWindowState;
+            W^.wSaveCurrent := nil;
+            W^.Erase;
+          end;                      {!!.11}
+          {Allow the window to move even though it's a child}
+          ClearLongFlag(W^.wFlags, wIsChild);
+          W^.MoveWindow(DX, DY);
+          SetLongFlag(W^.wFlags, wIsChild);
+          if W^.RawError <> 0 then begin
+            swMoveChildWindows := False;
+            Exit;
+          end;
+          WLN := StackWindowListNodePtr(Next(WLN));
+        end;
+        {Restore current window pointer and state}
+        CurrentWindow := SaveCurrent;
+        if CurrentWindow <> nil then {!!}
+          CurrentWindow^.rwSetWindowState;
+      end;
+    swMoveChildWindows := True;
+  end;
+
+  procedure StackWindow.AdjustWindow(X1, Y1, X2, Y2 : Word);
+    {-Set new coordinates and adjust all related structures}
+  var
+    NotC : Boolean;
+  begin
+    if IsChild then begin                        {!!.01}
+      Error(epNonFatal+ecWinIsChild);            {!!.01}
+      Exit;                                      {!!.01}
+    end;                                         {!!.01}
+    NotC := IsActive and not IsCurrent;
+    ClearErrors;                                 {!!.01}
+    if NotC then begin
+      ActivateWrite;
+      if RawError <> 0 then                      {!!.01}
+        Exit;
+    end;
+    if swCheckChildFit(X1, Y1, X2, Y2) then      {!!.01}
+      RawWindow.AdjustWindow(X1, Y1, X2, Y2);
+    if NotC then
+      DeactivateWrite;
+  end;
+
+  procedure StackWindow.MoveWindow(DX, DY : Integer);
+    {-Move a window}
+  var
+    NotC : Boolean;
+    FX1 : Byte;
+    FX2 : Byte;
+    FY1 : Byte;
+    FY2 : Byte;
+  begin
+    if IsChild then begin                             {!!.01}
+      Error(epNonFatal+ecWinIsChild);                 {!!.01}
+      Exit;                                           {!!.01}
+    end;                                              {!!.01}
+    NotC := IsActive and (not IsCurrent or LongFlagIsSet(wFlags, wHasChildren)); {!!.01}
+    ClearErrors;                                      {!!.01}
+    if NotC then begin
+      ActivateWrite;
+      if RawError <> 0 then                           {!!.01}
+        Exit;
+    end;
+    if rwValidCoords(wXL+DX, wYL+DY, wXH+DX, wYH+DY,  {!!.01}
+                     FX1, FY1, FX2, FY2) then         {!!.01}
+      if swMoveChildWindows(DX, DY) then              {!!.01}
+        RawWindow.MoveWindow(DX, DY);
+    if NotC then
+      DeactivateWrite;
+  end;
+
+  procedure StackWindow.ResizeWindow(DX, DY : Integer);
+    {-Resize a window}
+  var
+    NotC : Boolean;
+  begin
+    if IsChild then begin                             {!!.01}
+      Error(epNonFatal+ecWinIsChild);                 {!!.01}
+      Exit;                                           {!!.01}
+    end;                                              {!!.01}
+    NotC := IsActive and not IsCurrent;
+    ClearErrors;                                      {!!.01}
+    if NotC then begin
+      ActivateWrite;
+      if RawError <> 0 then                           {!!.01}
+        Exit;
+    end;
+    if swCheckChildFit(wXL, wYL, wXH+DX, wYH+DY) then {!!.01}
+      RawWindow.ResizeWindow(DX, DY);
+    if NotC then
+      DeactivateWrite;
+  end;
+
+  procedure StackWindow.Zoom;
+    {-Increase window size to specified limits temporarily}
+  var
+    NotC : Boolean;
+    X1 : Byte;
+    Y1 : Byte;
+    X2 : Byte;
+    Y2 : Byte;
+  begin
+    if IsChild then begin                             {!!.01}
+      Error(epNonFatal+ecWinIsChild);                 {!!.01}
+      Exit;                                           {!!.01}
+    end;                                              {!!.01}
+    NotC := IsActive and not IsCurrent;
+    ClearErrors;                                      {!!.01}
+    if NotC then begin
+      ActivateWrite;
+      if RawError <> 0 then                           {!!.01}
+        Exit;
+    end;
+    if rwValidZoomCoords(X1, Y1, X2, Y2) then         {!!.01}
+      if swCheckChildFit(X1, Y1, X2, Y2) then         {!!.01}
+        RawWindow.Zoom;
+    if NotC then
+      DeactivateWrite;
+  end;
+
+  procedure StackWindow.Unzoom;
+    {-Return zoomed window to original size}
+  var
+    NotC : Boolean;
+  begin
+    if IsChild then begin                             {!!.01}
+      Error(epNonFatal+ecWinIsChild);                 {!!.01}
+      Exit;                                           {!!.01}
+    end;                                              {!!.01}
+    NotC := IsActive and not IsCurrent;
+    ClearErrors;                                      {!!.01}
+    if NotC then begin
+      ActivateWrite;
+      if RawError <> 0 then                           {!!.01}
+        Exit;
+    end;
+    if swCheckChildFit(wzXL, wzYL, wzXH, wzYH) then   {!!.01}
+      RawWindow.Unzoom;
+    if NotC then
+      DeactivateWrite;
+  end;
+  {$ENDIF}
+
+  procedure StackWindow.ScrollHoriz(Cols : Integer);
+    {-Scroll contents horizontally}
+  begin
+    if swPrepWrite then begin
+      with NowCurrent^ do
+        rwScrollHorizPart(Cols, wXH);
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.ScrollVert(Rows : Integer);
+    {-Scroll contents vertically}
+  begin
+    if swPrepWrite then begin
+      NowCurrent^.rwScrollVert(Rows);
+      swUnprepWrite;
+    end;
+  end;
+
+  {$IFDEF UseScrollBars}
+  procedure StackWindow.DrawAllSliders(HorizVal, VertVal : LongInt);
+    {-Draw or update all sliders}
+  begin
+    if swPrepWrite then begin
+      with NowCurrent^ do begin
+        DrawSlider(frTT, HorizVal);
+        DrawSlider(frBB, HorizVal);
+        DrawSlider(frLL, VertVal);
+        DrawSlider(frRR, VertVal);
+      end;
+      swUnprepWrite;
+    end;
+  end;
+
+  procedure StackWindow.ChangeAllScrollBars(MinHoriz, MaxHoriz : LongInt;
+                                            MinVert, MaxVert : LongInt);
+    {-Change user ranges of existing scroll bars. Erases sliders}
+  begin
+    if swPrepWrite then begin
+      with NowCurrent^ do begin
+        ChangeScrollBar(frTT, MinHoriz, MaxHoriz);
+        ChangeScrollBar(frBB, MinHoriz, MaxHoriz);
+        ChangeScrollBar(frLL, MinVert, MaxVert);
+        ChangeScrollBar(frRR, MinVert, MaxVert);
+      end;
+      swUnprepWrite;
+    end;
+  end;
+  {$ENDIF}
+
+{$IFDEF UseStreams}
+
+  constructor StackWindow.Load(var S : IdStream);
+    {-Load from stream}
+  begin
+    {No child list initially}  {!!.01}
+    wChildList := nil;         {!!.01}
+    wActiveChild := nil;       {!!.01}
+    {No parent by default}     {!!.01}
+    wParentPtr := nil;         {!!.01}
+
+    {Raw window loader does most of what we need}
+    if not RawWindow.Load(S) then
+      Fail;
+
+    S.Read(wNumber, SizeOf(wNumber));
+    @wStackProc := S.ReadUserPointer(@DefaultStackProc);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+
+    {Use default window stack}
+    wActiveStack := @wStack;
+
+    {Load child list, if any}                         {!!.01}
+    if LongFlagIsSet(wFlags, wHasChildren) then begin {!!.01}
+      New(wChildList, Load(S));
+      if wChildList = nil then begin
+        Done;
+        Fail;
+      end;
+      {Scan child list and connect parent pointers}
+      swLinkToParent;
+    end; {!!.01}
+  end;
+
+  procedure StackWindow.Store(var S : IdStream);
+    {-Store to stream}
+  begin
+    if wChildList <> nil then                         {!!.01}
+      SetLongFlag(wFlags, wHasChildren)               {!!.01}
+    else                                              {!!.01}
+      ClearLongFlag(wFlags, wHasChildren);            {!!.01}
+    {Store the raw window}
+    RawWindow.Store(S);
+    {Store fixed data about the stacked window}
+    S.Write(wNumber, SizeOf(wNumber));
+    {Store the pointer to the user stack procedure}
+    S.WriteUserPointer(@wStackProc, ptDefaultStackProc);
+    {Store the list of child windows}
+    if wChildList <> nil then                         {!!.01}
+      wChildList^.Store(S);                           {!!.01}
+  end;
+
+  procedure StackWindowStream(SPtr : IdStreamPtr);
+    {-Register all types needed for streams containing stacked windows}
+  begin
+    RawWindowStream(SPtr);
+    with SPtr^ do begin
+      RegisterType(otStackWindow, veStackWindow,
+                   TypeOf(StackWindow), @StackWindow.Store, @StackWindow.Load);
+      RegisterType(otStackWindowListNode,             {!!.01}
+                   veStackWindowListNode,             {!!.01}
+                   TypeOf(StackWindowListNode),       {!!.01}
+                   @StackWindowListNode.Store,        {!!.01}
+                   @StackWindowListNode.Load);        {!!.01}
+      RegisterPointer(ptDefaultStackProc, @DefaultStackProc);
+    end;
+  end;
+
+{$ENDIF}

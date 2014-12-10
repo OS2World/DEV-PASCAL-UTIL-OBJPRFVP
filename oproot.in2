@@ -1,0 +1,2080 @@
+{*********************************************************}
+{*                   OPROOT.IN2 1.30                     *}
+{*     Copyright (c) TurboPower Software 1989, 1992.     *}
+{*                 All rights reserved.                  *}
+{*********************************************************}
+
+  constructor PointerStack.Init(Max : Word);
+    {-Allocate a stack of pointers that can manage up to Max items}
+  begin
+    psBase := nil;
+    if not Root.Init then
+      Fail;
+    if Max <> 0 then
+      if Max > MaxStackSize then begin
+        Done;
+        InitStatus := epFatal+ecBadParam;
+        Fail;
+      end else if not GetMemCheck(psBase, Max*SizeOf(RootPtr)) then begin
+        Done;
+        InitStatus := epFatal+ecOutOfMemory;
+        Fail;
+      end;
+    FillChar(psBase^, Max*SizeOf(RootPtr), 0); {!!.14}
+    psSize := Max;
+    psTop := 0;
+    psStatus := 0;
+  end;
+
+  destructor PointerStack.Done;
+    {-Deallocate the stack}
+  begin
+    FreeMemCheck(psBase, psSize*SizeOf(RootPtr));
+    psSize := 0;
+    psTop := 0;
+    Root.Done;
+  end;
+
+  function PointerStack.Resize(Max : Word) : Boolean;
+    {-Change the size of the stack and copy existing contents to the new}
+  var
+    CopyItems : Word;
+    P : PointerArrayPtr;
+  begin
+    Resize := False;
+
+    if Max > MaxStackSize then begin  {!!.21}
+      Error(epFatal+ecBadParam);      {!!.21}
+      Exit;                           {!!.21}
+    end;                              {!!.21}
+
+    P := nil; {!!.20}
+    if Max <> 0 then begin
+      {Allocate new stack}
+      if not GetMemCheck(P, Max*SizeOf(RootPtr)) then begin
+        Error(epFatal+ecOutOfMemory);
+        Exit;
+      end;
+      FillChar(P^, Max*SizeOf(RootPtr), 0);
+    end;
+
+    {Copy old contents}
+    if psTop > Max then
+      psTop := Max;
+    if (psBase <> nil) and (psTop > 0) then
+      move(psBase^, P^, psTop*SizeOf(RootPtr));
+
+    {Free old stack and update object data fields}
+    if psBase <> nil then
+      FreeMemCheck(psBase, psSize*SizeOf(RootPtr));
+    psBase := P;
+    psSize := Max;
+
+    Resize := True;
+  end;
+
+  function PointerStack.GetStatus : Word;
+    {-Return latest status code and reset internal status to zero}
+  begin
+    GetStatus := psStatus;
+    psStatus := 0;
+  end;
+
+  function PointerStack.Size : Word;
+    {-Return the size of the stack}
+  begin
+    Size := psSize;
+  end;
+
+  procedure PointerStack.Push(P : RootPtr);
+    {-Push P onto the stack}
+  var
+    NewSize : Word;
+  begin
+    if psTop >= psSize then begin
+      {Resize stack}
+      if psSize = 0 then
+        NewSize := InitStackSize
+      else if psSize >= MaxStackSize then begin     {!!.21}
+        Error(epNonFatal+ecBadParam);               {!!.21}
+        Exit;                                       {!!.21}
+      end else if psSize >= MaxStackSize div 2 then {!!.21}
+        NewSize := MaxStackSize
+      else
+        NewSize := 2*psSize;
+      if not Resize(NewSize) then
+        Exit;
+    end;
+    inc(psTop);
+    psBase^[psTop] := P;
+  end;
+
+  function PointerStack.Pop : RootPtr;
+    {-Pop the topmost RootPtr off the stack}
+  begin
+    if psTop = 0 then
+      Pop := nil
+    else begin
+      Pop := psBase^[psTop];
+      dec(psTop);
+    end;
+  end;
+
+  function PointerStack.SP : Word;
+    {-Return the current top of stack index}
+  begin
+    SP := psTop;
+  end;
+
+  function PointerStack.Peek(Index : Word) : RootPtr;
+    {-Return Base^[Index]}
+  begin
+    if (Index = 0) or (Index > psSize) then
+      Peek := nil
+    else
+      Peek := psBase^[Index];
+  end;
+
+  function PointerStack.PeekTop : RootPtr;
+    {-Return RootPtr at top of stack}
+  begin
+    if psTop = 0 then
+      PeekTop := nil
+    else
+      PeekTop := psBase^[psTop];
+  end;
+
+  procedure PointerStack.Poke(P : RootPtr; Index : Word);
+    {-Directly set a stack element}
+  begin
+    if (Index > 0) and (Index <= psSize) then
+      psBase^[Index] := P;
+  end;
+
+  procedure PointerStack.Clear;
+    {-Remove all elements from the stack}
+  begin
+    psTop := 0;
+  end;
+
+  procedure PointerStack.Error(Code : Word);
+    {-Assign error code}
+  begin
+    psStatus := Code;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor PointerStack.Load(var S : IdStream);
+    {-Load a list from a stream}
+  var
+    I : Word;
+    Top : Word;
+    P : RootPtr;
+  begin
+    psBase := nil;
+    if not Root.Init then
+      Fail;
+    S.Read(psSize, SizeOf(Word));
+    S.Read(Top, SizeOf(Word));
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+    if not GetMemCheck(psBase, psSize*SizeOf(RootPtr)) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+    FillChar(psBase^, psSize*SizeOf(RootPtr), 0); {!!.20}
+    psTop := 0;
+    psStatus := 0;
+    for I := 1 to Top do begin
+      P := S.GetPtr;
+      if S.PeekStatus <> 0 then begin
+        Done;
+        Fail;
+      end;
+      Push(P);
+    end;
+  end;
+
+  procedure PointerStack.Store(var S : IdStream);
+    {-Store a list in a stream}
+  var
+    I : Word;
+  begin
+    {Write size and top of stack}
+    S.Write(psSize, SizeOf(Word));
+    S.Write(psTop, SizeOf(Word));
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Write contents of stack}
+    for I := 1 to psTop do begin
+      S.PutPtr(Peek(I));
+      if S.PeekStatus <> 0 then
+        Exit;
+    end;
+  end;
+
+{$ENDIF}
+
+  {---------------------------------------------------------------------}
+
+  constructor StaticQueue.Init(NumElements, ElementSize : Word;
+                               RejectIfFull : Boolean);
+    {-Allocate space for static queue}
+  begin
+    sqSize := 0;
+    sqBase := nil;
+    if not Root.Init then
+      Fail;
+    if NumElements <> 0 then begin
+      if (ElementSize = 0) or
+         (LongInt(NumElements)*ElementSize > 65521) then begin
+        Done;
+        InitStatus := epFatal+ecBadParam;
+        Fail;
+      end;
+      sqSize := NumElements*ElementSize;
+      if not GetMemCheck(sqBase, sqSize) then begin
+        Done;
+        InitStatus := epFatal+ecOutOfMemory;
+        Fail;
+      end;
+    end;
+    sqHead := 0;
+    sqTail := 0;
+    sqElSize := ElementSize;
+    sqStatus := 0;
+    sqReject := RejectIfFull;
+  end;
+
+  destructor StaticQueue.Done;
+    {-Deallocate space for the queue}
+  begin
+    FreeMemCheck(sqBase, sqSize);
+    Root.Done;
+  end;
+
+  procedure StaticQueue.PushTail(var Element);
+    {-Add an element to the tail of the queue}
+  begin
+    sqStatus := 0;
+    sqInc(sqTail);
+    if sqTail = sqHead then
+      {Queue is full}
+      if sqReject then begin
+        {Reject new element and leave queue as is}
+        Error(epNonFatal+ecQueueFull);
+        sqDec(sqTail);
+        Exit;
+      end else
+        {Add new element and throw away element at head}
+        sqInc(sqHead);
+    move(Element, sqBase^[sqTail], sqElSize);
+  end;
+
+  procedure StaticQueue.PopTail(var Element);
+    {-Remove an element from the tail of the queue}
+  begin
+    PeekTail(Element);
+    if sqStatus = 0 then
+      sqDec(sqTail);
+  end;
+
+  procedure StaticQueue.PushHead(var Element); {!!.02} {!!.12 Rewritten}
+    {-Add an element to the head of the queue}
+  var
+    Head : Word;
+  begin
+    sqStatus := 0;
+    Head := sqHead;
+    sqDec(sqHead);
+    if sqTail = sqHead then
+      {Queue is full}
+      if sqReject then begin
+        {Reject new element and leave queue as is}
+        sqHead := Head;
+        Error(epNonFatal+ecQueueFull);
+        Exit;
+      end else
+        {Add new element and throw away element at tail}
+        sqDec(sqTail);
+    move(Element, sqBase^[Head], sqElSize);
+  end;
+
+  procedure StaticQueue.PeekTail(var Element);
+    {-Look at the element at the tail of the queue}
+  begin
+    if sqTail = sqHead then begin
+      {Queue is empty}
+      Error(epNonFatal+ecQueueEmpty);
+      FillChar(Element, sqElSize, 0);
+      Exit;
+    end;
+    sqStatus := 0;
+    move(sqBase^[sqTail], Element, sqElSize);
+  end;
+
+  procedure StaticQueue.PopHead(var Element);
+    {-Remove an element from the front of the queue}
+  begin
+    if sqTail = sqHead then begin
+      {Queue is empty}
+      Error(epNonFatal+ecQueueEmpty);
+      FillChar(Element, sqElSize, 0);
+      Exit;
+    end;
+    sqStatus := 0;
+    sqInc(sqHead);
+    move(sqBase^[sqHead], Element, sqElSize);
+  end;
+
+  procedure StaticQueue.PeekHead(var Element);
+    {-Look at the element at the front of the queue}
+  begin
+    PopHead(Element);
+    if sqStatus = 0 then
+      sqDec(sqHead);
+  end;
+
+  procedure StaticQueue.Clear;
+    {-Flush all elements from the queue}
+  begin
+    sqHead := 0;
+    sqTail := 0;
+    sqStatus := 0;
+  end;
+
+  function StaticQueue.Elements : Word;
+    {-Return the number of elements currently in the queue}
+  var
+    Cnt : LongInt;
+  begin
+    Cnt := LongInt(sqTail)-sqHead;
+    if Cnt < 0 then
+      inc(Cnt, sqSize);
+    Elements := Cnt div sqElSize;
+  end;
+
+  function StaticQueue.Nth(W : Word) : Pointer;                       {!!.13}
+    {-Returns a pointer to the Nth item in the Queue}
+  var
+    Indx : LongInt;
+  begin
+    if (W < 1) or (W > Elements) then
+      Nth := nil
+    else begin
+      Indx := LongInt(sqTail) - (W - 1) * sqElSize;
+      if Indx < 0 then
+        Inc(Indx, sqSize);
+      Nth := @sqBase^[Indx];
+    end;
+  end;
+
+  function StaticQueue.GetStatus : Word;
+    {-Return latest status code and reset internal status to zero}
+  begin
+    GetStatus := sqStatus;
+    sqStatus := 0;
+  end;
+
+  procedure StaticQueue.Error(Code : Word);
+    {-Assign error code}
+  begin
+    sqStatus := Code;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor StaticQueue.Load(var S : IdStream);
+    {-Load a static queue from a stream}
+  var
+    Elems : Word;
+    E : Word;
+  begin
+    sqBase := nil;
+    if not Root.Init then
+      Fail;
+
+    {Load static properties}
+    S.ReadRange(sqElSize, sqBase);
+
+    {Allocate buffer area}
+    if not GetMemCheck(sqBase, sqSize) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+
+    sqHead := 0;
+    sqTail := 0;
+    sqStatus := 0;
+
+    {Read number of elements}
+    S.Read(Elems, SizeOf(Word));
+
+    {Read elements}
+    for E := 1 to Elems do begin
+      sqInc(sqTail);
+      S.Read(sqBase^[sqTail], sqElSize);
+    end;
+
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure StaticQueue.Store(var S : IdStream);
+    {-Store a static queue to a stream}
+  var
+    Elems : Word;
+    E : Word;
+    HP : Word;
+  begin
+    {Store static properties}
+    S.WriteRange(sqElSize, sqBase);
+
+    {Store the number of elements in use}
+    Elems := Elements;
+    S.Write(Elems, SizeOf(Word));
+    if S.PeekStatus <> 0 then
+      Exit;
+
+    {Store the elements}
+    HP := sqHead;
+    for E := 1 to Elems do begin
+      sqInc(HP);
+      S.Write(sqBase^[HP], sqElSize);
+    end;
+  end;
+
+{$ENDIF}
+
+  procedure StaticQueue.sqInc(var SP : Word);
+    {-Increment head or tail offset}
+  begin
+    inc(SP, sqElSize);
+    if SP >= sqSize then
+      SP := 0;
+  end;
+
+  procedure StaticQueue.sqDec(var SP : Word);
+    {-Decrement head or tail offset}
+  begin
+    if SP = 0 then
+      SP := sqSize;
+    dec(SP, sqElSize);
+  end;
+
+  {---------------------------------------------------------------------}
+
+  constructor SingleListNode.Init;
+    {-Create a node in a singly-linked list}
+  begin
+    if not Root.Init then
+      Fail;
+    slNext := nil;
+  end;
+
+  {---------------------------------------------------------------------}
+
+  constructor SingleList.Init;
+    {-Initialize an empty list of items}
+  begin
+    slHead := nil;
+    slTail := nil;                                        {!!.13}
+    slSize := 0;
+    if not Root.Init then
+      Fail;
+  end;
+
+  destructor SingleList.Done;  {!!.20 - Modified to use new Clear method}
+    {-Destroy list of items}
+  begin
+    Clear;
+    Root.Done;
+  end;
+
+  procedure SingleList.Clear;  {!!.20 - Added}
+    {-Clear list of items}
+  var
+    P : SingleNodePtr;
+    N : SingleNodePtr;
+  begin
+    P := slHead;
+    while P <> nil do begin
+      {Get pointer to next node}
+      N := P^.slNext;
+{$IFDEF Dpmi}                                          {!!.20}
+      Dispose(P, Done);                                {!!.20}
+{$ELSE}                                                {!!.20}
+  {$IFDEF VIRTUALPASCAL}
+      Dispose(P, Done);
+  {$ELSE}
+      if OS(P).S >= OS(HeapOrg).S then
+        {Deallocate and destroy this node}
+        Dispose(P, Done)
+      else
+        {Just destroy it since it's not a heap variable}
+        P^.Done;
+  {$ENDIF VIRTUALPASCAL}
+{$ENDIF}                                               {!!.20}
+      P := N;
+    end;
+    slHead := nil;
+    slTail := nil;
+    slSize := 0;
+  end;
+
+  {!!.30 - New}
+  procedure SingleList.Reset;
+    {-Clear list without disposing of items }
+  begin
+    slHead := nil;
+    slTail := nil;
+    slSize := 0;
+  end;
+
+  function SingleList.Size : LongInt; {!!.21}
+    {-Return the size of the current List}
+  begin
+    Size := slSize;
+  end;
+
+  procedure SingleList.Append(P : SingleNodePtr);
+    {-Add element to end of list}
+  begin
+    {Exit for bad input}
+    if P = nil then
+      Exit;
+    if slHead = nil then
+      slHead := P
+    else
+      slTail^.slNext := P;
+    P^.slNext := nil;
+    slTail := P;                                                   {!!.13}
+    inc(slSize);
+  end;
+
+  procedure SingleList.Insert(P : SingleNodePtr);
+    {-Insert element at start of list}
+  begin
+    {Exit for bad input}
+    if P = nil then
+      Exit;
+    P^.slNext := slHead;
+    if slTail = nil then                                            {!!.13}
+      slTail := P;                                                  {!!.13}
+    slHead := P;
+    inc(slSize);
+  end;
+
+  procedure SingleList.Place(P, L : SingleNodePtr);
+    {-Place element P into list _after_ existing element L}
+  begin
+    {Exit for bad input}
+    if (P = nil) or (P = L) then
+      Exit;
+    if L = nil then
+      Insert(P)
+    else if L = slTail then
+      Append(P)
+    else begin
+      P^.slNext := L^.slNext;
+      L^.slNext := P;
+      inc(slSize);
+    end;
+  end;
+
+  procedure SingleList.PlaceBefore(P, L : SingleNodePtr);
+    {-Place element P into list _before_ existing element L}
+  var
+    Prev : SingleNodePtr;
+  begin
+    {Exit for bad input}
+    if (P = nil) or (P = L) then
+      Exit;
+    if (L = nil) or (L = Head) then
+      {Make P the first node}
+      Insert(P)
+    else begin
+      {Find previous node}
+      Prev := Head;
+      while (Prev <> nil) and (Prev^.slNext <> L) do
+        Prev := Prev^.slNext;
+      {Exit if pointer not found}
+      if Prev = nil then
+        Exit;
+      {Patch in the new node}
+      P^.slNext := L;
+      Prev^.slNext := P;
+      inc(slSize);
+    end;
+  end;
+
+  procedure SingleList.slRemove(P : SingleNodePtr; DisposeIt : Boolean);
+    {-Remove existing element from list and optionally dispose it}
+  var
+    This : SingleNodePtr;
+    Prev : SingleNodePtr;
+  begin
+    {Exit for bad input}
+    if P = nil then
+      Exit;
+    {Find the node in the list}
+    This := P;
+    Prev := slHead;
+    if Prev = This then begin
+      {First element in list}
+      slHead := slHead^.slNext;
+      if Prev = slTail then                                          {!!.14}
+        {only item in list}                                          {!!.14}
+        slTail := nil;                                               {!!.14}
+    end
+    else begin
+      while (Prev <> nil) and (Prev^.slNext <> This) do
+        Prev := Prev^.slNext;
+      {Exit if pointer not found}
+      if Prev = nil then
+        Exit;
+      {Patch around the deleted node}
+      Prev^.slNext := This^.slNext;
+      if This = slTail then                                          {!!.14}
+        slTail := Prev;                                              {!!.14}
+    end;
+    if DisposeIt then
+      {Dispose of the node itself}
+      Dispose(This, Done);
+    dec(slSize);
+  end;
+
+  procedure SingleList.Remove(P : SingleNodePtr);
+    {-Remove existing element from list without disposing of it}
+  begin
+    slRemove(P, False);
+  end;
+
+  procedure SingleList.Delete(P : SingleNodePtr);
+    {-Delete existing element in list}
+  begin
+    slRemove(P, True);
+  end;
+
+  function SingleList.Head : SingleNodePtr;
+    {-Return pointer to head of list}
+  begin
+    Head := slHead;
+  end;
+
+  function SingleList.Tail : SingleNodePtr;
+    {-Return pointer to tail of list}
+  begin
+    Tail := slTail;                                                 {!!.14}
+  end;
+
+  function SingleList.Next(P : SingleNodePtr) : SingleNodePtr;
+    {-Return pointer to next node in singly linked list}
+  begin
+    Next := P^.slNext;
+  end;
+
+  function SingleList.Nth(N : LongInt) : SingleNodePtr; {!!.03}
+    {-Returns pointer to Nth node in list, starting at 1; nil if N > Size}
+  var
+    I : LongInt;
+    P : SingleNodePtr;
+  begin
+    if N <= 0 then
+      Nth := nil
+    else begin
+      P := slHead;
+      for I := 2 to N do
+        if P = nil then begin
+          Nth := nil;
+          Exit;
+        end else
+          P := P^.slNext;
+      Nth := P;
+    end;
+  end;
+
+  function SingleList.Posn(P : SingleNodePtr) : LongInt;  {!!.13}
+    {-Returns ordinal position in the list of P; 0 if not in list}
+  var
+    I : LongInt;
+    N : SingleNodePtr;
+  begin
+    if P = nil then
+      Posn := 0
+    else begin
+      I := 1;
+      N := slHead;
+      while N <> nil do begin
+        if P = N then begin
+          Posn := I;
+          exit;
+        end;
+        Inc(I);
+        N := N^.slNext;
+      end;
+      Posn := 0;
+    end;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor SingleList.Load(var S : IdStream);
+    {-Load a list from a stream}
+  var
+    P : SingleNodePtr;
+  begin
+    if not SingleList.Init then
+      Fail;
+    P := SingleNodePtr(S.GetPtr);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+    while P <> nil do begin
+      Append(P);
+      P := SingleNodePtr(S.GetPtr);
+      if S.PeekStatus <> 0 then begin
+        Done;
+        Fail;
+      end;
+    end;
+  end;
+
+  procedure SingleList.Store(var S : IdStream);
+    {-Store a list in a stream}
+ var
+    P : SingleNodePtr;
+  begin
+    P := Head;
+    while P <> nil do begin
+      S.PutPtr(P);
+      if S.PeekStatus <> 0 then
+        Exit;
+      P := Next(P);
+    end;
+    S.PutPtr(nil);
+  end;
+
+{$ENDIF}
+
+  {---------------------------------------------------------------------}
+
+  constructor DoubleListNode.Init;
+    {-Called when node is created}
+  begin
+    if not Root.Init then
+      Fail;
+    dlNext := nil;
+    dlPrev := nil;
+  end;
+
+  constructor DoubleList.Init;
+    {-Initialize an empty list}
+  begin
+    dlHead := nil;
+    dlTail := nil;
+    dlSize := 0;
+    if not Root.Init then
+      Fail;
+  end;
+
+  destructor DoubleList.Done;  {!!.20 - Modified to use new Clear method}
+    {-Destroy a list}
+  begin
+    Clear;
+    Root.Done;
+  end;
+
+  procedure DoubleList.Clear;  {!!.20 - Added}
+    {-Destroy a list}
+  var
+    N : DoubleNodePtr;
+    P : DoubleNodePtr;
+  begin
+    N := dlTail;
+    while N <> nil do begin
+      {Get DoubleNodePtr to previous node}
+      P := N^.dlPrev;
+{$IFDEF Dpmi}                                             {!!.20}
+      Dispose(N, Done);                                   {!!.20}
+{$ELSE}                                                   {!!.20}
+  {$IFDEF VIRTUALPASCAL}
+      If n <> nil then
+        Dispose(n, Done);
+  {$ELSE}
+      if OS(N).S >= OS(HeapOrg).S then                    {!!.03}
+        {Deallocate and destroy this node}
+        Dispose(N, Done)
+      else                                                {!!.03}
+        {Just destroy it since it's not a heap variable}  {!!.03}
+        N^.Done;                                          {!!.03}
+      {Do the previous node}
+  {$ENDIF VIRTUALPASCAL}
+{$ENDIF}                                                  {!!.20}
+      N := P;
+    end;
+    dlTail := nil;
+    dlHead := nil;
+    dlSize := 0;
+  end;
+
+  {!!.30 - New }
+  procedure DoubleList.Reset;
+    {-Clear list without disposing of items }
+  begin
+    dlHead := nil;
+    dlTail := nil;
+    dlSize := 0;
+  end;
+
+  function DoubleList.Size : LongInt; {!!.21}
+    {-Return the size of the current List}
+  begin
+    Size := dlSize;
+  end;
+
+  procedure DoubleList.Append(P : DoubleNodePtr);
+    {-Add element to end of list}
+  begin
+    {Exit for bad input}
+    if P = nil then
+      Exit;
+    P^.dlPrev := dlTail;
+    P^.dlNext := nil;
+    if dlHead = nil then begin
+      {Special case for first node}
+      dlHead := P;
+      dlTail := P;
+    end else begin
+      {Add at end of existing list}
+      dlTail^.dlNext := P;
+      dlTail := P;
+    end;
+    Inc(dlSize);
+  end;
+
+  procedure DoubleList.Insert(P : DoubleNodePtr);
+    {-Insert element at start of list}
+  begin
+    {Exit for bad input}
+    if P = nil then
+      Exit;
+    P^.dlPrev := nil;
+    P^.dlNext := dlHead;
+    if dlHead = nil then
+      {Special case for first node}
+      dlTail := P
+    else
+      {Add at start of existing list}
+      dlHead^.dlPrev := P;
+    dlHead := P;
+    Inc(dlSize);
+  end;
+
+  procedure DoubleList.Place(P : DoubleNodePtr; L : DoubleNodePtr);
+    {-Place element P into list _after_ existing element L}
+  begin
+    {Exit for bad input}
+    if (P = nil) or (P = L) then
+      Exit;
+    if L = nil then
+      Insert(P)
+    else if L = dlTail then
+      Append(P)
+    else begin
+      P^.dlPrev := L;
+      P^.dlNext := L^.dlNext;
+      L^.dlNext^.dlPrev := P;
+      L^.dlNext := P;
+      Inc(dlSize);
+    end;
+  end;
+
+  procedure DoubleList.PlaceBefore(P, L : DoubleNodePtr);
+    {-Place element P into list _before_ existing element L}
+  begin
+    {Exit for bad input}
+    if (P = nil) or (P = L) then
+      Exit;
+    if (L = nil) or (L = Head) then
+      {Place the new element at the start of the list}
+      Insert(P)
+    else begin
+      {Patch in the new element}
+      P^.dlNext := L;
+      P^.dlPrev := L^.dlPrev;
+      L^.dlPrev^.dlNext := P;
+      L^.dlPrev := P;
+      Inc(dlSize);
+    end;
+  end;
+
+  procedure DoubleList.dlRemove(P : DoubleNodePtr; DisposeIt : Boolean);
+    {-Delete existing node from list, optionally disposing of it}
+  var
+    This : DoubleNodePtr;
+  begin
+    {Exit for bad input}
+    if (P = nil) or (dlSize = 0) then
+      Exit;
+
+    This := P;
+    with This^ do begin
+      {Fix pointers of surrounding nodes}
+      if dlNext <> nil then
+        dlNext^.dlPrev := dlPrev;
+      if dlPrev <> nil then
+        dlPrev^.dlNext := dlNext;
+    end;
+
+    {Fix head and tail of list}
+    if dlTail = This then
+      dlTail := dlTail^.dlPrev;
+    if dlHead = This then
+      dlHead := dlHead^.dlNext;
+
+    Dec(dlSize);
+
+    if DisposeIt then
+      {Dispose of the node}
+      Dispose(This, Done);
+  end;
+
+  procedure DoubleList.Remove(P : DoubleNodePtr);
+    {-Remove existing element from list without disposing of it}
+  begin
+    dlRemove(P, False);
+  end;
+
+  procedure DoubleList.Delete(P : DoubleNodePtr);
+    {-Delete an existing node, disposing of its contents}
+  begin
+    dlRemove(P, True);
+  end;
+
+  function DoubleList.Head : DoubleNodePtr;
+    {-Return DoubleNodePtr to head of list}
+  begin
+    Head := dlHead;
+  end;
+
+  function DoubleList.Tail : DoubleNodePtr;
+    {-Return DoubleNodePtr to tail of list}
+  begin
+    Tail := dlTail;
+  end;
+
+  function DoubleList.Next(P : DoubleNodePtr) : DoubleNodePtr;
+    {-Returns a DoubleNodePtr to the next node}
+  begin
+    Next := P^.dlNext;
+  end;
+
+  function DoubleList.Prev(P : DoubleNodePtr) : DoubleNodePtr;
+    {-Returns a DoubleNodePtr to the previous node}
+  begin
+    Prev := P^.dlPrev;
+  end;
+
+  function DoubleList.Nth(N : LongInt) : DoubleNodePtr; {!!.03}
+    {-Returns pointer to Nth node in list, starting at 1; nil if N > Size}
+  var
+    I : LongInt;
+    P : DoubleNodePtr;
+  begin
+    if N <= 0 then
+      Nth := nil
+    else begin
+      P := dlHead;
+      for I := 2 to N do
+        if P = nil then begin
+          Nth := nil;
+          Exit;
+        end else
+          P := P^.dlNext;
+      Nth := P;
+    end;
+  end;
+
+  function DoubleList.Posn(P : DoubleNodePtr) : LongInt;  {!!.13}
+    {-Returns ordinal position in the list of P; 0 if not in list}
+  var
+    I : LongInt;
+    N : DoubleNodePtr;
+  begin
+    if P = nil then
+      Posn := 0
+    else begin
+      I := 1;
+      N := dlHead;
+      while N <> nil do begin
+        if P = N then begin
+          Posn := I;
+          exit;
+        end;
+        Inc(I);
+        N := N^.dlNext;
+      end;
+      Posn := 0;
+    end;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor DoubleList.Load(var S : IdStream);
+    {-Load a list from a stream}
+  var
+    P : DoubleNodePtr;
+  begin
+    if not DoubleList.Init then
+      Fail;
+    P := DoubleNodePtr(S.GetPtr);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+    while P <> nil do begin
+      Append(P);
+      P := DoubleNodePtr(S.GetPtr);
+      if S.PeekStatus <> 0 then begin
+        Done;
+        Fail;
+      end;
+    end;
+  end;
+
+  procedure DoubleList.Store(var S : IdStream);
+    {-Store a list in a stream}
+  var
+    P : DoubleNodePtr;
+  begin
+    P := Head;
+    while P <> nil do begin
+      S.PutPtr(P);
+      if S.PeekStatus <> 0 then
+        Exit;
+      P := Next(P);
+    end;
+    S.PutPtr(nil);
+  end;
+
+{$ENDIF}
+
+  {---------------------------------------------------------------------}
+
+  function CircularList.Next(P : DoubleNodePtr) : DoubleNodePtr;
+    {-Returns a DoubleNodePtr to the next node}
+  var
+    N : DoubleNodePtr;
+  begin
+    N := P^.dlNext;
+    if N = nil then
+      Next := dlHead
+    else
+      Next := N;
+  end;
+
+  function CircularList.Prev(P : DoubleNodePtr) : DoubleNodePtr;
+    {-Returns a DoubleNodePtr to the previous node}
+  var
+    N : DoubleNodePtr;
+  begin
+    N := P^.dlPrev;
+    if N = nil then
+      Prev := dlTail
+    else
+      Prev := N;
+  end;
+
+{$IFDEF UseStreams}
+
+  procedure CircularList.Store(var S : IdStream);
+    {-Store a circular list in a stream}
+  var
+    P : DoubleNodePtr;
+  begin
+    P := Head;
+    if P <> nil then
+      repeat
+        S.PutPtr(P);
+        if S.PeekStatus <> 0 then
+          Exit;
+        P := Next(P);
+      until P = Head;
+    S.PutPtr(nil);
+  end;
+
+{$ENDIF}
+
+  {---------------------------------------------------------------------}
+
+  constructor BitSet.Init(Max : LongInt);
+    {-Allocate space for elements}
+  begin
+    biBase := nil;
+    biMax := Max;
+    if not Root.Init then
+      Fail;
+    if Max = 0 then
+      Exit;
+    if Max > MaxBitCount then begin
+      Done;
+      InitStatus := epFatal+ecBadParam;
+      Fail;
+    end;
+    if not GetMemCheck(biBase, (Max+8) shr 3) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+    ClearAll;
+  end;
+
+  destructor BitSet.Done;
+    {-Deallocate data area}
+  begin
+    FreeMemCheck(biBase, (biMax+8) shr 3);
+    Root.Done;
+  end;
+
+  procedure BitSet.ClearAll;
+    {-Clear all bits}
+  begin
+    FillChar(biBase^, (biMax+8) shr 3, 0);
+  end;
+
+  procedure BitSet.SetAll;
+    {-Set all bits}
+  begin
+    FillChar(biBase^, (biMax+8) shr 3, $FF);
+  end;
+
+  procedure BitSet.SetBit(Element : LongInt);
+    {-Set bit}
+  begin
+    if (Element >= 0) and (Element <= biMax) then
+      SetByteFlag(biBase^[Element shr 3], 1 shl (Element and 7));
+  end;
+
+  procedure BitSet.ClearBit(Element : LongInt);
+    {-Clear bit}
+  begin
+    if (Element >= 0) and (Element <= biMax) then
+      ClearByteFlag(biBase^[Element shr 3], 1 shl (Element and 7));
+  end;
+
+  procedure BitSet.ToggleBit(Element : LongInt);
+    {-Toggle bit}
+  begin
+    if BitIsSet(Element) then
+      ClearBit(Element)
+    else
+      SetBit(Element);
+  end;
+
+  procedure BitSet.ControlBit(Element : LongInt; State : Boolean);
+    {-Set or clear bit depending on State}
+  begin
+    if State then
+      SetBit(Element)
+    else
+      ClearBit(Element);
+  end;
+
+  function BitSet.TestSetBit(Element : LongInt) : Boolean;
+    {-Return current state of bit and set it}
+  begin
+    TestSetBit := BitIsSet(Element);
+    SetBit(Element);
+  end;
+
+  function BitSet.TestClearBit(Element : LongInt) : Boolean;
+    {-Return current state of bit and clear it}
+  begin
+    TestClearBit := BitIsSet(Element);
+    ClearBit(Element);
+  end;
+
+  function BitSet.BitIsSet(Element : LongInt) : Boolean;
+    {-Return True if bit is set}
+  begin
+    if (Element >= 0) and (Element <= biMax) then
+      BitIsSet := ByteFlagIsSet(biBase^[Element shr 3], 1 shl (Element and 7))
+    else
+      BitIsSet := False;
+  end;
+
+  function NextSetMac(BPtr : ByteArrayPtr; Element, Max : Word) : Word;
+    {-Return the next set element of B. No range checking}
+  {$IFDEF VIRTUALPASCAL}
+    assembler; {$FRAME-} {$USES ebx,ecx,edx,esi}
+    asm
+      mov    ecx,Max
+      mov    edx,Element
+      mov    esi,BPtr
+
+      mov    ebx,ecx
+      mov    eax,edx
+      shr    eax,3
+      add    esi,eax
+      mov    ah,1
+      mov    cl,dl
+      and    cl,7
+      rol    ah,cl
+      mov    ecx,ebx
+
+      cld
+      lodsb
+    @testbit:
+      test   al,ah
+      jnz    @done
+      inc    edx
+      cmp    edx,ecx
+      ja     @nomatch
+      rol    ah,1
+      jnc    @testbit
+    @newbyte:
+      lodsb
+      or     al,al
+      jnz    @testbit
+      add    edx,8
+      cmp    edx,ecx
+      jbe    @newbyte
+    @nomatch:
+      mov    edx,$FFFFFFFF
+    @done:
+      mov    eax,edx
+    end;
+  {$ELSE}
+  Inline(
+    $8C/$DF/               { mov di,ds    ;save ds}
+    $59/                   { pop cx       ;cx = Max element}
+    $5A/                   { pop dx       ;dx = Current element}
+    $5E/                   { pop si}
+    $1F/                   { pop ds       ;ds:si -> BPtr}
+                           {;set up byte array offset and initial bit mask}
+    $51/                   { push cx      ;save cx}                   {!!.20}
+    { $8E/$C1/}            { mov es,cx    ;save cx}                   {!!.20}
+    $89/$D0/               { mov ax,dx}
+    $B1/$03/               { mov cl,3}
+    $D3/$E8/               { shr ax,cl    ;ax = Element shr 3}
+    $01/$C6/               { add si,ax    ;ds:si -> byte to check}
+    $B4/$01/               { mov ah,1     ;bit mask}
+    $88/$D1/               { mov cl,dl}
+    $80/$E1/$07/           { and cl,7     ;cx = Element and 7}
+    $D2/$C4/               { rol ah,cl    ;ah = initial bit mask}
+    $59/                   { pop cx       ;restore cx}                {!!.20}
+    { $8C/$C1/}            { mov cx,es    ;restore cx}                {!!.20}
+    $FC/                   { cld          ;forward}
+    $AC/                   { lodsb        ;get first byte}
+                           {testbit:}
+    $84/$E0/               { test al,ah   ;is current bit set?}
+    $75/$18/               { jnz done     ;done if so}
+    $42/                   { inc dx       ;next element}
+    $39/$CA/               { cmp dx,cx    ;anything left to check?}
+    $77/$10/               { ja nomatch   ;jump if not}
+    $D0/$C4/               { rol ah,1     ;rotate bit mask}
+    $73/$F3/               { jnc testbit  ;jump if bits left in byte}
+                           {newbyte:}
+    $AC/                   { lodsb        ;get next byte}
+    $08/$C0/               { or al,al     ;any bits set?}
+    $75/$EE/               { jnz testbit  ;jump if so}
+    $83/$C2/$08/           { add dx,8     ;skipping 8 bits}
+    $39/$CA/               { cmp dx,cx    ;anything left to check?}
+    $76/$F4/               { jbe newbyte  ;jump if so}
+                           {nomatch:}
+    $BA/$FF/$FF/           { mov dx,$FFFF ;return $FFFF for no match}
+                           {done:}
+    $89/$D0/               { mov ax,dx    ;return element number}
+    $8E/$DF);              { mov ds,di    ;restore ds}
+  {$ENDIF VIRTUALPASCAL}
+
+  function BitSet.NextSet(Element : LongInt) : LongInt;
+    {-Return index of next element past the current one, NoMoreBits if none}
+  var
+    Next : Word;
+  begin
+    if Element >= biMax then
+      NextSet := NoMoreBits
+    else begin
+      if Element < 0 then begin   {!!.03}
+        if BitIsSet(0) then begin {!!.03}
+          NextSet := 0;           {!!.03}
+          Exit;                   {!!.03}
+        end;                      {!!.03}
+        Element := 0;
+      end;                        {!!.03}
+      Next := NextSetMac(biBase, Word(Element)+1, Word(biMax));
+      if Next = MinusOne then
+        NextSet := NoMoreBits
+      else
+        NextSet := Next;
+    end;
+  end;
+
+  function NextClearMac(BPtr : ByteArrayPtr; Element, Max : Word) : Word;
+    {-Return the next clear element of B}
+  {$IFDEF VIRTUALPASCAL}
+    assembler; {$FRAME-} {$USES ebx,ecx,edx,esi}
+    asm
+      mov    ecx,Max
+      mov    edx,Element
+      mov    esi,BPtr
+
+      mov    ebx,ecx
+      mov    eax,edx
+      shr    eax,3
+      add    esi,eax
+      mov    ah,1
+      mov    cl,dl
+      and    cl,7
+      rol    ah,cl
+      mov    ecx,ebx
+
+      cld
+      lodsb
+    @testbit:
+      test   al,ah
+      jz     @done         { Different from NextSetMac }
+      inc    edx
+      cmp    edx,ecx
+      ja     @nomatch
+      rol    ah,1
+      jnc    @testbit
+    @newbyte:
+      lodsb
+      cmp    al,$FF        { Different from NextSetMac }
+      jnz    @testbit
+      add    edx,8
+      cmp    edx,ecx
+      jbe    @newbyte
+    @nomatch:
+      mov    edx,$FFFFFFFF
+    @done:
+      mov    eax,edx
+    end;
+  {$ELSE}
+  Inline(
+    $8C/$DF/               { mov di,ds    ;save ds}
+    $59/                   { pop cx       ;cx = Max element}
+    $5A/                   { pop dx       ;dx = Current element}
+    $5E/                   { pop si}
+    $1F/                   { pop ds       ;ds:si -> BPtr}
+                           {;set up byte array offset and initial bit mask}
+    $51/                   { push cx}                                 {!!.20}
+    { $8E/$C1/}            { mov es,cx    ;save cx}                   {!!.20}
+    $89/$D0/               { mov ax,dx}
+    $B1/$03/               { mov cl,3}
+    $D3/$E8/               { shr ax,cl    ;ax = Element shr 3}
+    $01/$C6/               { add si,ax    ;ds:si -> byte to check}
+    $B4/$01/               { mov ah,1     ;bit mask}
+    $88/$D1/               { mov cl,dl}
+    $80/$E1/$07/           { and cl,7     ;cx = Element and 7}
+    $D2/$C4/               { rol ah,cl    ;ah = initial bit mask}
+    $59/                   { pop cx }                                  {!!.20}
+    { $8C/$C1/}            { mov cx,es    ;restore cx}                 {!!.20}
+    $FC/                   { cld          ;forward}
+    $AC/                   { lodsb        ;get first byte}
+                           {testbit:}
+    $84/$E0/               { test al,ah   ;is current bit set?}
+    $74/$18/               { jz done      ;done if not}
+    $42/                   { inc dx       ;next element}
+    $39/$CA/               { cmp dx,cx    ;anything left to check?}
+    $77/$10/               { ja nomatch   ;jump if not}
+    $D0/$C4/               { rol ah,1     ;rotate bit mask}
+    $73/$F3/               { jnc testbit  ;jump if bits left in byte}
+                           {newbyte:}
+    $AC/                   { lodsb        ;get next byte}
+    $3C/$FF/               { cmp al,$FF   ;any bits clear?}
+    $75/$EE/               { jnz testbit  ;jump if so}
+    $83/$C2/$08/           { add dx,8     ;skipping 8 bits}
+    $39/$CA/               { cmp dx,cx    ;anything left to check?}
+    $76/$F4/               { jbe newbyte  ;jump if so}
+                           {nomatch:}
+    $BA/$FF/$FF/           { mov dx,$FFFF ;return $FFFF for no match}
+                           {done:}
+    $89/$D0/               { mov ax,dx    ;return element number}
+    $8E/$DF);              { mov ds,di    ;restore ds}
+  {$ENDIF VIRTUALPASCAL}
+
+  function BitSet.NextClear(Element : LongInt) : LongInt;
+    {-Return index of next clear element past the current one, NoMoreBits if none}
+  var
+    Next : Word;
+  begin
+    if Element >= biMax then
+      NextClear := NoMoreBits
+    else begin
+      if Element < 0 then begin       {!!.03}
+        if not BitIsSet(0) then begin {!!.03}
+          NextClear := 0;             {!!.03}
+          Exit;                       {!!.03}
+        end;                          {!!.03}
+        Element := 0;
+      end;                            {!!.03}
+      Next := NextClearMac(biBase, Word(Element)+1, Word(biMax));
+      if Next = MinusOne then
+        NextClear := NoMoreBits
+      else
+        NextClear := Next;
+    end;
+  end;
+
+  function PrevSetMac(BPtr : ByteArrayPtr; Element : Word) : Word;
+    {-Return the previous set element of B. No range checking}
+  {$IFDEF VIRTUALPASCAL}
+    assembler; {$FRAME-} {$USES ebx,ecx,esi}
+    asm
+      mov    edx,Element
+      mov    esi,BPtr
+
+      mov    eax,edx
+      shr    eax,3
+      add    esi,eax
+      mov    ah,1
+      mov    cl,dl
+      and    cl,7
+      rol    ah,cl
+      std
+      lodsb
+    @testbit:
+      test   al,ah
+      jnz    @done
+      sub    edx,1
+      jc     @nomatch
+      ror    ah,1
+      jnc    @testbit
+    @newbyte:
+      lodsb
+      or     al,al
+      jnz    @testbit
+      sub    edx,8
+      jnc    @newbyte
+    @nomatch:
+      mov    edx,$FFFFFFFF
+    @done:
+      mov    eax,edx
+      cld
+    end;
+  {$ELSE}
+  Inline(
+    $8C/$DF/               { mov di,ds    ;save ds}
+    $5A/                   { pop dx       ;dx = Current element}
+    $5E/                   { pop si}
+    $1F/                   { pop ds       ;ds:si -> BPtr}
+                           {;set up byte array offset and initial bit mask}
+    $89/$D0/               { mov ax,dx}
+    $B1/$03/               { mov cl,3}
+    $D3/$E8/               { shr ax,cl    ;ax = Element shr 3}
+    $01/$C6/               { add si,ax    ;ds:si -> byte to check}
+    $B4/$01/               { mov ah,1     ;bit mask}
+    $88/$D1/               { mov cl,dl}
+    $80/$E1/$07/           { and cl,7     ;cx = Element and 7}
+    $D2/$C4/               { rol ah,cl    ;ah = initial bit mask}
+    $FD/                   { std          ;backward}
+    $AC/                   { lodsb        ;get first byte}
+                           {testbit:}
+    $84/$E0/               { test al,ah   ;is current bit set?}
+    $75/$16/               { jnz done     ;done if so}
+    $83/$EA/$01/           { sub dx,1     ;previous element     !!.11}
+    $72/$0E/               { jc nomatch   ;jump if none left    !!.11}
+    $D0/$CC/               { ror ah,1     ;rotate bit mask}
+    $73/$F3/               { jnc testbit  ;jump if bits left in byte}
+                           {newbyte:}
+    $AC/                   { lodsb        ;get next byte}
+    $08/$C0/               { or al,al     ;any bits set?}
+    $75/$EE/               { jnz testbit  ;jump if so}
+    $83/$EA/$08/           { sub dx,8     ;skipping 8 bits}
+    $73/$F6/               { jnc newbyte  ;jump if so}
+                           {nomatch:}
+    $BA/$FF/$FF/           { mov dx,$FFFF ;return $FFFF for no match}
+                           {done:}
+    $89/$D0/               { mov ax,dx    ;return element number}
+    $8E/$DF/               { mov ds,di    ;restore ds}
+    $FC);                  { cld          ;forward}
+  {$ENDIF VIRTUALPASCAL}
+
+  function BitSet.PrevSet(Element : LongInt) : LongInt;
+    {-Return index of previous element before the current one, NoMoreBits if none}
+  var
+    Prev : Word;
+  begin
+    if Element <= 0 then      {!!.03}
+      PrevSet := NoMoreBits
+    else begin
+      if Element > biMax then
+        Element := biMax+1;
+      Prev := PrevSetMac(biBase, Word(Element)-1);
+      if Prev = MinusOne then
+        PrevSet := NoMoreBits
+      else
+        PrevSet := Prev;
+    end;
+  end;
+
+  function PrevClearMac(BPtr : ByteArrayPtr; Element : Word) : Word;
+    {-Return the previous clear element of B. No range checking}
+  {$IFDEF VIRTUALPASCAL}
+    assembler; {$FRAME-} {$USES ebx,ecx,esi}
+    asm
+      mov    edx,Element
+      mov    esi,BPtr
+
+      mov    eax,edx
+      shr    eax,3
+      add    esi,eax
+      mov    ah,1
+      mov    cl,dl
+      and    cl,7
+      rol    ah,cl
+      std
+      lodsb
+    @testbit:
+      test   al,ah
+      jz     @done         { Different from PrevSetMac }
+      sub    edx,1
+      jc     @nomatch
+      ror    ah,1
+      jnc    @testbit
+    @newbyte:
+      lodsb
+      cmp    al,$FF       { Different from PrevSetMac }
+      jnz    @testbit
+      sub    edx,8
+      jnc    @newbyte
+    @nomatch:
+      mov    edx,$FFFFFFFF
+    @done:
+      mov    eax,edx
+      cld
+    end;
+  {$ELSE}
+  Inline(
+    $8C/$DF/               { mov di,ds    ;save ds}
+    $5A/                   { pop dx       ;dx = Current element}
+    $5E/                   { pop si}
+    $1F/                   { pop ds       ;ds:si -> BPtr}
+                           {;set up byte array offset and initial bit mask}
+    $89/$D0/               { mov ax,dx}
+    $B1/$03/               { mov cl,3}
+    $D3/$E8/               { shr ax,cl    ;ax = Element shr 3}
+    $01/$C6/               { add si,ax    ;ds:si -> byte to check}
+    $B4/$01/               { mov ah,1     ;bit mask}
+    $88/$D1/               { mov cl,dl}
+    $80/$E1/$07/           { and cl,7     ;cx = Element and 7}
+    $D2/$C4/               { rol ah,cl    ;ah = initial bit mask}
+    $FD/                   { std          ;backward}
+    $AC/                   { lodsb        ;get first byte}
+                           {testbit:}
+    $84/$E0/               { test al,ah   ;is current bit set?}
+    $74/$16/               { jz done      ;done if not}
+    $83/$EA/$01/           { sub dx,1     ;previous element !!.11}
+    $72/$0E/               { jc nomatch   ;jump if no more  !!.11}
+    $D0/$CC/               { ror ah,1     ;rotate bit mask}
+    $73/$F3/               { jnc testbit  ;jump if bits left in byte}
+                           {newbyte:}
+    $AC/                   { lodsb        ;get next byte}
+    $3C/$FF/               { cmp al,$FF   ;any bits clear?}
+    $75/$EE/               { jnz testbit  ;jump if so}
+    $83/$EA/$08/           { sub dx,8     ;skipping 8 bits}
+    $73/$F6/               { jnc newbyte  ;jump if so}
+                           {nomatch:}
+    $BA/$FF/$FF/           { mov dx,$FFFF ;return $FFFF for no match}
+                           {done:}
+    $89/$D0/               { mov ax,dx    ;return element number}
+    $8E/$DF/               { mov ds,di    ;restore ds}
+    $FC);                  { cld          ;forward}
+  {$ENDIF VIRTUALPASCAL}
+
+  function BitSet.PrevClear(Element : LongInt) : LongInt;
+    {-Return index of previous clear element before current, NoMoreBits if none}
+  var
+    Prev : Word;
+  begin
+    if Element <= 0 then      {!!.03}
+      PrevClear := NoMoreBits
+    else begin
+      if Element > biMax then
+        Element := biMax+1;
+      Prev := PrevClearMac(biBase, Word(Element)-1);
+      if Prev = MinusOne then
+        PrevClear := NoMoreBits
+      else
+        PrevClear := Prev;
+    end;
+  end;
+
+  function BitSet.FirstSet : LongInt;
+    {-Return index of first set bit, NoMoreBits if none}
+  begin
+    FirstSet := NextSet(-1); {!!.03}
+  end;
+
+  function BitSet.LastSet : LongInt;
+    {-Return index of last set bit, NoMoreBits if none}
+  begin
+    LastSet := PrevSet(biMax+1);
+  end;
+
+  function BitSet.FirstClear : LongInt;
+    {-Return index of first clear bit, NoMoreBits if none}
+  begin
+    FirstClear := NextClear(-1); {!!.03}
+  end;
+
+  function BitSet.LastClear : LongInt;
+    {-Return index of last clear bit, NoMoreBits if none}
+  begin
+    LastClear := PrevClear(biMax+1);
+  end;
+
+  function BitSet.BitsSet : LongInt; {!!.03}
+    {-Return number of bits set}
+  var
+    N : LongInt;
+    Cnt : LongInt;
+  begin
+    Cnt := 0;
+    N := -1; {!!.03}
+    repeat
+      N := NextSet(N);
+      if N = $FFFFFFFF then begin
+        BitsSet := Cnt;
+        Exit;
+      end else
+        inc(Cnt);
+    until False;
+  end;
+
+  function BitSet.MaxBits : LongInt;
+    {-Return capacity of bitset}
+  begin
+    MaxBits := biMax;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor BitSet.Load(var S : IdStream);
+    {-Load a bitset from a stream}
+  begin
+    biBase := nil;
+    if not Root.Init then
+      Fail;
+    {Read the number of bits in the bitset}
+    S.Read(biMax, SizeOf(LongInt));
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+    if biMax = 0 then
+      Exit;
+    if biMax > MaxBitCount then begin
+      Done;
+      InitStatus := epFatal+ecBadParam;
+      Fail;
+    end;
+    if not GetMemCheck(biBase, (biMax+8) shr 3) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+    {Read the bitset itself}
+    S.Read(biBase^, (biMax+8) shr 3);
+    if S.PeekStatus <> 0 then begin
+      Done;
+      Fail;
+    end;
+  end;
+
+  procedure BitSet.Store(var S : IdStream);
+    {-Store a bitset in a stream}
+  begin
+    {Write number of bits in bit set}
+    S.Write(biMax, SizeOf(LongInt));
+    {Write the bytes corresponding to the bitset}
+    S.Write(biBase^, (biMax+8) shr 3);
+  end;
+
+{$ENDIF}
+
+  {---------------------------------------------------------------------}
+
+  constructor LargeBitSet.Init(Max : LongInt);
+    {-Allocate space for elements}
+  var
+    Bytes : LongInt;
+    Page : Word;
+  begin
+    biPageCnt := 0;
+    biBase := nil;
+    biPages := nil;
+    biStatus := 0;
+    biMax := Max;
+
+    if not Root.Init then
+      Fail;
+
+    if Max = 0 then
+      Exit;
+    if Max > MaxLargeBitCount then begin
+      Done;
+      InitStatus := epFatal+ecBadParam;
+      Fail;
+    end;
+
+    {Allocate the page array}
+    Bytes := (Max+8) shr 3;
+    biPageCnt := (Bytes+BitPageSize-1) shr BitPageShift;
+    if not GetMemCheck(biPages, biPageCnt*SizeOf(Pointer)) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+    FillChar(biPages^, biPageCnt*SizeOf(Pointer), 0);
+
+    {Allocate the pages}
+    for Page := 0 to biPageCnt-1 do
+      if GetMemCheck(biPages^[Page], BitPageSize) then
+        FillChar(biPages^[Page]^, BitPageSize, 0)
+      else begin
+        Done;
+        InitStatus := epFatal+ecOutOfMemory;
+        Fail;
+      end;
+  end;
+
+  destructor LargeBitSet.Done;
+    {-Deallocate data area}
+  var
+    Page : Word;
+  begin
+    if biPages <> nil then begin
+      for Page := biPageCnt-1 downto 0 do
+        FreeMemCheck(biPages^[Page], BitPageSize);
+      FreeMemCheck(biPages, biPageCnt*SizeOf(Pointer));
+    end;
+    BitSet.Done;
+  end;
+
+  procedure LargeBitSet.ClearAll;
+    {-Clear all bits}
+  var
+    Page : Word;
+  begin
+    if biPageCnt <> 0 then {!!.22}
+      for Page := 0 to biPageCnt-1 do
+        FillChar(biPages^[Page]^, BitPageSize, 0);
+  end;
+
+  procedure LargeBitSet.SetAll;
+    {-Set all bits}
+  var
+    Page : Word;
+  begin
+    if biPageCnt <> 0 then {!!.22}
+      for Page := 0 to biPageCnt-1 do
+        FillChar(biPages^[Page]^, BitPageSize, $FF);
+  end;
+
+  procedure LargeBitSet.SetBit(Element : LongInt);
+    {-Set bit}
+  var
+    Bit : Word;
+    Byt : LongInt; {!!.01}
+  begin
+    if Element < 0 then
+      Exit;
+    if Element > biMax then
+      if not Resize(Element) then
+        Exit;
+    Bit := Element and 7;
+    Byt := Element shr 3;
+    SetByteFlag(biPages^[Byt shr BitPageShift]^[Byt and (BitPageSize-1)],
+                1 shl Bit);
+  end;
+
+  procedure LargeBitSet.ClearBit(Element : LongInt);
+    {-Clear bit}
+  var
+    Bit : Word;
+    Byt : LongInt; {!!.01}
+  begin
+    if Element < 0 then
+      Exit;
+    Bit := Element and 7;
+    Byt := Element shr 3;
+    ClearByteFlag(biPages^[Byt shr BitPageShift]^[Byt and (BitPageSize-1)],
+                  1 shl Bit);
+  end;
+
+  function LargeBitSet.BitIsSet(Element : LongInt) : Boolean;
+    {-Return True if bit is set}
+  var
+    Bit : Word;
+    Byt : LongInt; {!!.01}
+  begin
+    if (Element >= 0) and (Element <= biMax) then begin
+      Bit := Element and 7;
+      Byt := Element shr 3;
+      BitIsSet := ByteFlagIsSet(
+        biPages^[Byt shr BitPageShift]^[Byt and (BitPageSize-1)], 1 shl Bit);
+    end else
+      BitIsSet := False;
+  end;
+
+  function LargeBitSet.biNext(Element : LongInt; SetClear : Boolean) : LongInt;
+    {-Return index of next set or clear element}
+  var
+    Page : Word;
+    Size : Word;
+    Next : LongInt;
+    Base : LongInt;
+  begin
+    if Element < biMax then begin
+      if Element < 0 then begin                     {!!.03}
+        if not(SetClear xor BitIsSet(0)) then begin {!!.03}
+          {Bit 0 is next}                           {!!.03}
+          biNext := 0;                              {!!.03}
+          Exit;                                     {!!.03}
+        end;                                        {!!.03}
+        Element := 0;
+      end;                                          {!!.03}
+      inc(Element);
+      Page := Element shr (BitPageShift+3);
+      Base := LongInt(Page) shl (BitPageShift+3);
+      dec(Element, Base);
+      while Page < biPageCnt do begin
+        if SetClear then
+          Next := NextSetMac(biPages^[Page], Word(Element),
+                             Word(BitPageSize shl 3)-1)
+        else
+          Next := NextClearMac(biPages^[Page], Word(Element),
+                               Word(BitPageSize shl 3)-1);
+        if Next <> MinusOne then begin
+          inc(Next, Base);
+          if Next > biMax then
+            biNext := $FFFFFFFF
+          else
+            biNext := Next;
+          Exit;
+        end;
+        inc(Page);
+        inc(Base, BitPageSize shl 3);
+        Element := 0;
+      end;
+    end;
+    biNext := $FFFFFFFF;
+  end;
+
+  function LargeBitSet.NextSet(Element : LongInt) : LongInt;
+    {-Return index of next set element past current, $FFFFFFFF if none}
+  begin
+    NextSet := biNext(Element, True);
+  end;
+
+  function LargeBitSet.NextClear(Element : LongInt) : LongInt;
+    {-Return index of next clear element past current, $FFFFFFFF if none}
+  begin
+    NextClear := biNext(Element, False);
+  end;
+
+  function LargeBitSet.biPrev(Element : LongInt; SetClear : Boolean) : LongInt;
+    {-Return index of set element prior to current, $FFFFFFFF if none}
+  var
+    Page : Integer {Word}; {!!.02}
+    Size : Word;
+    Prev : LongInt;
+    Base : LongInt;
+  begin
+    if Element > 0 then begin {!!.03}
+      if Element > biMax then
+        Element := biMax
+      else
+        dec(Element);
+      Page := Element shr (BitPageShift+3);
+      Base := LongInt(Page) shl (BitPageShift+3);
+      dec(Element, Base);
+      while Page >= 0 do begin
+        if SetClear then
+          Prev := PrevSetMac(biPages^[Page], Word(Element))
+        else
+          Prev := PrevClearMac(biPages^[Page], Word(Element));
+        if Prev <> MinusOne then begin
+          inc(Prev, Base);
+          biPrev := Prev;
+          Exit;
+        end;
+        dec(Page);
+        dec(Base, BitPageSize shl 3);
+        Element := (BitPageSize shl 3)-1;                           {!!.21}
+      end;
+    end;
+    biPrev := $FFFFFFFF;
+  end;
+
+  function LargeBitSet.PrevSet(Element : LongInt) : LongInt;
+    {-Return index of previous set element before current, $FFFFFFFF if none}
+  begin
+    PrevSet := biPrev(Element, True);
+  end;
+
+  function LargeBitSet.PrevClear(Element : LongInt) : LongInt;
+    {-Return index of previous clear element before current, $FFFFFFFF if none}
+  begin
+    PrevClear := biPrev(Element, False);
+  end;
+
+  function LargeBitSet.GetStatus : Word;
+    {-Return latest status code and reset internal status to zero}
+  begin
+    GetStatus := biStatus;
+    biStatus := 0;
+  end;
+
+  procedure LargeBitSet.Error(Code : Word);
+    {-Report an error}
+  begin
+    biStatus := Code;
+  end;
+
+  function LargeBitSet.Resize(Max : LongInt) : Boolean;
+    {-Expand or shrink the bitset to hold Max elements}
+  var
+    NewPageCnt : Word;
+    Page : Word;
+    UndoPage : Word;
+    Bytes : LongInt;
+    NewPages : ^BytePointerArray;
+  begin
+    Resize := False;
+    if (Max = 0) or (Max > MaxLargeBitCount) then begin
+      Error(epNonFatal+ecBadParam);
+      Exit;
+    end;
+
+    {Compute new number of bytes and pages}
+    Bytes := (Max+8) shr 3;
+    NewPageCnt := (Bytes+BitPageSize-1) shr BitPageShift;
+
+    if NewPageCnt <> biPageCnt then begin
+      {Allocate a new page pointer array}
+      if not GetMemCheck(NewPages, NewPageCnt*SizeOf(Pointer)) then begin
+        Error(epNonFatal+ecOutOfMemory);
+        Exit;
+      end;
+
+      if NewPageCnt < biPageCnt then begin
+        {Transfer pages to new page pointer array}
+        move(biPages^[0], NewPages^[0], NewPageCnt*SizeOf(Pointer));
+        {Free up unused pages}
+        for Page := biPageCnt-1 downto NewPageCnt do
+          FreeMemCheck(biPages^[Page], BitPageSize);
+
+      end else if NewPageCnt > biPageCnt then begin
+        {Transfer existing pages to new page pointer array}
+        move(biPages^[0], NewPages^[0], biPageCnt*SizeOf(Pointer));
+
+        {Allocate and fill new pages}
+        for Page := biPageCnt to NewPageCnt-1 do
+          if GetMemCheck(NewPages^[Page], BitPageSize) then
+            FillChar(NewPages^[Page]^, BitPageSize, 0)
+          else begin
+            {Undo the damage}
+            for UndoPage := Page-1 downto biPageCnt do
+              FreeMemCheck(NewPages^[UndoPage], BitPageSize);
+            FreeMemCheck(NewPages, NewPageCnt*SizeOf(Pointer));
+            Error(epNonFatal+ecOutOfMemory);
+            Exit;
+          end;
+      end;
+
+      {Free up the old pointer array}
+      FreeMemCheck(biPages, biPageCnt*SizeOf(Pointer));
+      {Assign new pointer array and page count}
+      biPages := Pointer(NewPages);
+      biPageCnt := NewPageCnt;
+    end;
+
+    {Store new size of bitset}
+    biMax := Max;
+    Resize := True;
+  end;
+
+{$IFDEF UseStreams}
+
+  constructor LargeBitSet.Load(var S : IdStream);
+    {-Load a bitset from a stream}
+  var
+    Bytes : LongInt;
+    Page : Word;
+  begin
+    biMax := 0;
+    biPageCnt := 0;
+    biBase := nil;
+    biPages := nil;
+    biStatus := 0;
+    if not Root.Init then
+      Fail;
+
+    {Read the number of bits in the bitset}
+    S.Read(biMax, SizeOf(LongInt));
+    if S.PeekStatus <> 0 then
+      Fail;
+    if biMax = 0 then
+      Exit;
+    if biMax > MaxLargeBitCount then begin
+      Done;
+      InitStatus := epFatal+ecBadParam;
+      Fail;
+    end;
+
+    {Allocate the page array}
+    Bytes := (biMax+8) shr 3;
+    biPageCnt := (Bytes+BitPageSize-1) shr BitPageShift;
+    if not GetMemCheck(biPages, biPageCnt*SizeOf(Pointer)) then begin
+      Done;
+      InitStatus := epFatal+ecOutOfMemory;
+      Fail;
+    end;
+    FillChar(biPages^, biPageCnt*SizeOf(Pointer), 0);
+
+    {Allocate the pages and read the bitset}
+    for Page := 0 to biPageCnt-1 do
+      if GetMemCheck(biPages^[Page], BitPageSize) then begin
+        S.Read(biPages^[Page]^, BitPageSize);
+        if S.PeekStatus <> 0 then begin
+          Done;
+          Fail;
+        end;
+      end else begin
+        Done;
+        InitStatus := epFatal+ecOutOfMemory;
+        Fail;
+      end;
+  end;
+
+  procedure LargeBitSet.Store(var S : IdStream);
+    {-Store a bitset in a stream}
+  var
+    Page : Word;
+  begin
+    {Write number of bits in bit set}
+    S.Write(biMax, SizeOf(LongInt));
+
+    {Write the bytes corresponding to the bitset}
+    if biPageCnt <> 0 then {!!.22}
+      for Page := 0 to biPageCnt-1 do
+        S.Write(biPages^[Page]^, BitPageSize);
+  end;
+
+{$ENDIF}
+
